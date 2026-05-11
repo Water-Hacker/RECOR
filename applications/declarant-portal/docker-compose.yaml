@@ -1,0 +1,74 @@
+# Local integrated stack: Declarant Portal + Declaration service + Postgres.
+# Open http://127.0.0.1:8082 in a browser to use the portal.
+
+name: recor-declarant-portal-dev
+
+networks:
+  portal:
+    driver: bridge
+
+volumes:
+  pg-data:
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: recor-portal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recor
+      POSTGRES_PASSWORD: "${RECOR_DB_PASSWORD:?Set RECOR_DB_PASSWORD in .env}"
+      POSTGRES_DB: declaration
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - portal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recor -d declaration"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  declaration:
+    # Built from services/declaration in PR #15.
+    image: recor/declaration:dev
+    container_name: recor-portal-declaration
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      BIND_ADDR: "0.0.0.0:8080"
+      DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres:5432/declaration"
+      DB_POOL_MAX_CONNECTIONS: "10"
+      OTLP_ENDPOINT: ""
+      LOG_FILTER: "info,recor_declaration=debug,sqlx=warn"
+      SERVICE_NAME: "recor-declaration"
+      ENVIRONMENT: "dev"
+      RECOR_BASE_URL: "http://localhost:8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - portal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: recor/declarant-portal:dev
+    container_name: recor-declarant-portal
+    restart: unless-stopped
+    depends_on:
+      declaration:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8082:8082"
+    networks:
+      - portal
