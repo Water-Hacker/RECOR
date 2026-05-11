@@ -1,0 +1,50 @@
+# CODEOWNERS validation — runs on every PR that touches CODEOWNERS or any
+# owned-directory governance surface. Duplicated as a standalone workflow
+# (in addition to the required-checks job) so that:
+#
+#   - PRs that ONLY touch CODEOWNERS/teams.md surface a clear pass/fail signal
+#   - The validator can be re-run via workflow_dispatch from the Actions UI
+#
+# Per Architecture V1 P2 Doctrine 8 (no dangling threads): the validator
+# enforces the two-way reference between CODEOWNERS team mentions and
+# docs/security/teams.md entries.
+
+name: codeowners-validate
+
+on:
+  pull_request:
+    paths:
+      - '.github/CODEOWNERS'
+      - 'docs/security/teams.md'
+      - 'tools/ci/validate-codeowners.sh'
+      - 'tests/contract/codeowners.test.sh'
+      - 'tests/contract/fixtures/codeowners-bad/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate CODEOWNERS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: real CODEOWNERS validates clean
+        run: ./tools/ci/validate-codeowners.sh
+
+      - name: negative fixture is rejected
+        run: |
+          # The bad fixture is intentionally broken. The validator MUST
+          # exit non-zero on it. If it exits 0, the validator is too lax
+          # and that itself is a defect (D14: fail-closed at boundaries).
+          set +e
+          REPO_ROOT="$(pwd)/tests/contract/fixtures/codeowners-bad" \
+            ./tools/ci/validate-codeowners.sh
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::Negative fixture passed; validator is too lax."
+            exit 1
+          fi
+          echo "Negative fixture correctly rejected (exit=$rc)."
