@@ -1,0 +1,30 @@
+# Normalise line endings
+* text=auto eol=lf
+
+# Binary content
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.docx binary
+
+# Generated content (treat as binary for diff purposes)
+*.pb.go linguist-generated=true
+*.pb.rs linguist-generated=true
+**/generated/** linguist-generated=true
+
+# Force LF on shell scripts (no CRLF surprises on Windows clones)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Lock files: keep as text but mark as generated for review tools
+Cargo.lock text linguist-generated=true
+package-lock.json text linguist-generated=true
+pnpm-lock.yaml text linguist-generated=true
+go.sum text linguist-generated=true
+uv.lock text linguist-generated=true

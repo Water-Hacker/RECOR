@@ -1,0 +1,37 @@
+RÉCOR — Licensing notice
+========================
+
+The default licensing posture for this repository is Restricted.
+
+The source code in this repository is the property of the RÉCOR Consortium
+(Ministry of Finance, Ministry of Justice, and the ten consortium member
+institutions of the Republic of Cameroon).
+
+Distribution outside the consortium is governed by the consortium's documented
+contribution and distribution processes (CONTRIBUTING.md, Architecture V1 P4
+OPSEC).
+
+Specific components are released under the Apache License, Version 2.0
+(Apache-2.0) as committed in Architecture V3 P10 (Open-source commitments).
+These components are explicitly marked in their package metadata, and the full
+Apache-2.0 text accompanies each released artefact.
+
+Components currently in scope for open release under Apache-2.0 include:
+
+  - Platform data-model schemas
+  - The BODS export adapter
+  - The verification engine's pattern-detection signature definitions
+    (without trained classifier weights)
+  - Cryptographic substrate adapters
+  - Consumer integration adapters in genericised form
+  - User-facing application frontends
+
+Components NOT released:
+
+  - Trained pattern-detection classifier weights
+  - Deployment configurations and secrets
+  - Internal operational documentation
+  - Any code whose disclosure would materially aid adversarial circumvention
+    of the verification engine
+
+For licensing questions, contact legal@recor.cm.

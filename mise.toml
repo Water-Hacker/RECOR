@@ -1,0 +1,35 @@
+# Toolchain version pinning for the RÉCOR monorepo
+# Engineers run `mise install` after cloning; `mise.toml` is the source of truth
+# for which version of each toolchain is installed.
+
+[tools]
+rust = "1.84.0"
+go = "1.26.2"
+node = "22.11.0"
+pnpm = "9.12.3"
+python = "3.12.7"
+uv = "0.5.4"
+java = "21.0.4"          # only for the HSM SDK adapters
+buf = "1.47.2"
+just = "1.36.0"
+terraform = "1.10.0"
+kubectl = "1.32.0"
+helm = "3.16.3"
+sops = "3.9.1"
+age = "1.2.0"
+yq = "4.44.5"
+jq = "1.7.1"
+
+# Per-environment overrides happen in .mise.local.toml (gitignored)
+
+[env]
+# Indicates this is a development environment; production sets this differently
+RECOR_DEV = "1"
+# Forces deterministic builds
+SOURCE_DATE_EPOCH = "1735689600"  # 2025-01-01T00:00:00Z baseline
+
+# Settings
+[settings]
+experimental = true
+yes = false                    # never auto-confirm; engineers see what's installed
+verbose = false

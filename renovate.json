@@ -1,0 +1,63 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":separateMultipleMajorReleases",
+    ":dependencyDashboard",
+    "schedule:weekly"
+  ],
+  "timezone": "Africa/Douala",
+  "rangeStrategy": "pin",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 04:00 on monday"]
+  },
+  "labels": ["dependencies"],
+  "assignees": ["@recor/sre-team"],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchDepTypes": ["devDependencies"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "matchPackagePatterns": ["^@anthropic-ai/"],
+      "labels": ["dependencies", "anthropic"],
+      "reviewers": ["@recor/architect-team"]
+    },
+    {
+      "matchPackagePatterns": ["^@solana", "^web3", "^ethers"],
+      "enabled": false,
+      "description": "Cryptocurrency-related packages are forbidden per V3 P7"
+    },
+    {
+      "matchPackagePatterns": ["thales", "luna"],
+      "enabled": false,
+      "description": "HSM SDK upgrades require cryptography team review; not auto-managed"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "reviewers": ["@recor/architect-team"],
+      "description": "Major version updates require ADR per V3 P7"
+    },
+    {
+      "matchPackageNames": [
+        "ed25519-dalek", "p256", "p384",
+        "halo2_proofs", "frost-ed25519",
+        "ring", "rustls"
+      ],
+      "labels": ["dependencies", "cryptography"],
+      "reviewers": ["@recor/crypto-team", "@recor/security-team"],
+      "automerge": false,
+      "description": "Cryptographic libraries require crypto-team review"
+    }
+  ]
+}

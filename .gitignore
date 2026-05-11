@@ -1,0 +1,75 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.direnv/
+
+# Build outputs
+target/
+node_modules/
+dist/
+build/
+out/
+.next/
+.vite/
+.turbo/
+bazel-*
+
+# Test outputs
+coverage/
+*.coverage
+.pytest_cache/
+.cargo-mutants/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Secrets — defence in depth; primary protection is sops
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+!secrets/*.enc.yaml
+!secrets/.gitkeep
+
+# Database
+*.sqlite
+*.db
+postgres-data/
+
+# Python (ML pipelines only)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.uv/
+*.egg-info/
+
+# Generated code (regenerable; not stored)
+# Exception: generated bindings ARE stored for review (see Architecture V4 P10)
+
+# OS-specific
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+*~
+
+# Local Claude Code data (settings.json IS tracked; sessions/transcripts are not)
+.claude/sessions/
+.claude/transcripts/
+.claude/cache/
+.claude/local-settings.json
+
+# Local working state — derived artefacts from the .docx documents and graphify
+_extracted/
+graphify-out/
