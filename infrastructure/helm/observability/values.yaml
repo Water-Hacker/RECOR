@@ -1,0 +1,198 @@
+# Base values for the recor-observability chart.
+# Per-environment overrides in values-dev.yaml and values-prod.yaml.
+#
+# This file is the contract between this chart and the upstream sub-charts.
+# Keep changes minimal and well-rationalised; deeper upstream-specific tuning
+# belongs in the environment-specific overlays.
+
+# ─── kube-prometheus-stack ───────────────────────────────────────────────────
+kube-prometheus-stack:
+  enabled: true
+
+  # Anti-affinity across nodes for HA in prod; relaxed in dev.
+  prometheus:
+    prometheusSpec:
+      retention: 30d
+      retentionSize: 50GiB
+      walCompression: true
+      enableAdminAPI: false
+      enableRemoteWriteReceiver: true
+      # Each platform component scrapes its own /metrics; service-mesh
+      # injection adds the ServiceMonitor for envoy/istio.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      probeSelectorNilUsesHelmValues: false
+
+  grafana:
+    enabled: true
+    # Admin password sourced from external secret in prod; values-dev sets
+    # an in-cluster default for the dev cluster only.
+    admin:
+      existingSecret: recor-grafana-admin
+    persistence:
+      enabled: true
+      size: 10Gi
+    sidecar:
+      datasources:
+        enabled: true
+        defaultDatasourceEnabled: false
+      dashboards:
+        enabled: true
+        searchNamespace: ALL
+    # Default data sources are provisioned by sidecar from ConfigMaps with
+    # the `grafana_datasource` label.
+    additionalDataSources: []
+
+  alertmanager:
+    alertmanagerSpec:
+      retention: 120h
+      # Per-environment routing in values-{dev,prod}.yaml.
+
+# ─── tempo-distributed ───────────────────────────────────────────────────────
+tempo-distributed:
+  enabled: true
+
+  # Multi-tenant header injected by the OTel collector; collectors set
+  # X-Scope-OrgID to "recor" for the platform's traces.
+  multitenancyEnabled: false
+  global_overrides:
+    per_tenant_override_config: /runtime-config/overrides.yaml
+
+  ingester:
+    replicas: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+  distributor:
+    replicas: 3
+  querier:
+    replicas: 3
+  queryFrontend:
+    replicas: 2
+  compactor:
+    replicas: 1
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: recor-tempo-traces
+        endpoint: s3.amazonaws.com
+        # access_key + secret_key injected by ExternalSecrets in prod;
+        # dev overlay uses MinIO with mock credentials.
+
+# ─── loki-distributed ────────────────────────────────────────────────────────
+loki-distributed:
+  enabled: true
+
+  loki:
+    auth_enabled: false
+    storage:
+      type: s3
+      bucketNames:
+        chunks: recor-loki-chunks
+        ruler: recor-loki-ruler
+        admin: recor-loki-admin
+      s3:
+        endpoint: s3.amazonaws.com
+    schemaConfig:
+      configs:
+        - from: "2026-01-01"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+  ingester:
+    replicas: 3
+  distributor:
+    replicas: 3
+  querier:
+    replicas: 3
+  queryFrontend:
+    replicas: 2
+  compactor:
+    replicas: 1
+
+# ─── opentelemetry-collector ────────────────────────────────────────────────
+opentelemetry-collector:
+  enabled: true
+  mode: deployment
+  replicaCount: 3
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    # Pinned per V3 P7 dependency policy
+    tag: "0.117.0"
+
+  presets:
+    # Receivers for traces/metrics/logs from services
+    logsCollection:
+      enabled: false  # services emit OTLP directly; no node-level log collection at this stage
+    kubernetesAttributes:
+      enabled: true
+    kubeletMetrics:
+      enabled: true
+    hostMetrics:
+      enabled: false  # node-exporter from kube-prometheus-stack provides this
+
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+      resource:
+        attributes:
+          - key: deployment.environment
+            from_attribute: env
+            action: insert
+          - key: service.namespace
+            value: recor
+            action: insert
+
+    exporters:
+      prometheusremotewrite:
+        endpoint: http://kube-prometheus-stack-prometheus.observability.svc.cluster.local:9090/api/v1/write
+        resource_to_telemetry_conversion:
+          enabled: true
+      otlp/tempo:
+        endpoint: tempo-distributed-distributor.observability.svc.cluster.local:4317
+        tls:
+          insecure: true
+      loki:
+        endpoint: http://loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [prometheusremotewrite]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [loki]
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
+        logs:
+          level: info
+          encoding: json

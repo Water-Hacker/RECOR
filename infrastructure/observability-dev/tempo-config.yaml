@@ -1,0 +1,40 @@
+# Tempo — dev config, single-binary mode with local file storage.
+# Production deployment uses tempo-distributed with S3 backend (see
+# infrastructure/helm/observability/values.yaml).
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+querier:
+  max_concurrent_queries: 20
+
+query_frontend:
+  search:
+    max_duration: 168h
