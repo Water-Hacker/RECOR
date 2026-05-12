@@ -128,6 +128,43 @@ object-src 'none'
 3. Load the SPA in a browser; the dev console must not show any CSP violations (a handful of inline-style notices from Tailwind are expected and explicitly allowed).
 4. Or just run `scripts/headers-smoke.sh`, which automates all of the above and asserts every header is present + the templated origin is in CSP.
 
+## API client generation (R-PORT-7)
+
+The portal's wire-shape types are generated from the committed
+OpenAPI spec, not hand-written.
+
+- **Spec source of truth:** `docs/openapi/declaration.json`,
+  regenerated from the service by `tools/ci/check-openapi-drift.sh`
+  (DOC-1).
+- **Generated client:** `src/generated/openapi.ts`. The file is
+  committed so consumers do not need network access at build time and
+  so review diffs surface contract changes alongside the code that
+  uses them.
+- **Regenerate locally:** `pnpm openapi:gen` (writes the file in
+  place).
+- **Drift check:** `pnpm openapi:check` or `UPDATE=1
+  tools/ci/check-portal-openapi-client-drift.sh` to regenerate then
+  diff. CI runs the drift check on every PR as job
+  `portal / openapi-client-drift` and fail-closes when the committed
+  client lags behind the spec (D14). There is no `--allow-drift`
+  escape; the fix is always "regenerate, commit".
+- **Where the types are consumed:** `src/lib/api.ts` re-exports the
+  generated `components['schemas']` namespace under stable names
+  (`SubmitDeclarationResponse`, `VerificationLane`, etc.). The
+  runtime Zod schemas remain the trust boundary (D17) — wire shape
+  is never trusted blindly — but their structural shape is pinned to
+  the generated types via `satisfies` and compile-time
+  `extends`-sentinels, so spec drift surfaces at `pnpm typecheck`
+  and is caught before merge.
+- **Canonical-form parity (D15):** the generated types do NOT
+  replace `src/lib/crypto.ts:canonicalPayloadBytes`. Canonical-form
+  bytes are constructed from the declarant's typed inputs in a fixed
+  field order matching the Rust server; if a future spec change
+  reorders or renames a field, the adapter at the form boundary (the
+  `buildSignedRequest` argument shape) normalises it BEFORE signing.
+  The byte-parity unit test in `crypto.test.ts` is the load-bearing
+  guard.
+
 ## When in doubt
 
 1. Read this document
