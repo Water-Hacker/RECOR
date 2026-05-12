@@ -190,7 +190,7 @@ declare -a stricter_dirs=(
 )
 for d in "${stricter_dirs[@]}"; do
     # Find the line for /<d>; count owners on it.
-    matched_line=$(grep -E "^/$d[[:space:]]" "$CODEOWNERS" | head -1)
+    matched_line=$(grep -E "^/${d}[[:space:]]" "$CODEOWNERS" | head -1)
     if [ -z "$matched_line" ]; then
         bad "stricter rule for /$d" "no rule found"
         continue

@@ -1,0 +1,19 @@
+# gitleaks allowlist
+#
+# Entries here are fingerprints of findings that are intentionally
+# present in the repo and not actual leaks. Each line is one
+# fingerprint as emitted by `gitleaks detect`.
+#
+# Format: <commit-sha>:<file>:<rule>:<line>
+#
+# To add a new entry: run `gitleaks detect --no-banner -v`, copy the
+# `Fingerprint:` line for the finding you want to ignore.
+
+# Test-only RSA private keys used by OIDC unit + integration tests
+# (services/{declaration,verification-engine}/tests/fixtures/). These
+# keys are TEST-ONLY, never used to sign anything in production, and
+# the matching public-key JWKs are also committed for round-trip
+# verification. See PR #45 + #51 for the OIDC implementation that
+# depends on them.
+dd8c018254c8d49b9c74fbcc2ea181361a1b2fc7:services/declaration/tests/fixtures/test_rsa_pkcs8.pem:private-key:1
+dd8c018254c8d49b9c74fbcc2ea181361a1b2fc7:services/verification-engine/tests/fixtures/test_rsa_pkcs8.pem:private-key:1
