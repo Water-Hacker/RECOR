@@ -489,3 +489,36 @@ impl CorrectDeclarationResponse {
         }
     }
 }
+
+// ─── Data-subject access (COMP-1) ─────────────────────────────────────
+//
+// Response shape for `GET /v1/declarations/by-principal`. The endpoint
+// returns every declaration RÉCOR holds under the authenticated
+// principal. The principal is echoed back in the response body so the
+// declarant has an unambiguous record of which identity the registry
+// resolved them under — useful when a person holds multiple identities
+// (corporate vs personal OIDC subjects, for instance) and wants to
+// know which one this view represents.
+
+/// Response body for `GET /v1/declarations/by-principal`. The
+/// declarant receives every declaration where they appear as the
+/// declarant_principal, plus the principal subject the registry
+/// resolved them under. Implements the GDPR right-of-access and
+/// data-portability rights (see `docs/compliance/gdpr-procedures.md`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DeclarationsByPrincipalResponse {
+    /// Principal subject the registry resolved the caller under.
+    /// Sourced from the authenticated session, never from a request
+    /// parameter; echoed back so the declarant can confirm which
+    /// identity this view represents.
+    pub principal: String,
+    /// Total count of declarations returned. Provided as a convenience
+    /// for portal UIs that want to display "you have N records on file"
+    /// without iterating the array length.
+    pub count: usize,
+    /// Every declaration in the registry where the authenticated
+    /// principal is the declarant. Each row carries its
+    /// `receipt_hash_hex` so the declarant can re-verify offline
+    /// (D15 cryptographic provenance).
+    pub declarations: Vec<GetDeclarationResponse>,
+}

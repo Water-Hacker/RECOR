@@ -35,7 +35,8 @@ use uuid::Uuid;
 use recor_declaration::api::AppState;
 use recor_declaration::application::{
     AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
-    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
+    ListByPrincipalUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -86,6 +87,8 @@ async fn spawn_service_with_rate_limit(per_min: u32, burst: u32) -> TestService 
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let amend = Arc::new(AmendDeclarationUseCase::new(repository.clone()));
     let correct = Arc::new(CorrectDeclarationUseCase::new(repository.clone()));
+    let list_by_principal =
+        Arc::new(ListByPrincipalUseCase::new(repository.clone()));
     let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool));
 
@@ -103,6 +106,7 @@ async fn spawn_service_with_rate_limit(per_min: u32, burst: u32) -> TestService 
         supersede_usecase: supersede,
         amend_usecase: amend,
         correct_usecase: correct,
+        list_by_principal_usecase: list_by_principal,
         idempotency,
         outbox_admin,
         base_url: format!("http://{bind_addr}"),

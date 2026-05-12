@@ -14,7 +14,8 @@ use recor_declaration::api::{
 };
 use recor_declaration::application::{
     AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
-    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
+    ListByPrincipalUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -61,6 +62,8 @@ async fn main() -> Result<()> {
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let amend = Arc::new(AmendDeclarationUseCase::new(repository.clone()));
     let correct = Arc::new(CorrectDeclarationUseCase::new(repository.clone()));
+    let list_by_principal =
+        Arc::new(ListByPrincipalUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
     let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
@@ -108,6 +111,7 @@ async fn main() -> Result<()> {
         supersede_usecase: supersede,
         amend_usecase: amend,
         correct_usecase: correct,
+        list_by_principal_usecase: list_by_principal,
         idempotency,
         outbox_admin,
         base_url,

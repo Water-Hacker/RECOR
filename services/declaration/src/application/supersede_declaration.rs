@@ -255,6 +255,13 @@ mod tests {
         ) -> Result<Option<DeclarationProjection>, RepositoryError> {
             Ok(None)
         }
+
+        async fn find_by_principal(
+            &self,
+            _principal: &str,
+        ) -> Result<Vec<DeclarationProjection>, RepositoryError> {
+            Ok(Vec::new())
+        }
     }
 
     fn submit_cmd(id: DeclarationId, entity: EntityId, principal: &str) -> SubmitDeclaration {

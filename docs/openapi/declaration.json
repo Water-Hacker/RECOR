@@ -195,6 +195,55 @@
         ]
       }
     },
+    "/v1/declarations/by-principal": {
+      "get": {
+        "tags": [
+          "declarations"
+        ],
+        "description": "Data-subject access (COMP-1). Returns every declaration RÉCOR holds where the authenticated principal is the declarant. The principal is sourced exclusively from the authenticated session (D17) — no path parameter, no body, no query string. Implements GDPR right-of-access and data-portability rights; see docs/compliance/gdpr-procedures.md. Each row carries its receipt_hash_hex so the declarant can re-verify the receipt offline (D15).",
+        "operationId": "listDeclarationsByPrincipal",
+        "responses": {
+          "200": {
+            "description": "Every declaration the authenticated principal is the declarant on, most-recent first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclarationsByPrincipalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
     "/v1/declarations/{declaration_id}": {
       "get": {
         "tags": [
@@ -1179,6 +1228,33 @@
           "rejected",
           "superseded"
         ]
+      },
+      "DeclarationsByPrincipalResponse": {
+        "type": "object",
+        "description": "Response body for `GET /v1/declarations/by-principal`. The\ndeclarant receives every declaration where they appear as the\ndeclarant_principal, plus the principal subject the registry\nresolved them under. Implements the GDPR right-of-access and\ndata-portability rights (see `docs/compliance/gdpr-procedures.md`).",
+        "required": [
+          "principal",
+          "count",
+          "declarations"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Total count of declarations returned. Provided as a convenience\nfor portal UIs that want to display \"you have N records on file\"\nwithout iterating the array length.",
+            "minimum": 0
+          },
+          "declarations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GetDeclarationResponse"
+            },
+            "description": "Every declaration in the registry where the authenticated\nprincipal is the declarant. Each row carries its\n`receipt_hash_hex` so the declarant can re-verify offline\n(D15 cryptographic provenance)."
+          },
+          "principal": {
+            "type": "string",
+            "description": "Principal subject the registry resolved the caller under.\nSourced from the authenticated session, never from a request\nparameter; echoed back so the declarant can confirm which\nidentity this view represents."
+          }
+        }
       },
       "DlqItem": {
         "type": "object",
