@@ -880,6 +880,12 @@ fn submit_error_to_status(e: SubmitError) -> Status {
     match e {
         SubmitError::Domain(d) => domain_to_status(&d),
         SubmitError::Repository(r) => repository_to_status(r),
+        // R-DECL-4: the Person registry is an upstream dependency.
+        // Transport / unexpected-status failures → UNAVAILABLE so the
+        // client retries. The "person not registered" case surfaces as
+        // a Domain error (BeneficialOwnerNotInPersonRegistry) and is
+        // mapped earlier; never reaches this arm.
+        SubmitError::PersonRegistry(err) => Status::unavailable(err.to_string()),
     }
 }
 

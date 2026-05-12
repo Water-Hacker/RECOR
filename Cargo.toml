@@ -23,6 +23,7 @@ members = [
     "packages/recor-logging",
     "services/declaration",
     "services/entity-service",
+    "services/person-service",
     "services/verification-engine",
 ]
 
