@@ -52,8 +52,9 @@ services:
   # ─── Declaration service (with outbox relay enabled) ────────────────
   declaration:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Workspace root — Dockerfile needs sibling crates (packages/recor-auth-oidc).
+      context: ../..
+      dockerfile: services/declaration/Dockerfile
     image: recor/declaration:dev
     container_name: recor-loop-declaration
     depends_on:
@@ -93,8 +94,9 @@ services:
   # ─── Verification engine (inbound webhook enabled) ──────────────────
   verification:
     build:
-      context: ../verification-engine
-      dockerfile: Dockerfile
+      # Workspace root — Dockerfile needs sibling crates (packages/recor-auth-oidc).
+      context: ../..
+      dockerfile: services/verification-engine/Dockerfile
     image: recor/verification-engine:dev
     container_name: recor-loop-verification
     depends_on:
