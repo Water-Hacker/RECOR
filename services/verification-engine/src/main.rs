@@ -21,8 +21,8 @@ use recor_verification_engine::application::{
 use recor_verification_engine::config::Config;
 use recor_verification_engine::domain::{LaneThresholds, Stage};
 use recor_verification_engine::infrastructure::{
-    PostgresMockBunec, PostgresVerificationRepository, VerificationOutboxRelay,
-    WritebackSubscriber,
+    OutboxAdminStore, PostgresMockBunec, PostgresVerificationRepository,
+    VerificationOutboxRelay, WritebackSubscriber,
 };
 
 #[tokio::main]
@@ -48,6 +48,8 @@ async fn main() -> Result<()> {
     let repository = Arc::new(PostgresVerificationRepository::new(pool.clone()));
     repository.run_migrations().await.context("migrations")?;
     info!("migrations applied");
+
+    let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
     let bunec = Arc::new(PostgresMockBunec::new(pool.clone()));
 
@@ -94,6 +96,7 @@ async fn main() -> Result<()> {
         submit_usecase: submit,
         get_usecase: get,
         repository,
+        outbox_admin,
         is_dev: cfg.is_dev(),
         oidc,
     };

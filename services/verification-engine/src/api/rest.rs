@@ -22,18 +22,20 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::api::auth::{auth_middleware, AuthConfig};
+use crate::api::dlq::DlqAdminState;
 use crate::api::oidc::OidcVerifier;
 use crate::application::{GetVerificationUseCase, SubmitVerificationUseCase};
 use crate::config::Config;
 use crate::domain::{DeclarationSnapshot, VerificationCase, VerificationCaseId};
 use crate::error::ServiceError;
-use crate::infrastructure::PostgresVerificationRepository;
+use crate::infrastructure::{OutboxAdminStore, PostgresVerificationRepository};
 
 #[derive(Clone)]
 pub struct AppState {
     pub submit_usecase: Arc<SubmitVerificationUseCase>,
     pub get_usecase: Arc<GetVerificationUseCase>,
     pub repository: Arc<PostgresVerificationRepository>,
+    pub outbox_admin: Arc<OutboxAdminStore>,
     pub is_dev: bool,
     pub oidc: Option<Arc<OidcVerifier>>,
 }
@@ -48,10 +50,40 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         .route("/v1/verifications", post(submit_verification))
         .route("/v1/verifications/{case_id}", get(get_verification))
         .route_layer(axum::middleware::from_fn_with_state(
-            auth_state,
+            auth_state.clone(),
             auth_middleware,
         ))
         .with_state(state.clone());
+
+    // Admin endpoints (R-LOOP-DLQ-3). Same user-auth middleware as
+    // the protected routes, but the handlers gate themselves on
+    // `Config::admin_principals_list()` so only the listed subjects
+    // can list/replay DLQ rows. Empty list ⇒ endpoints return 503.
+    //
+    // Path is intentionally `/v1/internal/verification-outbox-dlq`
+    // (not `/v1/internal/outbox-dlq`) so the surface is unambiguous
+    // when both declaration and V-engine are deployed.
+    use std::collections::HashSet;
+    let admin_principals: HashSet<String> =
+        cfg.admin_principals_list().into_iter().collect();
+    let dlq_admin_state = DlqAdminState {
+        store: state.outbox_admin.clone(),
+        admin_principals: Arc::new(admin_principals),
+    };
+    let admin = Router::new()
+        .route(
+            "/v1/internal/verification-outbox-dlq",
+            get(crate::api::dlq::list_dlq),
+        )
+        .route(
+            "/v1/internal/verification-outbox-dlq/{id}/replay",
+            post(crate::api::dlq::replay_dlq),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
+        .with_state(dlq_admin_state);
 
     // Internal HMAC-authenticated webhook for the Declaration service's
     // outbox relay. Not behind the user-auth middleware — uses its own
@@ -74,7 +106,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         .route("/readyz", get(readyz))
         .with_state(state);
 
-    protected.merge(internal).merge(public).layer(
+    protected.merge(admin).merge(internal).merge(public).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
