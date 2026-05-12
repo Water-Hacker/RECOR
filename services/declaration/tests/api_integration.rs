@@ -31,6 +31,7 @@ use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
 };
+use recor_declaration::infrastructure::OutboxAdminStore;
 
 struct TestService {
     base_url: String,
@@ -63,6 +64,7 @@ async fn spawn_service() -> TestService {
     let record_verification =
         Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
+    let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool));
 
     // Bind to an ephemeral port.
@@ -80,6 +82,7 @@ async fn spawn_service() -> TestService {
         record_verification_usecase: record_verification,
         supersede_usecase: supersede,
         idempotency,
+        outbox_admin,
         base_url: format!("http://{bind_addr}"),
         is_dev: true,
         idempotency_ttl_seconds: 3600,
@@ -138,6 +141,7 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         relay_poll_interval_seconds: 5,
         writeback_hmac_secret: SecretString::from(String::new()),
         writeback_hmac_secret_old: SecretString::from(String::new()),
+        admin_principals: String::new(),
     }
 }
 

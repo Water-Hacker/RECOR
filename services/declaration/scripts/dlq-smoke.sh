@@ -83,6 +83,8 @@ services:
       RELAY_HMAC_SECRET: "${RECOR_D_TO_V_HMAC:?Set RECOR_D_TO_V_HMAC}"
       RELAY_POLL_INTERVAL_SECONDS: "1"
       WRITEBACK_HMAC_SECRET: "${RECOR_V_TO_D_HMAC:?Set RECOR_V_TO_D_HMAC}"
+      # Admin endpoint allowlist — enables /v1/internal/outbox-dlq.
+      ADMIN_PRINCIPALS: "spiffe://recor.cm/dlq-smoke"
     ports: ["127.0.0.1:8088:8080"]
     networks: [dlq]
     healthcheck:
@@ -188,8 +190,100 @@ attempts=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" post
 echo "  ✅ dispatch_attempts = $attempts (>= max_attempts)"
 
 echo ""
-echo "✅ R-LOOP-4-DLQ SMOKE: PASS"
+echo "── PHASE 2: R-LOOP-DLQ-2 admin endpoints ──"
+
+# 2a: non-admin principal refused (403)
+echo "  ── non-admin principal → 403 ──"
+nonadmin_resp=$(curl -sS -w "\n%{http_code}" \
+    "http://127.0.0.1:8088/v1/internal/outbox-dlq" \
+    -H "X-Recor-Dev-Principal: spiffe://recor.cm/intruder")
+nonadmin_http=$(echo "$nonadmin_resp" | tail -1)
+[ "$nonadmin_http" = "403" ] || {
+    echo "FAIL: expected 403 for non-admin; got $nonadmin_http"
+    echo "$nonadmin_resp" | sed '$d'
+    exit 1
+}
+echo "  ✅ non-admin refused (403)"
+
+# 2b: admin principal lists DLQ → sees our row
+echo "  ── admin GET /v1/internal/outbox-dlq ──"
+list_resp=$(curl -sS \
+    "http://127.0.0.1:8088/v1/internal/outbox-dlq?limit=20" \
+    -H "X-Recor-Dev-Principal: spiffe://recor.cm/dlq-smoke")
+echo "$list_resp" | jq '{total, items: (.items | map({id, event_type, dispatch_attempts}))}'
+dlq_total=$(echo "$list_resp" | jq -r '.total')
+[ "$dlq_total" -ge "1" ] || {
+    echo "FAIL: expected total >= 1; got $dlq_total"
+    exit 1
+}
+echo "  ✅ admin can list DLQ; total=$dlq_total"
+
+# 2c: admin replays the DLQ row
+dlq_id=$(echo "$list_resp" | jq -r '.items[0].id')
+echo "  ── admin POST /v1/internal/outbox-dlq/$dlq_id/replay ──"
+replay_resp=$(curl -sS -X POST -w "\n%{http_code}" \
+    "http://127.0.0.1:8088/v1/internal/outbox-dlq/$dlq_id/replay" \
+    -H "X-Recor-Dev-Principal: spiffe://recor.cm/dlq-smoke")
+replay_http=$(echo "$replay_resp" | tail -1)
+replay_body=$(echo "$replay_resp" | sed '$d')
+[ "$replay_http" = "200" ] || {
+    echo "FAIL: expected 200 from replay; got $replay_http"
+    echo "$replay_body"
+    exit 1
+}
+echo "$replay_body" | jq '.'
+echo "  ✅ replay endpoint returned 200"
+
+# 2d: row moved from outbox_dlq → outbox
+echo "  ── confirming atomic move ──"
+post_dlq=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -tAc \
+    "SELECT COUNT(*) FROM outbox_dlq WHERE id = '$dlq_id'" | tr -d '[:space:]')
+post_outbox=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -tAc \
+    "SELECT COUNT(*) FROM outbox WHERE id = '$dlq_id'" | tr -d '[:space:]')
+[ "$post_dlq" = "0" ] || {
+    echo "FAIL: row $dlq_id still in outbox_dlq after replay"
+    exit 1
+}
+[ "$post_outbox" = "1" ] || {
+    echo "FAIL: row $dlq_id not in outbox after replay (count=$post_outbox)"
+    exit 1
+}
+echo "  ✅ row absent from outbox_dlq, present in outbox (atomic move verified)"
+
+# 2e: dispatch_attempts reset, last_error cleared
+post_attempts=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -tAc \
+    "SELECT dispatch_attempts, COALESCE(last_error, '__NULL__') FROM outbox WHERE id = '$dlq_id'" \
+    | tr -d '[:space:]')
+[ "$post_attempts" = "0|__NULL__" ] || {
+    echo "FAIL: expected dispatch_attempts=0, last_error=NULL after replay; got '$post_attempts'"
+    exit 1
+}
+echo "  ✅ replayed row reset to dispatch_attempts=0, last_error=NULL"
+
+# 2f: replaying a non-existent id → 404
+echo "  ── replaying a missing id → 404 ──"
+missing_id="00000000-0000-0000-0000-000000000000"
+missing_resp=$(curl -sS -X POST -w "\n%{http_code}" \
+    "http://127.0.0.1:8088/v1/internal/outbox-dlq/$missing_id/replay" \
+    -H "X-Recor-Dev-Principal: spiffe://recor.cm/dlq-smoke")
+missing_http=$(echo "$missing_resp" | tail -1)
+[ "$missing_http" = "404" ] || {
+    echo "FAIL: expected 404 for missing replay; got $missing_http"
+    exit 1
+}
+echo "  ✅ missing replay correctly returned 404"
+
+echo ""
+echo "✅ R-LOOP-4-DLQ + R-LOOP-DLQ-2 SMOKE: PASS"
 echo "   • Submission written to outbox"
 echo "   • Relay exhausted max_attempts attempting to deliver to a dead webhook"
 echo "   • Row moved atomically from outbox → outbox_dlq"
 echo "   • DLQ row carries final dispatch_attempts + last_error"
+echo "   • Admin GET /v1/internal/outbox-dlq lists the DLQ row"
+echo "   • Non-admin principal refused (403)"
+echo "   • Admin POST .../replay atomically moves row back to outbox"
+echo "   • Replayed row has dispatch_attempts=0, last_error=NULL"
+echo "   • Replay against missing id returns 404"

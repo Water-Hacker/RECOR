@@ -95,6 +95,19 @@ pub struct Config {
     /// secret has propagated through the signer side.
     #[serde(default = "default_secret")]
     pub writeback_hmac_secret_old: SecretString,
+
+    /// Comma-separated list of principals authorised to call admin
+    /// endpoints (currently: the DLQ list + replay endpoints under
+    /// /v1/internal/outbox-dlq). Empty disables admin endpoints
+    /// entirely (they return 503). Authenticated principals not in
+    /// this list get 403.
+    ///
+    /// In dev, the principal is taken from the X-Recor-Dev-Principal
+    /// header; in production from the verified OIDC sub claim. Either
+    /// way, the principal string is compared exactly to entries in
+    /// this list. (R-LOOP-DLQ-2)
+    #[serde(default)]
+    pub admin_principals: String,
 }
 
 impl Config {
@@ -136,6 +149,18 @@ impl Config {
 
     pub fn is_dev(&self) -> bool {
         self.environment == "dev"
+    }
+
+    /// Parse `admin_principals` (CSV) into a deduplicated list of
+    /// trimmed, non-empty principal strings. Returns an empty Vec
+    /// when no admin principals are configured (admin endpoints
+    /// then return 503).
+    pub fn admin_principals_list(&self) -> Vec<String> {
+        self.admin_principals
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 }
 
