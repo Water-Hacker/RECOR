@@ -1,0 +1,127 @@
+# PR hygiene checks — D02 (plan present), D10 (PR size), D18 (no secrets
+# patterns in PR description), and the conventional-commit title format.
+#
+# Per Architecture V1 P3 § Sprint cadence: the planning step is operationally
+# enforced through this gate; a PR without a linked plan is rejected.
+
+name: pr-hygiene
+
+on:
+  pull_request:
+    branches: [main]
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-template-completeness:
+    name: pr template completeness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: required sections present
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # The PR description must contain each of the required headings
+          # from .github/pull_request_template.md. Empty placeholder text
+          # (e.g. literal "<ID>" or "<URL or "n/a">") is allowed at this
+          # stage; future tightening can require non-empty content.
+          required_headings=(
+            "## Ticket"
+            "## Plan link"
+            "## Outcomes rubric"
+            "## Summary"
+            "## Doctrine checklist"
+            "## Test plan"
+            "## Rollback plan"
+          )
+          missing=()
+          for h in "${required_headings[@]}"; do
+            if ! printf '%s' "${PR_BODY}" | grep -qF "$h"; then
+              missing+=("$h")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::PR description missing required heading(s): %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+  pr-size:
+    name: pr size (D10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: net change under 500 lines (or justified)
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Net change = additions + deletions across non-generated content.
+          # Generated files (lockfiles, *.pb.*, **/generated/**) are excluded.
+          excluded_patterns='(^|/)(node_modules|target|dist|build|\.next|\.vite|\.turbo|bazel-)(/|$)|\.pb\.(go|rs)$|/generated/|Cargo\.lock$|package-lock\.json$|pnpm-lock\.yaml$|go\.sum$|uv\.lock$'
+          changed=$(git diff --numstat "$BASE_SHA" "$HEAD_SHA" \
+            | grep -Ev "$excluded_patterns" \
+            | awk '{add+=$1; del+=$2} END {print add+del+0}')
+          echo "Net changed lines (non-generated): $changed"
+          if [ "$changed" -le 500 ]; then
+            echo "Under D10 budget."
+            exit 0
+          fi
+          # Over budget — require justification in the PR description.
+          if printf '%s' "${PR_BODY}" | grep -qiE "Large-PR justification" \
+             && printf '%s' "${PR_BODY}" | sed -n '/## Large-PR justification/,$p' \
+                 | sed -n '2,/^## /p' | grep -qE '[A-Za-z]'; then
+            echo "PR over D10 budget but justification present. Reviewer judgement applies."
+            exit 0
+          fi
+          echo "::error::PR exceeds D10 size budget ($changed > 500) without a 'Large-PR justification' section."
+          exit 1
+
+  conventional-commit-title:
+    name: conventional commit title
+    runs-on: ubuntu-latest
+    steps:
+      - name: title follows Conventional Commits
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # type(scope): description
+          # types: feat fix docs style refactor perf test build ci chore revert
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?: [a-zA-Z0-9].+'
+          if ! printf '%s' "${PR_TITLE}" | grep -qE "$pattern"; then
+            echo "::error::PR title must follow Conventional Commits: 'type(scope): description'"
+            echo "::error::Got: ${PR_TITLE}"
+            echo "::error::Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+            exit 1
+          fi
+          echo "Title OK: ${PR_TITLE}"
+
+  blocked-paths:
+    name: D18 blocked-path / secrets paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: no files added in secret-bearing paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          blocked_patterns='\.env(\.|$)|\.pem$|\.key$|\.p12$|\.pfx$|secrets/.+(?<!\.enc\.yaml)$'
+          hits=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" \
+            | grep -EP "$blocked_patterns" || true)
+          if [ -n "$hits" ]; then
+            echo "::error::PR adds files in blocked secret-bearing paths:"
+            printf '%s\n' "$hits"
+            exit 1
+          fi
