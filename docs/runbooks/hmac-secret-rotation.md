@@ -132,3 +132,22 @@ exercise the dual-secret verify logic:
 - `rotation_tampered_payload_still_rejected`
 
 These run on every CI build.
+
+## Related runbooks
+
+- [oncall-triage-tree](oncall-triage-tree.md) — entry point when an
+  unexpected 401 spike during rotation is the user-visible symptom
+- [dlq-inundation](dlq-inundation.md) — handles the DLQ rows that
+  accumulate when a rotation is botched (the common failure mode)
+- [oidc-issuer-outage](oidc-issuer-outage.md) — sister runbook for
+  the auth secret class (OIDC) versus the inter-service secret class
+  (HMAC) documented here
+- [deploy-new-version](deploy-new-version.md) — for the rollout step
+  that picks up rotated secrets when they are deployment-scoped
+- [rollback-deployment](rollback-deployment.md) — if a rotation deploy
+  destabilises a service
+- [incident-response-template](incident-response-template.md) — for
+  the post-mortem if a botched rotation caused an incident
+- [observability-prod-stack](observability-prod-stack.md) — for
+  finding the rotation-window log lines (`verified against OLD HMAC
+  secret`) in production Loki
