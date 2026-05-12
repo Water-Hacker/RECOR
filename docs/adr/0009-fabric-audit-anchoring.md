@@ -196,7 +196,7 @@ displacement.
 ## Doctrines applied
 
 - **D01** — completeness: chaincode + bridge + verifier + ADR + 2 runbooks
-  + threat-model update ship together.
+  and threat-model update ship together.
 - **D04** — tests: chaincode unit tests, bridge unit tests, processor
   unit tests, verifier handler tests all in this PR.
 - **D13** — idempotency: enforced at the chaincode boundary; bridge

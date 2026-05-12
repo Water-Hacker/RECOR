@@ -68,7 +68,7 @@ cargo run --release
 |---|---|---|
 | Liveness | `GET /healthz` | 200 within 1s |
 | Readiness | `GET /readyz` | 200 within 5s |
-| Functional | `recor_fabric_anchor_total{result="committed"}` increases over 5min |
+| Functional | `recor_fabric_anchor_total{result="committed"}` | increases over 5min |
 
 A worker that is `live` but not `committing` is the failure mode that
 matters — it indicates the Fabric upstream is rejecting or hanging,
