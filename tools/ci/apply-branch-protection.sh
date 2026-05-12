@@ -18,6 +18,26 @@
 # GitHub Free private repo those settings are silently ignored by GitHub but
 # the rest of the protection still applies. See docs/security/branch-protection.md
 # for the transitional posture.
+#
+# ───────────────────────────────────────────────────────────────────────
+# Promotion heuristic for new required status checks
+# ───────────────────────────────────────────────────────────────────────
+# Before adding a new context to required_status_checks.contexts below, the
+# workflow it references MUST have demonstrated 10 consecutive green runs
+# against main (or against PRs targeting main). The rationale is D14
+# (fail-closed): a flaky required check fails-closed on every PR for the
+# wrong reason and inverts the doctrine — it punishes contributors for
+# infrastructure flakes rather than guarding against real regressions.
+#
+# Check the run history before promotion:
+#
+#   gh run list --workflow=<workflow-name>.yaml --limit 20 \
+#       --json name,conclusion,createdAt,status
+#
+# If 10-in-a-row green has not yet accumulated, add the context to the
+# "Deferred promotions" table in docs/security/branch-protection.md and
+# leave this script's required-contexts list unchanged. See OBS-2 in
+# docs/PRODUCTION-TODO.md for the canonical example.
 
 set -euo pipefail
 
@@ -46,6 +66,12 @@ echo "Applying branch protection to ${REPO}@${BRANCH}..."
 #
 # observability-smoke is intentionally NOT in this list yet — OBS-2 in
 # PRODUCTION-TODO.md adds it once the smoke is reliable.
+#
+# OBS-2 status (as of 2026-05-12): DEFERRED. The observability-smoke
+# workflow has 4 historical runs, all failures (see branch
+# ci/obs-2-promote-smoke). Re-evaluate once 10 consecutive green runs
+# accumulate. See "Deferred promotions" in
+# docs/security/branch-protection.md for the queue + criteria.
 #
 # Review-count policy: 1 approving review on a single-maintainer personal
 # account today, raised to 2 (with CODEOWNERS multi-team enforcement) when
