@@ -70,12 +70,17 @@ services:
       ENVIRONMENT: "dev"
       HTTP_TIMEOUT_SECONDS: "10"
       RECOR_BASE_URL: "http://localhost:8080"
-      # Relay configuration — events POST to the verification engine's
-      # internal webhook. HMAC secret matches the one verification
-      # uses to verify.
+      # Outbound relay — D → V: events POST to the verification engine's
+      # internal webhook. HMAC secret matches the one verification uses
+      # to verify the signature.
       RELAY_WEBHOOK_URL: "http://verification:8081/v1/internal/declaration-events"
       RELAY_HMAC_SECRET: "${RECOR_HMAC_SECRET:?Set RECOR_HMAC_SECRET}"
       RELAY_POLL_INTERVAL_SECONDS: "2"
+      # Inbound writeback — V → D: verification engine's outbox relay
+      # POSTs verification.completed.v1 here, signed with the same
+      # shared secret. The same key is fine in this PoC; production
+      # rotates secrets per-channel.
+      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
     ports: ["127.0.0.1:8080:8080"]
     networks: [loop]
     healthcheck:
@@ -106,6 +111,11 @@ services:
       HTTP_TIMEOUT_SECONDS: "30"
       RECOR_BASE_URL: "http://localhost:8081"
       INBOUND_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      # Writeback relay — V → D: ships verification.completed.v1 events
+      # back to the Declaration service so the aggregate can transition.
+      WRITEBACK_URL: "http://declaration:8080/v1/internal/verification-outcomes"
+      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      WRITEBACK_POLL_INTERVAL_SECONDS: "2"
     ports: ["127.0.0.1:8081:8081"]
     networks: [loop]
     healthcheck:

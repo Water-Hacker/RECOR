@@ -66,6 +66,13 @@ pub struct Config {
     /// Outbox relay poll interval in seconds.
     #[serde(default = "default_relay_poll_interval")]
     pub relay_poll_interval_seconds: u64,
+
+    /// HMAC-SHA256 secret used to verify inbound writeback envelopes
+    /// from the Verification Engine on POST
+    /// /v1/internal/verification-outcomes. Empty disables the endpoint
+    /// (returns 503).
+    #[serde(default = "default_secret")]
+    pub writeback_hmac_secret: SecretString,
 }
 
 impl Config {

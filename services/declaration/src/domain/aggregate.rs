@@ -20,9 +20,9 @@ use blake3::Hasher;
 use serde::Serialize;
 use time::{Duration, OffsetDateTime};
 
-use super::command::SubmitDeclaration;
+use super::command::{RecordVerificationOutcome, SubmitDeclaration};
 use super::error::DomainError;
-use super::event::{DeclarationEvent, DeclarationSubmittedV1};
+use super::event::{DeclarationEvent, DeclarationSubmittedV1, DeclarationVerifiedV1};
 use super::value_object::{BeneficialOwnerClaim, DeclarationId, DeclarationState};
 
 /// In-memory representation of a Declaration aggregate, hydrated from
@@ -33,6 +33,10 @@ pub struct DeclarationAggregate {
     /// Monotonic event count, used for optimistic concurrency.
     pub version: u64,
     pub state: DeclarationState,
+    /// The verification case that produced the current state, if any.
+    /// Set when a `declaration.verified.v1` event is applied; replays
+    /// of the same case_id against the same aggregate are no-ops.
+    pub verification_case_id: Option<uuid::Uuid>,
 }
 
 impl DeclarationAggregate {
@@ -42,6 +46,7 @@ impl DeclarationAggregate {
             id,
             version: 0,
             state: DeclarationState::Draft, // aggregate-not-yet-emitting; "Draft" is the absent placeholder
+            verification_case_id: None,
         }
     }
 
@@ -59,6 +64,10 @@ impl DeclarationAggregate {
         match event {
             DeclarationEvent::Submitted(_) => {
                 self.state = DeclarationState::Submitted;
+            }
+            DeclarationEvent::Verified(p) => {
+                self.state = p.lane.to_declaration_state();
+                self.verification_case_id = Some(p.verification_case_id);
             }
         }
         self.version = self.version.saturating_add(1);
@@ -94,6 +103,63 @@ impl DeclarationAggregate {
 
         Ok(DeclarationEvent::Submitted(payload))
     }
+
+    /// Validate a RecordVerificationOutcome command and produce the
+    /// resulting event. Idempotent at the boundary: if the same case_id
+    /// has already been applied, returns `None` so the caller skips the
+    /// write. A different case_id against an already-verified aggregate
+    /// is a domain error — the writeback channel must not re-verify a
+    /// declaration without explicit re-verification semantics, which v1
+    /// does not support.
+    pub fn handle_record_verification(
+        &self,
+        cmd: RecordVerificationOutcome,
+    ) -> Result<Option<DeclarationEvent>, DomainError> {
+        if self.version == 0 {
+            return Err(DomainError::VerificationOutcomeBeforeSubmit(self.id.0));
+        }
+
+        validate_belief("fused_authenticity_belief", cmd.fused_authenticity_belief)?;
+        validate_belief(
+            "fused_authenticity_plausibility",
+            cmd.fused_authenticity_plausibility,
+        )?;
+        validate_belief("fused_risk_belief", cmd.fused_risk_belief)?;
+
+        if let Some(existing) = self.verification_case_id {
+            return if existing == cmd.verification_case_id {
+                // Replay of the same case — caller's writeback delivered twice.
+                // No new event; the aggregate is already at the post-verification
+                // state. Use case treats `None` as "ack and dispatch outbox".
+                Ok(None)
+            } else {
+                Err(DomainError::VerificationCaseMismatch {
+                    declaration_id: self.id.0,
+                    existing_case_id: existing,
+                    new_case_id: cmd.verification_case_id,
+                })
+            };
+        }
+
+        let payload = DeclarationVerifiedV1 {
+            declaration_id: cmd.declaration_id,
+            verification_case_id: cmd.verification_case_id,
+            lane: cmd.lane,
+            fused_authenticity_belief: cmd.fused_authenticity_belief,
+            fused_authenticity_plausibility: cmd.fused_authenticity_plausibility,
+            fused_risk_belief: cmd.fused_risk_belief,
+            completed_at: cmd.completed_at,
+            recorded_at: OffsetDateTime::now_utc(),
+        };
+        Ok(Some(DeclarationEvent::Verified(payload)))
+    }
+}
+
+fn validate_belief(field: &'static str, value: f64) -> Result<(), DomainError> {
+    if !(0.0..=1.0).contains(&value) || !value.is_finite() {
+        return Err(DomainError::FusedBeliefOutOfRange { field, value });
+    }
+    Ok(())
 }
 
 fn validate_command(cmd: &SubmitDeclaration) -> Result<(), DomainError> {
@@ -332,5 +398,113 @@ mod tests {
         let h2 = compute_receipt_hash(&cmd);
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 64); // BLAKE3 default = 32 bytes = 64 hex chars
+    }
+
+    fn verify_command(
+        agg: &DeclarationAggregate,
+        lane: crate::domain::value_object::VerificationLane,
+    ) -> RecordVerificationOutcome {
+        RecordVerificationOutcome {
+            declaration_id: agg.id,
+            verification_case_id: Uuid::now_v7(),
+            lane,
+            fused_authenticity_belief: 0.92,
+            fused_authenticity_plausibility: 0.97,
+            fused_risk_belief: 0.05,
+            completed_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    fn submitted_aggregate() -> DeclarationAggregate {
+        let mut agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![owner(10_000)]);
+        let event = agg.handle_submit(cmd).unwrap();
+        agg.apply(&event);
+        agg
+    }
+
+    #[test]
+    fn record_verification_before_submit_rejects() {
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let err = agg.handle_record_verification(cmd).unwrap_err();
+        assert!(matches!(err, DomainError::VerificationOutcomeBeforeSubmit(_)));
+    }
+
+    #[test]
+    fn green_lane_transitions_to_accepted() {
+        let agg = submitted_aggregate();
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let event = agg
+            .handle_record_verification(cmd)
+            .unwrap()
+            .expect("first verification emits an event");
+        let mut agg = agg;
+        agg.apply(&event);
+        assert_eq!(agg.state, DeclarationState::Accepted);
+        assert!(agg.verification_case_id.is_some());
+    }
+
+    #[test]
+    fn yellow_lane_transitions_to_in_verification() {
+        let agg = submitted_aggregate();
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Yellow);
+        let event = agg.handle_record_verification(cmd).unwrap().unwrap();
+        let mut agg = agg;
+        agg.apply(&event);
+        assert_eq!(agg.state, DeclarationState::InVerification);
+    }
+
+    #[test]
+    fn red_lane_transitions_to_rejected() {
+        let agg = submitted_aggregate();
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Red);
+        let event = agg.handle_record_verification(cmd).unwrap().unwrap();
+        let mut agg = agg;
+        agg.apply(&event);
+        assert_eq!(agg.state, DeclarationState::Rejected);
+    }
+
+    #[test]
+    fn replay_same_case_is_noop() {
+        let mut agg = submitted_aggregate();
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let case_id = cmd.verification_case_id;
+        let event = agg.handle_record_verification(cmd.clone()).unwrap().unwrap();
+        agg.apply(&event);
+        // Same case_id replayed
+        let mut replay = cmd;
+        replay.verification_case_id = case_id;
+        let result = agg.handle_record_verification(replay).unwrap();
+        assert!(result.is_none(), "replay must not produce a second event");
+    }
+
+    #[test]
+    fn different_case_after_verified_rejects() {
+        let mut agg = submitted_aggregate();
+        let cmd1 = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let event = agg.handle_record_verification(cmd1).unwrap().unwrap();
+        agg.apply(&event);
+        let cmd2 = verify_command(&agg, crate::domain::value_object::VerificationLane::Red);
+        let err = agg.handle_record_verification(cmd2).unwrap_err();
+        assert!(matches!(err, DomainError::VerificationCaseMismatch { .. }));
+    }
+
+    #[test]
+    fn out_of_range_belief_rejects() {
+        let agg = submitted_aggregate();
+        let mut cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        cmd.fused_authenticity_belief = 1.5;
+        let err = agg.handle_record_verification(cmd).unwrap_err();
+        assert!(matches!(err, DomainError::FusedBeliefOutOfRange { .. }));
+    }
+
+    #[test]
+    fn nan_belief_rejects() {
+        let agg = submitted_aggregate();
+        let mut cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        cmd.fused_risk_belief = f64::NAN;
+        let err = agg.handle_record_verification(cmd).unwrap_err();
+        assert!(matches!(err, DomainError::FusedBeliefOutOfRange { .. }));
     }
 }

@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use super::value_object::ValueObjectError;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum DomainError {
     #[error("declaration must include at least one beneficial owner")]
     NoBeneficialOwners,
@@ -37,6 +37,19 @@ pub enum DomainError {
 
     #[error("declarant_principal must not be empty")]
     EmptyDeclarantPrincipal,
+
+    #[error("verification outcome received for declaration {0} which has no Submitted event")]
+    VerificationOutcomeBeforeSubmit(uuid::Uuid),
+
+    #[error("verification outcome received for declaration {declaration_id} but a different case ({existing_case_id}) is already recorded as the new case ({new_case_id})")]
+    VerificationCaseMismatch {
+        declaration_id: uuid::Uuid,
+        existing_case_id: uuid::Uuid,
+        new_case_id: uuid::Uuid,
+    },
+
+    #[error("fused {field} {value} out of range [0.0, 1.0]")]
+    FusedBeliefOutOfRange { field: &'static str, value: f64 },
 
     #[error(transparent)]
     ValueObject(#[from] ValueObjectError),

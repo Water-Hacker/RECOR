@@ -71,7 +71,12 @@ impl SubmitDeclarationUseCase {
             .instrument(info_span!("save_event"))
             .await?;
 
-        let DeclarationEvent::Submitted(payload) = &event;
+        // The aggregate's handle_submit only produces `Submitted`. This
+        // `let-else` is defensive — if a future variant is added we'd
+        // surface it as an internal error rather than panic.
+        let DeclarationEvent::Submitted(payload) = &event else {
+            return Err(SubmitError::Domain(DomainError::EmptyDeclarantPrincipal));
+        };
         let receipt = SubmitReceipt {
             declaration_id: payload.declaration_id,
             receipt_hash_hex: payload.receipt_hash_hex.clone(),

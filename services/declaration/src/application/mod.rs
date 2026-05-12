@@ -9,7 +9,11 @@
 pub mod port;
 pub mod submit_declaration;
 pub mod get_declaration;
+pub mod record_verification_outcome;
 
 pub use port::{DeclarationRepository, OutboxWriter, RepositoryError};
 pub use submit_declaration::{SubmitDeclarationUseCase, SubmitReceipt, SubmitError};
 pub use get_declaration::{DeclarationProjection, GetDeclarationUseCase, GetError};
+pub use record_verification_outcome::{
+    RecordVerificationError, RecordVerificationOutcomeUseCase, RecordVerificationReceipt,
+};

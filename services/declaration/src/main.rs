@@ -10,7 +10,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use recor_declaration::api::AppState;
-use recor_declaration::application::{GetDeclarationUseCase, SubmitDeclarationUseCase};
+use recor_declaration::application::{
+    GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+};
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
@@ -51,6 +53,8 @@ async fn main() -> Result<()> {
 
     let submit = Arc::new(SubmitDeclarationUseCase::new(repository.clone()));
     let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
+    let record_verification =
+        Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
 
     let base_url = std::env::var("RECOR_BASE_URL").unwrap_or_else(|_| {
@@ -60,6 +64,7 @@ async fn main() -> Result<()> {
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
+        record_verification_usecase: record_verification,
         idempotency,
         base_url,
         is_dev: cfg.is_dev(),

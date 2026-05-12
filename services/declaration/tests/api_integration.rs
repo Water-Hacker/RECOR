@@ -23,7 +23,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use recor_declaration::api::AppState;
-use recor_declaration::application::{GetDeclarationUseCase, SubmitDeclarationUseCase};
+use recor_declaration::application::{
+    GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+};
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
@@ -57,6 +59,8 @@ async fn spawn_service() -> TestService {
 
     let submit = Arc::new(SubmitDeclarationUseCase::new(repository.clone()));
     let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
+    let record_verification =
+        Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool));
 
     // Bind to an ephemeral port.
@@ -71,6 +75,7 @@ async fn spawn_service() -> TestService {
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
+        record_verification_usecase: record_verification,
         idempotency,
         base_url: format!("http://{bind_addr}"),
         is_dev: true,
@@ -122,6 +127,10 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         environment: "dev".to_string(),
         oidc_issuer_url: String::new(),
         http_timeout_seconds: 10,
+        relay_webhook_url: String::new(),
+        relay_hmac_secret: SecretString::from(String::new()),
+        relay_poll_interval_seconds: 5,
+        writeback_hmac_secret: SecretString::from(String::new()),
     }
 }
 

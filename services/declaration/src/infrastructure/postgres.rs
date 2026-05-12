@@ -28,9 +28,9 @@ use crate::application::DeclarationProjection;
 use crate::domain::attestation::CryptographicAttestation;
 use crate::domain::value_object::{
     BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, DeclarationState,
-    EntityId,
+    EntityId, VerificationLane,
 };
-use crate::domain::{DeclarationEvent, DeclarationSubmittedV1};
+use crate::domain::{DeclarationEvent, DeclarationSubmittedV1, DeclarationVerifiedV1};
 
 pub struct PostgresDeclarationRepository {
     pool: PgPool,
@@ -108,7 +108,8 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             SELECT declaration_id, entity_id, declarant_principal, declarant_role,
                    declaration_kind, effective_from, beneficial_owners, attestation,
                    state, aggregate_version, submitted_at, receipt_hash_hex,
-                   correlation_id
+                   correlation_id, verification_state, verification_lane,
+                   verification_case_id, verified_at
             FROM declarations
             WHERE declaration_id = $1
             "#,
@@ -134,6 +135,15 @@ impl DeclarationRepository for PostgresDeclarationRepository {
         let submitted_at: time::OffsetDateTime = row.try_get("submitted_at")?;
         let receipt_hash_hex: String = row.try_get("receipt_hash_hex")?;
         let correlation_id: uuid::Uuid = row.try_get("correlation_id")?;
+        let verification_state: String = row.try_get("verification_state")?;
+        let verification_lane: Option<String> = row.try_get("verification_lane")?;
+        let verification_case_id: Option<uuid::Uuid> = row.try_get("verification_case_id")?;
+        let verified_at: Option<time::OffsetDateTime> = row.try_get("verified_at")?;
+
+        let verification_lane = match verification_lane.as_deref() {
+            None => None,
+            Some(v) => Some(parse_lane(v)?),
+        };
 
         Ok(Some(DeclarationProjection {
             declaration_id: DeclarationId(declaration_id),
@@ -149,7 +159,22 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             submitted_at,
             receipt_hash_hex,
             correlation_id,
+            verification_state,
+            verification_lane,
+            verification_case_id,
+            verified_at,
         }))
+    }
+}
+
+fn parse_lane(s: &str) -> Result<VerificationLane, RepositoryError> {
+    match s {
+        "green" => Ok(VerificationLane::Green),
+        "yellow" => Ok(VerificationLane::Yellow),
+        "red" => Ok(VerificationLane::Red),
+        other => Err(RepositoryError::Backend(sqlx::Error::Decode(
+            format!("unknown verification_lane: {other}").into(),
+        ))),
     }
 }
 
@@ -200,6 +225,10 @@ fn decode_event(
             let v1: DeclarationSubmittedV1 = serde_json::from_value(payload)?;
             Ok(DeclarationEvent::Submitted(v1))
         }
+        "declaration.verified.v1" => {
+            let v1: DeclarationVerifiedV1 = serde_json::from_value(payload)?;
+            Ok(DeclarationEvent::Verified(v1))
+        }
         other => Err(RepositoryError::Backend(sqlx::Error::Decode(
             format!("unknown event_type: {other}").into(),
         ))),
@@ -211,8 +240,17 @@ async fn insert_event(
     event: &DeclarationEvent,
     new_version: i64,
 ) -> Result<(), RepositoryError> {
-    let DeclarationEvent::Submitted(p) = event;
-    let payload = serde_json::to_value(p)?;
+    let (declaration_id, correlation_id, payload) = match event {
+        DeclarationEvent::Submitted(p) => {
+            (p.declaration_id.0, p.correlation_id, serde_json::to_value(p)?)
+        }
+        DeclarationEvent::Verified(p) => {
+            // No declarant-supplied correlation_id on a verified event;
+            // tracing context still flows via the request span. Stamp
+            // the case_id so the event row carries its provenance.
+            (p.declaration_id.0, p.verification_case_id, serde_json::to_value(p)?)
+        }
+    };
     let result = sqlx::query(
         r#"
         INSERT INTO declaration_events
@@ -220,11 +258,11 @@ async fn insert_event(
         VALUES ($1, $2, $3, $4, $5, NULL)
         "#,
     )
-    .bind(p.declaration_id.0)
+    .bind(declaration_id)
     .bind(new_version)
     .bind(event.event_type())
     .bind(payload)
-    .bind(p.correlation_id)
+    .bind(correlation_id)
     .execute(&mut **tx)
     .await;
 
@@ -245,38 +283,73 @@ async fn upsert_projection(
     event: &DeclarationEvent,
     new_version: i64,
 ) -> Result<(), RepositoryError> {
-    let DeclarationEvent::Submitted(p) = event;
-    let owners = serde_json::to_value(&p.beneficial_owners)?;
-    let attestation = serde_json::to_value(&p.attestation)?;
-    sqlx::query(
-        r#"
-        INSERT INTO declarations (
-            declaration_id, entity_id, declarant_principal, declarant_role,
-            declaration_kind, effective_from, beneficial_owners, attestation,
-            state, aggregate_version, submitted_at, receipt_hash_hex, correlation_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (declaration_id) DO UPDATE SET
-            state             = EXCLUDED.state,
-            aggregate_version = EXCLUDED.aggregate_version,
-            updated_at        = NOW()
-        "#,
-    )
-    .bind(p.declaration_id.0)
-    .bind(p.entity_id.0)
-    .bind(&p.declarant_principal)
-    .bind(p.declarant_role.as_str())
-    .bind(p.kind.as_str())
-    .bind(p.effective_from)
-    .bind(owners)
-    .bind(attestation)
-    .bind("submitted")
-    .bind(new_version)
-    .bind(p.submitted_at)
-    .bind(&p.receipt_hash_hex)
-    .bind(p.correlation_id)
-    .execute(&mut **tx)
-    .await?;
+    match event {
+        DeclarationEvent::Submitted(p) => {
+            let owners = serde_json::to_value(&p.beneficial_owners)?;
+            let attestation = serde_json::to_value(&p.attestation)?;
+            sqlx::query(
+                r#"
+                INSERT INTO declarations (
+                    declaration_id, entity_id, declarant_principal, declarant_role,
+                    declaration_kind, effective_from, beneficial_owners, attestation,
+                    state, aggregate_version, submitted_at, receipt_hash_hex, correlation_id,
+                    verification_state
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (declaration_id) DO UPDATE SET
+                    state             = EXCLUDED.state,
+                    aggregate_version = EXCLUDED.aggregate_version,
+                    updated_at        = NOW()
+                "#,
+            )
+            .bind(p.declaration_id.0)
+            .bind(p.entity_id.0)
+            .bind(&p.declarant_principal)
+            .bind(p.declarant_role.as_str())
+            .bind(p.kind.as_str())
+            .bind(p.effective_from)
+            .bind(owners)
+            .bind(attestation)
+            .bind("submitted")
+            .bind(new_version)
+            .bind(p.submitted_at)
+            .bind(&p.receipt_hash_hex)
+            .bind(p.correlation_id)
+            .bind("pending")
+            .execute(&mut **tx)
+            .await?;
+        }
+        DeclarationEvent::Verified(p) => {
+            // Projection-only update; the declarations row already exists
+            // from the prior Submitted event. The aggregate's `state`
+            // column AND the `verification_state` mirror are written in
+            // the same statement so reads see a consistent snapshot.
+            let state_str = p.lane.to_declaration_state().as_str();
+            let verification_state_str = p.lane.as_verification_state_str();
+            sqlx::query(
+                r#"
+                UPDATE declarations
+                SET state               = $2,
+                    aggregate_version   = $3,
+                    verification_state  = $4,
+                    verification_lane   = $5,
+                    verification_case_id = $6,
+                    verified_at         = $7,
+                    updated_at          = NOW()
+                WHERE declaration_id = $1
+                "#,
+            )
+            .bind(p.declaration_id.0)
+            .bind(state_str)
+            .bind(new_version)
+            .bind(verification_state_str)
+            .bind(p.lane.as_str())
+            .bind(p.verification_case_id)
+            .bind(p.completed_at)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -284,8 +357,10 @@ async fn write_outbox(
     tx: &mut Transaction<'_, Postgres>,
     event: &DeclarationEvent,
 ) -> Result<(), RepositoryError> {
-    let DeclarationEvent::Submitted(p) = event;
-    let payload = serde_json::to_value(p)?;
+    let (declaration_id, payload) = match event {
+        DeclarationEvent::Submitted(p) => (p.declaration_id.0, serde_json::to_value(p)?),
+        DeclarationEvent::Verified(p) => (p.declaration_id.0, serde_json::to_value(p)?),
+    };
     let event_id = uuid::Uuid::now_v7();
     sqlx::query(
         r#"
@@ -300,8 +375,8 @@ async fn write_outbox(
     .bind(event.event_type())
     .bind(1_i32)
     .bind("declaration")
-    .bind(p.declaration_id.0)
-    .bind(p.declaration_id.0.to_string())
+    .bind(declaration_id)
+    .bind(declaration_id.to_string())
     .bind(payload)
     .execute(&mut **tx)
     .await?;

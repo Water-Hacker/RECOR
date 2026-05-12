@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use recor_verification_engine::api::AppState;
@@ -19,7 +20,10 @@ use recor_verification_engine::application::{
 };
 use recor_verification_engine::config::Config;
 use recor_verification_engine::domain::{LaneThresholds, Stage};
-use recor_verification_engine::infrastructure::{PostgresMockBunec, PostgresVerificationRepository};
+use recor_verification_engine::infrastructure::{
+    PostgresMockBunec, PostgresVerificationRepository, VerificationOutboxRelay,
+    WritebackSubscriber,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -73,11 +77,55 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(addr).await.context("binding")?;
     info!(%addr, "listening");
 
-    let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
+    // Cancellation token shared with the writeback relay so shutdown
+    // is coordinated with the HTTP server.
+    let cancel = CancellationToken::new();
+
+    // Writeback relay — optional. Enabled when WRITEBACK_URL is set.
+    // When disabled, verification_outbox rows accumulate undispatched.
+    let relay_handle = if !cfg.writeback_url.is_empty() {
+        let subscriber = WritebackSubscriber {
+            name: "declaration-service".to_string(),
+            url: cfg.writeback_url.clone(),
+            hmac_secret: cfg.writeback_hmac_secret.expose_secret().to_string(),
+        };
+        let relay = VerificationOutboxRelay::new(pool.clone(), subscriber)
+            .with_poll_interval(std::time::Duration::from_secs(
+                cfg.writeback_poll_interval_seconds,
+            ))
+            .with_max_attempts(cfg.writeback_max_attempts);
+        let cancel_relay = cancel.clone();
+        info!(
+            url = %cfg.writeback_url,
+            poll_interval_s = cfg.writeback_poll_interval_seconds,
+            max_attempts = cfg.writeback_max_attempts,
+            "writeback relay enabled"
+        );
+        Some(tokio::spawn(async move {
+            relay.run(cancel_relay).await;
+        }))
+    } else {
+        info!("writeback relay disabled (WRITEBACK_URL not set)");
+        None
+    };
+
+    let cancel_serve = cancel.clone();
+    let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        cancel_serve.cancel();
+    });
+
     if let Err(e) = serve.await {
         error!(error = ?e, "server error");
+        cancel.cancel();
         return Err(anyhow::anyhow!(e));
     }
+
+    if let Some(h) = relay_handle {
+        let _ = h.await;
+    }
+
+    info!("recor-verification-engine stopped");
     Ok(())
 }
 

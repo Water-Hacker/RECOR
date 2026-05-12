@@ -9,7 +9,7 @@ use serde_json::json;
 use thiserror::Error;
 use tracing::error;
 
-use crate::application::{GetError, RepositoryError, SubmitError};
+use crate::application::{GetError, RecordVerificationError, RepositoryError, SubmitError};
 use crate::domain::DomainError;
 
 #[derive(Debug, Error)]
@@ -52,18 +52,31 @@ impl From<GetError> for ServiceError {
     }
 }
 
+impl From<RecordVerificationError> for ServiceError {
+    fn from(value: RecordVerificationError) -> Self {
+        match value {
+            RecordVerificationError::Domain(e) => Self::Domain(e),
+            RecordVerificationError::Repository(e) => Self::Repository(e),
+        }
+    }
+}
+
 impl IntoResponse for ServiceError {
     fn into_response(self) -> Response {
         let (status, kind, message) = match &self {
             ServiceError::Domain(e) => {
                 let kind = match e {
                     DomainError::AlreadySubmitted(_) => "conflict",
+                    DomainError::VerificationCaseMismatch { .. } => "conflict",
                     DomainError::AttestationPrincipalMismatch { .. } => "forbidden",
+                    DomainError::VerificationOutcomeBeforeSubmit(_) => "not_found",
                     _ => "bad_request",
                 };
                 let status = match e {
                     DomainError::AlreadySubmitted(_) => StatusCode::CONFLICT,
+                    DomainError::VerificationCaseMismatch { .. } => StatusCode::CONFLICT,
                     DomainError::AttestationPrincipalMismatch { .. } => StatusCode::FORBIDDEN,
+                    DomainError::VerificationOutcomeBeforeSubmit(_) => StatusCode::NOT_FOUND,
                     _ => StatusCode::BAD_REQUEST,
                 };
                 (status, kind, e.to_string())

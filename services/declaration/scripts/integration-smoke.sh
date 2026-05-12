@@ -124,9 +124,68 @@ docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declar
     "SELECT event_type, dispatched_at IS NOT NULL AS dispatched, dispatch_attempts FROM outbox WHERE aggregate_id = '$DECL_ID'"
 
 echo ""
-echo "✅ D → V LOOP PHASE 1 SMOKE: PASS"
+echo "── PHASE 2: waiting for verification → declaration writeback ──"
+# Poll the declaration projection for verification_state to transition
+# off 'pending'/'not_verified' to one of the lane states.
+verified_state=""
+for i in {1..30}; do
+    sleep 1
+    state=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+        psql -U recor -d declaration -tAc \
+        "SELECT verification_state FROM declarations WHERE declaration_id = '$DECL_ID'" \
+        2>/dev/null | tr -d '[:space:]')
+    if [ "$state" = "accepted" ] || [ "$state" = "rejected" ] || [ "$state" = "in_verification" ]; then
+        verified_state="$state"
+        echo "  ✅ writeback applied after ${i}s; declaration state = $state"
+        break
+    fi
+done
+
+if [ -z "$verified_state" ]; then
+    echo "FAIL: declaration's verification_state never transitioned within 30s"
+    echo ""
+    echo "─── verification engine logs (last 30) ───"
+    docker compose -f "$COMPOSE_FILE" logs verification | tail -30 || true
+    echo ""
+    echo "─── declaration service logs (last 30) ───"
+    docker compose -f "$COMPOSE_FILE" logs declaration | tail -30 || true
+    echo ""
+    echo "─── verification outbox state ───"
+    docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-verification \
+        psql -U recor -d verification -c \
+        "SELECT event_type, dispatched_at IS NOT NULL AS dispatched, dispatch_attempts, last_error FROM verification_outbox" \
+        || true
+    exit 1
+fi
+
+echo ""
+echo "── confirming declaration GET surfaces verification metadata ──"
+GET_RESP=$(curl -sS "http://127.0.0.1:8080/v1/declarations/$DECL_ID" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL")
+echo "$GET_RESP" | jq '{declaration_id, state, verification_state, verification_lane, verification_case_id, verified_at}'
+
+got_state=$(echo "$GET_RESP" | jq -r '.verification_state')
+got_case_id=$(echo "$GET_RESP" | jq -r '.verification_case_id')
+[ "$got_state" = "$verified_state" ] || {
+    echo "FAIL: GET says $got_state, DB says $verified_state"
+    exit 1
+}
+[ "$got_case_id" = "$case_id" ] || {
+    echo "FAIL: GET's verification_case_id ($got_case_id) != verification case_id ($case_id)"
+    exit 1
+}
+
+echo ""
+echo "── confirming verification outbox row marked dispatched ──"
+docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-verification \
+    psql -U recor -d verification -tAc \
+    "SELECT event_type, dispatched_at IS NOT NULL AS dispatched, dispatch_attempts FROM verification_outbox WHERE aggregate_id = '$DECL_ID'"
+
+echo ""
+echo "✅ D ↔ V LOOP PHASE 1 + 2 SMOKE: PASS"
 echo "   • Declaration accepted with HTTP 201 + signed receipt"
-echo "   • Outbox relay fired within ~$i seconds"
-echo "   • Verification engine ran the pipeline on the relayed declaration"
+echo "   • Outbox relay fired D → V; verification ran the pipeline"
 echo "   • Verification case persisted with the same declaration_id"
-echo "   • Outbox row marked dispatched"
+echo "   • Writeback relay fired V → D; declaration state = $verified_state"
+echo "   • Declaration projection surfaces verification metadata"
+echo "   • Both outbox rows marked dispatched"
