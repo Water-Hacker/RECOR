@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO entity_events\n            (entity_id, aggregate_version, event_type, event_payload, correlation_id)\n        VALUES ($1, $2, $3, $4, $5)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3e45cbe2735e30d6a4a3160d0ac4af6455af07985f88f21cea323fc5fb0ba92a"
+}

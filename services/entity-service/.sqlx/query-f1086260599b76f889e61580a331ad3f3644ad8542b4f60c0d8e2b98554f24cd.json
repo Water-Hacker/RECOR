@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO idempotency_records\n                (idempotency_key, actor_principal, request_hash,\n                 response_status, response_body, expires_at)\n            VALUES ($1, $2, $3, $4, $5,\n                    NOW() + (CAST($6 AS DOUBLE PRECISION) * INTERVAL '1 second'))\n            ON CONFLICT (idempotency_key) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int2",
+        "Jsonb",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f1086260599b76f889e61580a331ad3f3644ad8542b4f60c0d8e2b98554f24cd"
+}
