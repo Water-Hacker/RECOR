@@ -131,5 +131,48 @@
     "pollingIndicator": "Interrogation des mises à jour de vérification…",
     "refreshFailed": "Impossible d'actualiser le statut : {{message}}",
     "fileAnotherButton": "Déposer une autre déclaration"
+  },
+  "wizard": {
+    "progressAria": "Progression du formulaire de déclaration",
+    "currentStepAnnouncement": "étape en cours",
+    "steps": {
+      "1": {
+        "title": "Entité",
+        "heading": "Identifier l'entité",
+        "description": "Saisissez l'identifiant de l'entité concernée, votre rôle déclarant et la date d'effet de cette déclaration."
+      },
+      "2": {
+        "title": "Bénéficiaires",
+        "heading": "Bénéficiaires effectifs",
+        "description": "Énumérez toute personne physique exerçant en dernier ressort le contrôle de l'entité ; la détention totale doit atteindre exactement 100 %."
+      },
+      "3": {
+        "title": "Vérification",
+        "heading": "Vérifier votre déclaration",
+        "description": "Relisez chaque champ. L'aperçu cryptographique ci-dessous montre les octets exacts qui seront signés à l'étape suivante."
+      },
+      "4": {
+        "title": "Signer",
+        "heading": "Signer et soumettre",
+        "description": "Votre navigateur signe les octets canoniques avec votre clé Ed25519, puis transmet la déclaration au service RÉCOR."
+      }
+    },
+    "nav": {
+      "back": "Précédent",
+      "forward": "Suivant",
+      "validating": "Validation en cours…"
+    },
+    "review": {
+      "declarationIdLabel": "Identifiant de la déclaration",
+      "ownershipTotal": "Détention totale : {{percent}} % (doit être 100,00 %)",
+      "canonicalBytesHeading": "Aperçu cryptographique",
+      "canonicalBytesExplanation": "Voici les octets canoniques exacts que votre navigateur s'apprête à signer. Toute différence avec ce qui sera transmis invalide la signature — vérifiez-les avant de continuer.",
+      "canonicalBytesLengthLabel": "Longueur (octets)",
+      "canonicalBytesPrefixLabel": "Préfixe hex ({{bytes}} premiers octets)"
+    },
+    "sign": {
+      "publicKeyHeading": "Clé publique de signature",
+      "publicKeyExplanation": "Cette clé publique accompagne votre déclaration et permet à RÉCOR de vérifier la signature. La clé privée correspondante reste exclusivement dans la mémoire de votre navigateur."
+    }
   }
 }
