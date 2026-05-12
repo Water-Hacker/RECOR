@@ -20,28 +20,34 @@ but the technical instantiation of doctrines that already bind the team.
 
 ### Required reviews
 
-- **Required approving review count: 2** — D11 (two reviewers, at least one
-  cross-team). Two is the floor; CODEOWNERS multi-team rules effectively
-  raise it on stricter paths.
-- **Require review from Code Owners: yes** — D11 again. CODEOWNERS routes the
-  required reviewers based on path.
+- **Required approving review count: 1** *(transitional; target: 2)* — D11
+  calls for two reviewers with at least one cross-team. On the current
+  single-maintainer personal account, two is unreachable because no second
+  reviewer exists; setting the value to 2 would block every PR and break
+  CI-3 (the rules must actually allow merging). The count steps to 2 in the
+  same transition that introduces the `@recor/*` teams (see § "Open
+  issues" below).
+- **Require review from Code Owners: no** *(transitional; target: yes)* —
+  GitHub's "Require review from Code Owners" toggle requires the repository
+  to be public OR the account to be on GitHub Pro/Team/Enterprise. The
+  toggle is left off today; CODEOWNERS routing is advisory and enforced by
+  the `governance / codeowners-validate` status check.
 - **Dismiss stale approvals on push: yes** — D24 (the standard is
   non-negotiable). An approval before the latest push is an approval of code
   the reviewer did not see.
-- **Require last push approval: yes** — closes the loophole where a maintainer
-  push after approval re-enters the merge queue without re-review.
-
-> **CODEOWNERS enforcement caveat.** GitHub's "Require review from Code
-> Owners" toggle requires the repository to be public OR the account to be on
-> GitHub Pro/Team/Enterprise. On a personal-account GitHub Free private repo,
-> the rule sets but is not enforced. See `docs/security/teams.md` for the
-> transitional posture.
+- **Require last push approval: no** *(transitional; target: yes)* — closes
+  the loophole where a maintainer push after approval re-enters the merge
+  queue without re-review. Enabled in the same transition as the review
+  count step.
 
 ### Required status checks
 
-The protection rule references status checks by their **job name** from
-`.github/workflows/required-checks.yaml`. Names must match exactly. The current
-required-check set is:
+The protection rule references status checks by their **job name** from the
+workflow YAML (the `name:` field on each job, not the key under `jobs:`).
+Names must match exactly. The current required-check set spans three
+workflows:
+
+From `.github/workflows/required-checks.yaml`:
 
 - `lint / yaml`
 - `lint / shell`
@@ -52,6 +58,21 @@ required-check set is:
 - `governance / pr-hygiene`
 - `governance / no-dangling`
 - `claude-config-validate`
+
+From `.github/workflows/pr-hygiene.yaml`:
+
+- `pr template completeness`
+- `pr size (D10)`
+- `conventional commit title`
+- `D18 blocked-path / secrets paths`
+
+From `.github/workflows/codeowners-validate.yaml`:
+
+- `validate CODEOWNERS`
+
+`observability-smoke` is intentionally **not** in this list yet — OBS-2 in
+`docs/PRODUCTION-TODO.md` adds it once the smoke is reliable. Adding a
+flaky check fails-closed on every PR for the wrong reason (D14 inverted).
 
 Language-specific gates (rust, go, ts) are **not** in this list yet because no
 production code exists. They are added in the tickets that introduce the
@@ -160,3 +181,123 @@ Every change to this spec is a substantive governance change:
   repository move to the consortium GitHub organisation.
 - **Anthropic API key signing** is out of scope for this branch-protection
   spec; that is covered by the inference gateway and Vault (V5 P18, V5 P21).
+
+## Applied state as of 2026-05-12
+
+CI-3 (`docs/PRODUCTION-TODO.md`) applied the protection ruleset to
+`Water-Hacker/RECOR@main` via `tools/ci/apply-branch-protection.sh`.
+
+### Required status checks (14, all required)
+
+`strict: true`. Names match each workflow's job `name:` field exactly.
+
+1. `lint / yaml`
+2. `lint / shell`
+3. `lint / markdown`
+4. `secrets / gitleaks`
+5. `secrets / detect-secrets`
+6. `governance / codeowners-validate`
+7. `governance / pr-hygiene`
+8. `governance / no-dangling`
+9. `claude-config-validate`
+10. `pr template completeness`
+11. `pr size (D10)`
+12. `conventional commit title`
+13. `D18 blocked-path / secrets paths`
+14. `validate CODEOWNERS`
+
+### Settings applied
+
+| Setting                                    | Value                          |
+|--------------------------------------------|--------------------------------|
+| `enforce_admins`                           | `true` (no admin bypass)       |
+| `required_pull_request_reviews.required_approving_review_count` | `1` (transitional; target 2) |
+| `required_pull_request_reviews.dismiss_stale_reviews`           | `true`                       |
+| `required_pull_request_reviews.require_code_owner_reviews`      | `false` (transitional)       |
+| `required_pull_request_reviews.require_last_push_approval`      | `false` (transitional)       |
+| `required_linear_history`                  | `true`                         |
+| `allow_force_pushes`                       | `false`                        |
+| `allow_deletions`                          | `false`                        |
+| `block_creations`                          | `false`                        |
+| `required_conversation_resolution`         | `true`                         |
+| `required_signatures`                      | `true`                         |
+| `lock_branch`                              | `false`                        |
+
+### Applied by
+
+- Repo admin: `Water-Hacker` (sole administrator of the personal-account
+  repository on 2026-05-12).
+- Commit / PR: CI-3 PR in `chore/apply-branch-protection`.
+- Mechanism: `tools/ci/apply-branch-protection.sh` (idempotent re-run
+  produces the same end state).
+
+### Deviations from prior R-001 spec
+
+The script's review-count and CODEOWNERS-enforcement settings were
+relaxed from the R-001 doctrine target (count=2, CODEOWNERS=enforced,
+last-push-approval=on) because the repo is a personal-account private
+repo with a single maintainer; the R-001 values would block every PR
+from merging. The doctrine targets are restored in the same transition
+event that creates the `@recor/*` teams. The remaining R-001 settings
+(linear history, force-push off, deletions off, conversation resolution,
+signed commits, enforce-admins) are unchanged from doctrine.
+
+### How to verify
+
+Read the full ruleset:
+
+```bash
+gh api repos/Water-Hacker/RECOR/branches/main/protection | jq .
+```
+
+Expected output snippet (truncated):
+
+```json
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "lint / yaml",
+      "lint / shell",
+      "lint / markdown",
+      "secrets / gitleaks",
+      "secrets / detect-secrets",
+      "governance / codeowners-validate",
+      "governance / pr-hygiene",
+      "governance / no-dangling",
+      "claude-config-validate",
+      "pr template completeness",
+      "pr size (D10)",
+      "conventional commit title",
+      "D18 blocked-path / secrets paths",
+      "validate CODEOWNERS"
+    ]
+  },
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "require_last_push_approval": false,
+    "required_approving_review_count": 1
+  },
+  "required_signatures": { "enabled": true },
+  "enforce_admins":      { "enabled": true },
+  "required_linear_history":          { "enabled": true },
+  "allow_force_pushes":               { "enabled": false },
+  "allow_deletions":                  { "enabled": false },
+  "block_creations":                  { "enabled": false },
+  "required_conversation_resolution": { "enabled": true },
+  "lock_branch":                      { "enabled": false }
+}
+```
+
+Confirm force-push is rejected:
+
+```bash
+# In a fresh clone:
+git reset --hard HEAD~1
+git push --force origin main
+# Expected:
+#   remote: error: GH006: Protected branch update failed for refs/heads/main.
+#   remote: - Cannot force-push to this branch
+#    ! [remote rejected] main -> main (protected branch hook declined)
+```
