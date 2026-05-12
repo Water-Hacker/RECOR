@@ -75,22 +75,7 @@ jobs:
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@v17
         with:
-          config: |
-            {
-              "default": true,
-              "MD013": false,
-              "MD022": false,
-              "MD024": { "siblings_only": true },
-              "MD025": false,
-              "MD026": false,
-              "MD031": false,
-              "MD032": false,
-              "MD033": false,
-              "MD034": false,
-              "MD040": false,
-              "MD041": false,
-              "MD060": false
-            }
+          # Config lives at .markdownlint-cli2.jsonc in the repo root.
           globs: |
             **/*.md
             !**/node_modules/**
