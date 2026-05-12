@@ -2450,6 +2450,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "recor-entity-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.8.9",
+ "blake3",
+ "config",
+ "dotenvy",
+ "futures",
+ "hex",
+ "hmac",
+ "http",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "prometheus",
+ "proptest",
+ "recor-auth-oidc",
+ "recor-logging",
+ "reqwest",
+ "rstest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "testcontainers",
+ "testcontainers-modules",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-scalar",
+ "uuid",
+]
+
+[[package]]
 name = "recor-logging"
 version = "0.1.0"
 dependencies = [

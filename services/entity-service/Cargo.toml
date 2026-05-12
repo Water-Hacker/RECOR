@@ -1,0 +1,93 @@
+[package]
+name = "recor-entity-service"
+description = "RÉCOR Entity service — authoritative cache + projection of legal-entity registry data (IDENTITY-1)"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "recor-entity-service"
+path = "src/main.rs"
+
+# DOC-1: stand-alone binary that prints the OpenAPI 3.1 spec to stdout.
+# Used by `tools/ci/check-openapi-drift.sh` to regenerate the committed
+# snapshot without booting the full service (no DB, no network).
+[[bin]]
+name = "dump-openapi"
+path = "src/bin/dump-openapi.rs"
+
+[lib]
+name = "recor_entity_service"
+path = "src/lib.rs"
+
+[dependencies]
+# Shared workspace crates.
+recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+recor-logging = { path = "../../packages/recor-logging" }
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+
+# HTTP server
+axum.workspace = true
+tower.workspace = true
+tower-http = { version = "0.6", features = ["trace", "request-id", "timeout", "compression-gzip"] }
+http.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+
+# Identity / value objects
+uuid.workspace = true
+time.workspace = true
+
+# Errors
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Observability
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-semantic-conventions = "0.27"
+
+# OBS-1: Prometheus metrics.
+prometheus.workspace = true
+
+# Config
+config.workspace = true
+secrecy.workspace = true
+
+# Hashing for receipt + dev-only redaction-key fallback
+blake3.workspace = true
+hex.workspace = true
+
+# Misc
+async-trait.workspace = true
+futures = "0.3"
+dotenvy.workspace = true
+
+# Outbox relay: HMAC-signed HTTP webhooks
+hmac.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+
+# OpenAPI 3.1 spec generation (DOC-1).
+utoipa.workspace = true
+utoipa-scalar.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+proptest.workspace = true
