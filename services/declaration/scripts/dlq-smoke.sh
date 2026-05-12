@@ -25,7 +25,8 @@ COMPOSE_FILE="docker-compose.dlq-smoke.yaml"
 if [ ! -f .env ]; then
     {
         echo "RECOR_DB_PASSWORD=$(openssl rand -hex 24)"
-        echo "RECOR_HMAC_SECRET=$(openssl rand -hex 32)"
+        echo "RECOR_D_TO_V_HMAC=$(openssl rand -hex 32)"
+        echo "RECOR_V_TO_D_HMAC=$(openssl rand -hex 32)"
     } > .env
 fi
 
@@ -79,9 +80,9 @@ services:
       RECOR_BASE_URL: "http://localhost:8080"
       # DLQ-focused config: unreachable webhook + tight max_attempts.
       RELAY_WEBHOOK_URL: "http://nope-not-here.invalid:9999/sink"
-      RELAY_HMAC_SECRET: "${RECOR_HMAC_SECRET:?Set RECOR_HMAC_SECRET}"
+      RELAY_HMAC_SECRET: "${RECOR_D_TO_V_HMAC:?Set RECOR_D_TO_V_HMAC}"
       RELAY_POLL_INTERVAL_SECONDS: "1"
-      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      WRITEBACK_HMAC_SECRET: "${RECOR_V_TO_D_HMAC:?Set RECOR_V_TO_D_HMAC}"
     ports: ["127.0.0.1:8088:8080"]
     networks: [dlq]
     healthcheck:

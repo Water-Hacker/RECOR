@@ -86,6 +86,15 @@ pub struct Config {
     /// (returns 503).
     #[serde(default = "default_secret")]
     pub writeback_hmac_secret: SecretString,
+
+    /// "Still-valid old" secret accepted during a rotation window
+    /// (R-LOOP-4-ROT). Empty means rotation not in progress. When
+    /// set, the writeback endpoint accepts envelopes signed with
+    /// EITHER `writeback_hmac_secret` or this value, enabling
+    /// zero-downtime rotation. The operator clears it after the new
+    /// secret has propagated through the signer side.
+    #[serde(default = "default_secret")]
+    pub writeback_hmac_secret_old: SecretString,
 }
 
 impl Config {

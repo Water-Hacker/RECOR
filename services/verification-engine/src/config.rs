@@ -37,6 +37,11 @@ pub struct Config {
     #[serde(default = "default_secret")]
     pub inbound_hmac_secret: SecretString,
 
+    /// "Still-valid old" inbound secret accepted during a rotation
+    /// window (R-LOOP-4-ROT). Empty means rotation not in progress.
+    #[serde(default = "default_secret")]
+    pub inbound_hmac_secret_old: SecretString,
+
     /// URL of the Declaration service's /v1/internal/verification-outcomes
     /// endpoint. The outbox-relay POSTs verification.completed events
     /// here. Empty disables the relay (rows accumulate undispatched).

@@ -137,6 +137,7 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         relay_hmac_secret: SecretString::from(String::new()),
         relay_poll_interval_seconds: 5,
         writeback_hmac_secret: SecretString::from(String::new()),
+        writeback_hmac_secret_old: SecretString::from(String::new()),
     }
 }
 
