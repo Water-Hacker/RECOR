@@ -21,7 +21,8 @@ use tower_http::{
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::api::auth::auth_middleware;
+use crate::api::auth::{auth_middleware, AuthConfig};
+use crate::api::oidc::OidcVerifier;
 use crate::application::{GetVerificationUseCase, SubmitVerificationUseCase};
 use crate::config::Config;
 use crate::domain::{DeclarationSnapshot, VerificationCase, VerificationCaseId};
@@ -34,17 +35,22 @@ pub struct AppState {
     pub get_usecase: Arc<GetVerificationUseCase>,
     pub repository: Arc<PostgresVerificationRepository>,
     pub is_dev: bool,
+    pub oidc: Option<Arc<OidcVerifier>>,
 }
 
 pub fn router(state: AppState, cfg: &Config) -> Router {
-    let is_dev = state.is_dev;
+    let auth_state = AuthConfig {
+        is_dev: state.is_dev,
+        oidc: state.oidc.clone(),
+    };
 
     let protected = Router::new()
         .route("/v1/verifications", post(submit_verification))
         .route("/v1/verifications/{case_id}", get(get_verification))
-        .route_layer(axum::middleware::from_fn(move |req, next| {
-            auth_middleware(is_dev, req, next)
-        }))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
         .with_state(state.clone());
 
     // Internal HMAC-authenticated webhook for the Declaration service's

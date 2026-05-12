@@ -75,6 +75,9 @@ hmac = "0.12"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# OIDC: RS256/ES256/EdDSA JWT signature + claim verification, JWKS fetching.
+jsonwebtoken = "9"
+
 [dev-dependencies]
 proptest = "1.5"
 rstest = "0.23"

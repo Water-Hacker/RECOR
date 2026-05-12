@@ -56,10 +56,14 @@ first sprint of operational traffic.
 - This is the first commit of platform code. Many "ideal" features are
   deferred to subsequent tickets — see the follow-ups list at the bottom
   of the service README. Do not silently add to scope without an ADR.
-- The OIDC JWT verification path is incomplete — it currently peeks at
-  claims without signature verification. Production environment refuses
-  to start when `ENVIRONMENT != dev && OIDC_ISSUER_URL is empty`, so the
-  unverified path cannot reach prod. Closing this is `R-DECL-1`.
+- OIDC JWT verification is real: `src/api/oidc.rs` does discovery,
+  JWKS fetching with TTL caching, signature + `iss` + `aud` + `exp` +
+  `nbf` verification. HMAC algorithms (HS256/384/512) are refused
+  outright — algorithm-confusion attacks have nothing to land on.
+  Production refuses to start when `ENVIRONMENT != dev` and
+  `OIDC_ISSUER_URL` is empty; `OIDC_AUDIENCE` is required whenever
+  `OIDC_ISSUER_URL` is set. R-DECL-1 is CLOSED (was: peeking at claims
+  unverified).
 - The integration tests are `#[ignore]`-gated; CI must use the
   testcontainers Docker socket pattern to un-ignore them. Today: run
   manually with `cargo test -- --ignored`.

@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use recor_declaration::api::AppState;
+use recor_declaration::api::{AppState, OidcVerifier};
 use recor_declaration::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
 };
@@ -61,6 +61,22 @@ async fn main() -> Result<()> {
         format!("http://{}", cfg.bind_addr.trim_start_matches("0.0.0.0:"))
     });
 
+    // OIDC verifier — discovered at startup. `None` only in dev when
+    // OIDC_ISSUER_URL is unset; production refuses at config load.
+    let oidc = if cfg.oidc_issuer_url.is_empty() {
+        info!("OIDC verifier disabled (dev mode — OIDC_ISSUER_URL unset)");
+        None
+    } else {
+        let v = OidcVerifier::discover(
+            cfg.oidc_issuer_url.clone(),
+            cfg.oidc_audience.clone(),
+        )
+        .await
+        .context("OIDC discovery against configured issuer")?;
+        info!(issuer = %cfg.oidc_issuer_url, audience = %cfg.oidc_audience, "OIDC verifier ready");
+        Some(v)
+    };
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
@@ -69,6 +85,7 @@ async fn main() -> Result<()> {
         base_url,
         is_dev: cfg.is_dev(),
         idempotency_ttl_seconds: cfg.idempotency_ttl_seconds,
+        oidc,
     };
 
     let router = recor_declaration::api::router(app_state, &cfg);

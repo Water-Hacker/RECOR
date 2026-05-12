@@ -80,6 +80,7 @@ async fn spawn_service() -> TestService {
         base_url: format!("http://{bind_addr}"),
         is_dev: true,
         idempotency_ttl_seconds: 3600,
+        oidc: None,
     };
     let router = recor_declaration::api::router(app_state, &cfg);
 
@@ -126,6 +127,7 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         service_name: "recor-declaration-test".to_string(),
         environment: "dev".to_string(),
         oidc_issuer_url: String::new(),
+        oidc_audience: String::new(),
         http_timeout_seconds: 10,
         relay_webhook_url: String::new(),
         relay_hmac_secret: SecretString::from(String::new()),

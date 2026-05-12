@@ -1,15 +1,23 @@
 //! Authentication middleware — mirrors the pattern from
 //! services/declaration. Dev path accepts `X-Recor-Dev-Principal`;
-//! production requires Bearer JWT (signature verification is stubbed
-//! pending R-VER-7).
+//! production verifies the Bearer JWT against the configured OIDC
+//! issuer's JWKS (`crate::api::oidc::OidcVerifier`).
+//!
+//! D14 (fail-closed): bearer tokens with no verifier configured are
+//! rejected with 401. Production config refuses to start when
+//! `OIDC_ISSUER_URL` is unset and `environment != "dev"`.
+
+use std::sync::Arc;
 
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     http::{header, HeaderMap},
     middleware::Next,
     response::Response,
 };
+use tracing::warn;
 
+use crate::api::oidc::{OidcVerifier, VerificationError};
 use crate::error::ServiceError;
 
 #[derive(Debug, Clone)]
@@ -17,18 +25,27 @@ pub struct Principal {
     pub subject: String,
 }
 
+#[derive(Clone)]
+pub struct AuthConfig {
+    pub is_dev: bool,
+    pub oidc: Option<Arc<OidcVerifier>>,
+}
+
 pub async fn auth_middleware(
-    is_dev: bool,
+    State(state): State<AuthConfig>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, ServiceError> {
-    let principal = resolve_principal(req.headers(), is_dev)?;
+    let principal = resolve_principal(req.headers(), &state).await?;
     req.extensions_mut().insert(principal);
     Ok(next.run(req).await)
 }
 
-fn resolve_principal(headers: &HeaderMap, is_dev: bool) -> Result<Principal, ServiceError> {
-    if is_dev {
+async fn resolve_principal(
+    headers: &HeaderMap,
+    state: &AuthConfig,
+) -> Result<Principal, ServiceError> {
+    if state.is_dev {
         if let Some(v) = headers.get("x-recor-dev-principal") {
             let subject = v
                 .to_str()
@@ -47,24 +64,28 @@ fn resolve_principal(headers: &HeaderMap, is_dev: bool) -> Result<Principal, Ser
     let Some(token) = bearer else {
         return Err(ServiceError::AuthenticationRequired);
     };
-    let claims = peek_unverified_claims(token).ok_or(ServiceError::AuthenticationRequired)?;
-    let subject = claims
-        .get("sub")
-        .and_then(|v| v.as_str())
-        .ok_or(ServiceError::AuthenticationRequired)?
-        .to_string();
-    if subject.is_empty() {
+
+    let Some(verifier) = state.oidc.as_ref() else {
+        warn!("bearer token received but no OIDC verifier configured");
+        return Err(ServiceError::AuthenticationRequired);
+    };
+
+    let claims = verifier.verify(token).await.map_err(|e| {
+        warn!(error = %e, "bearer token failed verification");
+        match e {
+            VerificationError::TokenInvalid(_)
+            | VerificationError::MalformedHeader
+            | VerificationError::MissingKid
+            | VerificationError::UnknownKid(_)
+            | VerificationError::UnsupportedAlgorithm(_)
+            | VerificationError::NoUsableKey => ServiceError::AuthenticationRequired,
+            VerificationError::DiscoveryFailed { .. }
+            | VerificationError::JwksFetchFailed { .. } => ServiceError::Internal,
+        }
+    })?;
+
+    if claims.sub.trim().is_empty() {
         return Err(ServiceError::AuthenticationRequired);
     }
-    Ok(Principal { subject })
-}
-
-fn peek_unverified_claims(token: &str) -> Option<serde_json::Value> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let payload = URL_SAFE_NO_PAD.decode(parts[1].as_bytes()).ok()?;
-    serde_json::from_slice(&payload).ok()
+    Ok(Principal { subject: claims.sub })
 }
