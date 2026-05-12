@@ -91,7 +91,7 @@ tickets):
 | T | Malicious script injected via XSS replaces signing key | CSP `script-src 'self'` (no `unsafe-inline`, no `unsafe-eval`); `frame-ancestors 'none'` | `applications/declarant-portal/CLAUDE.md` § CSP |
 | R | Declarant denies submitting a declaration | Receipt contains Ed25519 signature over canonical bytes; signature retained on `declaration_events` (server-side); declarant printed receipt is reproducible | D15 |
 | I | Receipt URL leaked in Referer header to off-site link | `Referrer-Policy: strict-origin-when-cross-origin` | security-headers.conf.template |
-| I | Private key persisted to localStorage / IndexedDB by future feature | **Gap**: today the key is memory-only by code review only; no programmatic enforcement. Mitigated by code review per D18; binding R-PORT-2 (offline drafts) ticket explicitly carries this constraint |
+| I | Private key persisted to localStorage / IndexedDB by future feature | Memory-only today, enforced by code review per D18 | **Gap G5** — no programmatic enforcement; R-PORT-2 (offline drafts) carries this constraint |
 | D | Hostile script consumes CPU via crypto-mining | CSP closes the inline-script path; `script-src 'self'` only allows bundled JS | CSP |
 | D | Submit endpoint flooded from a single principal | OPS-1 (shipped) — 60 rpm/principal, 10 burst, on POST routes only | `services/declaration/src/api/rate_limit.rs` |
 | E | Browser feature (camera/USB/payment) abused by compromised dependency | `Permissions-Policy` disables every browser feature the portal does not use | security-headers.conf.template |
@@ -106,7 +106,7 @@ tickets):
 | T | Outbox row mutated between write and relay | Outbox + event + projection in single Postgres transaction (D13); relay is idempotent on `event_id` | `services/declaration/src/infrastructure/outbox.rs` |
 | R | Declarant later disputes that they signed | Ed25519 attestation persisted alongside the event; BLAKE3 receipt deterministic from canonical bytes | D15 |
 | I | PII leaked via tracing logs | OPS-2 (shipped): `recor-logging::RedactingLayer` masks SPIFFE paths, UUID PII fields, partial receipt hashes | `packages/recor-logging/src/lib.rs` |
-| I | Postgres backup theft exposes PII | **Gap**: declaration body PII is unencrypted at rest in the projection table. Accepted risk for v1; tracked in R-DECL-* (TBD ticket). Mitigation today: filesystem encryption + restricted backup access |
+| I | Postgres backup theft exposes PII | Filesystem encryption + restricted backup access on the host | **Gap G3** — declaration body PII unencrypted at rest; accepted-risk for v1, tracked in `docs/PRODUCTION-TODO.md` (encryption-at-rest follow-up) |
 | D | Submit flood (rate-limited above) | OPS-1 — see portal § D |  |
 | D | Slow-loris on `/healthz` blocks the readiness path | Per-route timeout via `TimeoutLayer` | `services/declaration/src/api/rest.rs` |
 | E | Idempotency-Key replay grants a fresh receipt | Idempotency record TTL + replay returns the exact previous response, not a new write | D13; `services/declaration/src/application/submit_declaration.rs` |
@@ -128,7 +128,7 @@ tickets):
 |---|---|---|---|
 | S | Either side forges an envelope without the shared HMAC | Per-channel HMAC-SHA256; constant-time compare; algorithm not negotiable (no JWT-style alg field on the wire) | `services/declaration/src/api/internal.rs` |
 | S | Rotation race: old secret accepted forever | Dual-secret rotation window: operator clears the old slot after migration completes; runbook in `docs/runbooks/hmac-secret-rotation.md` enforces the close-out step | ADR-005 |
-| T | Replay of a captured envelope | **Gap, partially mitigated**: idempotency on the receiver dedupes by event_id, so replay produces no observable effect; but the limiter is not bound to the envelope timestamp. Tracked: future binding to envelope `iat` with a small clock-skew window |
+| T | Replay of a captured envelope | Receiver idempotency by `event_id` produces no observable effect on replay | **Gap G2** — not bound to envelope timestamp; R-LOOP-2 (Kafka migration) carries the `iat` enforcement |
 | R | Either side denies sending | HMAC signatures + persisted outbox + DLQ retain the original envelope bytes | D15 |
 | I | HMAC secret leaked in tracing | OPS-2 redacting layer + secrets wrapped in `SecretString`; no `expose_secret()` in any log site | `packages/recor-logging/src/lib.rs` |
 | D | DLQ floods consume disk | DLQ admin endpoints (R-LOOP-DLQ-2/3, shipped) let operator drain; alert wiring is OBS-1 (Phase 2) | `services/declaration/src/api/dlq.rs` |
@@ -153,7 +153,7 @@ tickets):
 | S | Service-role credential used by an unauthorised client | DB credential is a `SecretString` in env; no shared role; refuses to start without `DATABASE_URL` | D18 |
 | T | Direct row mutation on event log bypasses domain | Event log has no UPDATE/DELETE grants for the service role; tested via integration | migrations |
 | T | sqlx query injection | sqlx runtime-checked queries with parameterised binds; no string-built SQL | code-review-enforced |
-| R | DBA later denies running a destructive statement | **Gap**: today no in-database audit of DBA-role statements. Mitigation: production DBA access is procedural (DOC-3 incident-response-template); programmatic audit ships with OBS-1 (Phase 2) |
+| R | DBA later denies running a destructive statement | Production DBA access is procedural (DOC-3 incident-response-template) | **Gap G4** — no in-database audit of DBA-role statements; OBS-1 (Phase 2) ships programmatic audit |
 | I | Backup theft (see Declaration § I) | Filesystem encryption + access restrictions on backup hosts | accepted-risk for v1 |
 | D | Connection pool exhaustion under load | `db_pool_max_connections` (configurable); per-request timeout in axum | `services/declaration/src/config.rs` |
 | E | Privilege escalation via Postgres extension | No extensions installed beyond `pgcrypto` for `gen_random_uuid()`; testcontainers pinned to `postgres:17-alpine` matching production | migrations |
