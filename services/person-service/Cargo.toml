@@ -1,0 +1,87 @@
+[package]
+name = "recor-person-service"
+description = "RÉCOR Person service — canonical natural-person registry anchoring beneficial-owner identities"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "recor-person-service"
+path = "src/main.rs"
+
+# DOC-1 mirror: stand-alone binary that prints the OpenAPI 3.1 spec
+# to stdout. Used by `tools/ci/check-openapi-drift.sh` (when added for
+# this service) to regenerate the committed snapshot without booting
+# the service. Pure: no DB, no network.
+[[bin]]
+name = "dump-openapi-person"
+path = "src/bin/dump-openapi.rs"
+
+[lib]
+name = "recor_person_service"
+path = "src/lib.rs"
+
+[dependencies]
+# Shared workspace crates.
+recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+recor-logging = { path = "../../packages/recor-logging" }
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+
+# HTTP server
+axum.workspace = true
+tower.workspace = true
+tower-http = { version = "0.6", features = ["trace", "request-id", "timeout", "compression-gzip"] }
+http.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+
+# Identity / value objects
+uuid.workspace = true
+time.workspace = true
+
+# Crypto (BLAKE3 for receipt-style hashing on event payloads)
+blake3.workspace = true
+hex.workspace = true
+
+# Errors
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Observability
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+prometheus.workspace = true
+
+# Config
+config.workspace = true
+secrecy.workspace = true
+
+# Misc
+async-trait.workspace = true
+futures = "0.3"
+dotenvy.workspace = true
+
+# OpenAPI 3.1 spec generation (DOC-1).
+utoipa.workspace = true
+utoipa-scalar.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+reqwest.workspace = true
+http-body-util = "0.1"

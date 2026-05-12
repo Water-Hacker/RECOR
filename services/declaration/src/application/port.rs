@@ -98,3 +98,45 @@ pub enum RepositoryError {
     #[error("event serialisation failure: {0}")]
     Serialisation(#[from] serde_json::Error),
 }
+
+/// Port for validating that a `person_id` referenced inside a
+/// declaration's `beneficial_owners` payload resolves to a real Person
+/// record (R-DECL-4 cross-service integration).
+///
+/// The trait is intentionally tiny — a single async predicate. The HTTP
+/// adapter is in `crate::infrastructure::person_registry::PersonRegistryHttpAdapter`;
+/// in-memory test doubles live alongside the use-case tests.
+#[async_trait]
+pub trait PersonRegistryPort: Send + Sync {
+    /// Returns `Ok(true)` when the person id resolves to a live record
+    /// in the registry, `Ok(false)` when the person does not exist or
+    /// has been merged-out. Transport / infrastructure failures bubble
+    /// up as `Err`.
+    async fn exists(
+        &self,
+        person_id: uuid::Uuid,
+    ) -> Result<bool, PersonRegistryError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PersonRegistryError {
+    #[error("person registry transport failure: {0}")]
+    Transport(String),
+    #[error("person registry returned an unexpected status: {0}")]
+    UnexpectedStatus(u16),
+}
+
+/// A no-op adapter — `exists` always returns `Ok(true)`. Used in
+/// dev/test when `PERSON_SERVICE_URL` is empty so the submit pipeline
+/// stays end-to-end exercisable without standing up a second service.
+pub struct PersonRegistryDisabled;
+
+#[async_trait]
+impl PersonRegistryPort for PersonRegistryDisabled {
+    async fn exists(
+        &self,
+        _person_id: uuid::Uuid,
+    ) -> Result<bool, PersonRegistryError> {
+        Ok(true)
+    }
+}
