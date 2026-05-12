@@ -1,0 +1,1380 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RÉCOR Declaration Service",
+    "description": "REST surface of the RÉCOR Declaration service. Accepts beneficial-ownership declarations, returns signed receipts, relays verification outcomes from the Verification Engine, and exposes operator endpoints under `/v1/internal/*`. Endpoints under the `internal` tag are not for general consumer use.",
+    "contact": {
+      "name": "RÉCOR domain team",
+      "email": "noreply@recor.cm"
+    },
+    "license": {
+      "name": "Apache-2.0"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local dev"
+    },
+    {
+      "url": "https://api.recor.cm",
+      "description": "Production (TBD)"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Service process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Service is ready to serve traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unreachable (typically the database)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/declarations": {
+      "post": {
+        "tags": [
+          "declarations"
+        ],
+        "operationId": "submitDeclaration",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Optional client-supplied idempotency key. Replays of the same key with the same body return the original response.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDeclarationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay; returns the recorded response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitDeclarationResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Declaration accepted and persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitDeclarationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or bad attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Attestation principal mismatch / authorisation denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency conflict OR optimistic concurrency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate-limited (OPS-1; token-bucket per principal)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/declarations/{declaration_id}": {
+      "get": {
+        "tags": [
+          "declarations"
+        ],
+        "operationId": "getDeclaration",
+        "parameters": [
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Declaration UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current projection of the declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetDeclarationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Declaration is owned by a different principal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/declarations/{declaration_id}/supersede": {
+      "post": {
+        "tags": [
+          "declarations"
+        ],
+        "operationId": "supersedeDeclaration",
+        "parameters": [
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Identifier of the declaration to supersede",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDeclarationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successor declaration accepted; previous record marked superseded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupersedeDeclarationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or bad attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not the owner of the prior declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Prior declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already superseded or optimistic-concurrency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate-limited (OPS-1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/outbox-dlq": {
+      "get": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "listDlq",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of rows to return; defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 50
+            },
+            "example": 50
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Zero-indexed offset for paging.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 0
+            },
+            "example": 0
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of DLQ rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin endpoints disabled (allowlist empty)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/outbox-dlq/{id}/replay": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "replayDlq",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "DLQ row id to replay",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Row was moved back to the outbox for retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No DLQ row with the given id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin endpoints disabled (allowlist empty)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/verification-outcomes": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "handleVerificationOutcome",
+        "requestBody": {
+          "description": "Slim outbox envelope from the Verification Engine; payload conforms to VerificationOutcomeRequest.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerificationOutcomeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Replay of an already-recorded outcome (no-op)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOutcomeResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "New verification outcome recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOutcomeResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted but ignored (unknown event_type)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOutcomeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed envelope or payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or bad HMAC signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Referenced declaration does not exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting outcome for the same case_id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Writeback endpoint disabled (no HMAC secret configured)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hmacSignature": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BeneficialOwnerClaim": {
+        "type": "object",
+        "description": "One declared beneficial owner with their interest in the entity.",
+        "required": [
+          "person_id",
+          "ownership_basis_points",
+          "interest_kind"
+        ],
+        "properties": {
+          "interest_kind": {
+            "$ref": "#/components/schemas/InterestKind",
+            "description": "Nature of the interest — equity, voting-rights, control-without-equity, etc."
+          },
+          "ownership_basis_points": {
+            "$ref": "#/components/schemas/OwnershipBasisPoints",
+            "description": "Percentage of equity (or equivalent control proxy) expressed as\nbasis points."
+          },
+          "person_id": {
+            "$ref": "#/components/schemas/PersonId",
+            "description": "Canonical person identifier. The declarant supplies this; the\nPerson service is the source of truth that the verification engine\nvalidates against in a later pipeline stage."
+          }
+        }
+      },
+      "CryptographicAttestation": {
+        "type": "object",
+        "description": "A signed attestation submitted with a declaration.\n\nThe signature is over the canonical JSON form of the declaration\npayload (entity_id, declarant_principal, declarant_role,\ndeclaration_kind, effective_from, beneficial_owners, nonce_hex),\nserialised with sorted keys, no whitespace, UTF-8 — i.e. JCS\n(RFC 8785). The nonce protects against replay.",
+        "required": [
+          "signed_by",
+          "signature_algorithm",
+          "signature_hex",
+          "public_key_hex",
+          "nonce_hex"
+        ],
+        "properties": {
+          "nonce_hex": {
+            "type": "string",
+            "description": "Random nonce, hex-encoded. The verifier records nonces per\nprincipal to prevent replay."
+          },
+          "public_key_hex": {
+            "type": "string",
+            "description": "The declarant's public key, hex-encoded. The verifier resolves\nthis against the registered keys for the principal; mismatch\nrejects the attestation."
+          },
+          "signature_algorithm": {
+            "$ref": "#/components/schemas/SignatureAlgorithm",
+            "description": "Signature algorithm. Always Ed25519 in this version."
+          },
+          "signature_hex": {
+            "type": "string",
+            "description": "The signature, hex-encoded."
+          },
+          "signed_by": {
+            "type": "string",
+            "description": "Principal identifier the signature is bound to. Matches the\nauthenticated principal at the API boundary."
+          }
+        }
+      },
+      "DeclarantRole": {
+        "type": "string",
+        "description": "Role under which a declarant is submitting on behalf of the entity.",
+        "enum": [
+          "self",
+          "authorised_agent",
+          "operator_assisted"
+        ]
+      },
+      "DeclarationId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Stable identifier for a declaration. UUIDv7 — time-sortable, so\nnatural ordering matches submission order.",
+        "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+      },
+      "DeclarationKind": {
+        "type": "string",
+        "description": "The reason a declaration is being submitted.",
+        "enum": [
+          "incorporation",
+          "annual_renewal",
+          "change_of_control",
+          "correction",
+          "amendment"
+        ]
+      },
+      "DeclarationState": {
+        "type": "string",
+        "description": "Lifecycle state of a declaration.",
+        "enum": [
+          "draft",
+          "submitted",
+          "in_verification",
+          "accepted",
+          "rejected",
+          "superseded"
+        ]
+      },
+      "DlqItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "event_type",
+          "event_version",
+          "aggregate_type",
+          "aggregate_id",
+          "partition_key",
+          "payload",
+          "created_at",
+          "dead_lettered_at",
+          "dispatch_attempts"
+        ],
+        "properties": {
+          "aggregate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "aggregate_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dead_lettered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dispatch_attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "event_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "partition_key": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Original event payload as JSON. Schema depends on `event_type`."
+          }
+        }
+      },
+      "EntityId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Stable identifier for a legal entity. UUIDv7.",
+        "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "Inner body of an `ErrorEnvelope`. `kind` is a stable machine-friendly\nclassifier — clients SHOULD switch on it. `message` is a human\ndescription for logs; clients SHOULD NOT parse it.",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Machine-friendly classifier (e.g. `bad_request`, `not_found`,\n`conflict`, `forbidden`, `authentication_required`,\n`idempotency_conflict`, `bad_attestation`, `internal`,\n`optimistic_concurrency_conflict`, `admin_disabled`, `not_admin`,\n`missing_signature`, `bad_signature`, `writeback_disabled`,\n`dlq_row_not_found`, `malformed_envelope`, `malformed_payload`)."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "Standard error response body. Every non-2xx response is shaped like\n`{ \"error\": { \"kind\": \"<machine>\", \"message\": \"<human>\" } }`.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "GetDeclarationResponse": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "entity_id",
+          "declarant_principal",
+          "declarant_role",
+          "kind",
+          "effective_from",
+          "beneficial_owners",
+          "state",
+          "aggregate_version",
+          "submitted_at",
+          "receipt_hash_hex",
+          "correlation_id",
+          "verification_state"
+        ],
+        "properties": {
+          "aggregate_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event-sourced aggregate version (monotonic per declaration).",
+            "minimum": 0
+          },
+          "beneficial_owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeneficialOwnerClaim"
+            }
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID that links the submission to the downstream verification case."
+          },
+          "declarant_principal": {
+            "type": "string",
+            "description": "Principal subject of the declarant who submitted this record.\nSourced from the authenticated principal at submit-time; clients\nMUST NOT trust the value in the request body."
+          },
+          "declarant_role": {
+            "$ref": "#/components/schemas/DeclarantRole"
+          },
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-05-01"
+          },
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DeclarationKind"
+          },
+          "receipt_hash_hex": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle state. One of `draft`, `submitted`, `in_verification`,\n`accepted`, `rejected`, `superseded`."
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-05-11T22:39:52.447Z"
+          },
+          "superseded_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Time this declaration was superseded."
+          },
+          "superseded_by_declaration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeclarationId",
+                "description": "If this declaration has been replaced, the successor's id."
+              }
+            ]
+          },
+          "supersedes_declaration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeclarationId",
+                "description": "If this declaration replaced an earlier one, the earlier\ndeclaration's id. Consumers can chase backwards through the\nsupersede chain."
+              }
+            ]
+          },
+          "verification_case_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The verification case_id that produced the current verification\nstate. Consumers can join this against the verification engine's\ncase API to retrieve detailed evidence."
+          },
+          "verification_lane": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VerificationLane",
+                "description": "Lane decision the verification engine returned, if it has run."
+              }
+            ]
+          },
+          "verification_state": {
+            "type": "string",
+            "description": "Downstream verification engine outcome. Always present:\n`not_verified` until the engine writes back, then transitions\nto one of (`pending`, `in_verification`, `accepted`, `rejected`)."
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Time the verification engine completed the case."
+          }
+        }
+      },
+      "HealthzResponse": {
+        "type": "object",
+        "description": "Healthz payload — always `{\"status\":\"ok\"}`.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        }
+      },
+      "InterestKind": {
+        "type": "string",
+        "enum": [
+          "equity",
+          "voting",
+          "family_proxy",
+          "contractual",
+          "other"
+        ]
+      },
+      "ListDlqResponse": {
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DlqItem"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Limit echoed back from the query string."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset echoed back from the query string."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total number of DLQ rows currently held (unfiltered)."
+          }
+        }
+      },
+      "OwnershipBasisPoints": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Ownership percentage in basis points (1/100 of a percent). Range 0..=10_000 — i.e. 10_000 == 100.00%. Stored as an integer to preserve exact arithmetic and avoid the 99.99/100.00 boundary surprise.",
+        "example": 5000,
+        "minimum": 0
+      },
+      "PersonId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Stable identifier for a natural person. UUIDv7.",
+        "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+      },
+      "ReadyzResponse": {
+        "type": "object",
+        "description": "Readyz payload. `status` is one of `ready` / `not_ready`. When the\nservice is not ready, `reason` describes why (e.g.\n`database_unreachable`).",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "example": "ready"
+          }
+        }
+      },
+      "ReplayDlqResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "replayed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "Always `true` on success; on failure the response is an error\nenvelope, not this struct."
+          }
+        }
+      },
+      "SignatureAlgorithm": {
+        "type": "string",
+        "description": "Algorithm identifier for the signature.",
+        "enum": [
+          "ed25519"
+        ]
+      },
+      "SubmitDeclarationRequest": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "declarant_role",
+          "kind",
+          "effective_from",
+          "beneficial_owners",
+          "attestation"
+        ],
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/CryptographicAttestation"
+          },
+          "beneficial_owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeneficialOwnerClaim"
+            }
+          },
+          "declarant_role": {
+            "$ref": "#/components/schemas/DeclarantRole"
+          },
+          "declaration_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeclarationId",
+                "description": "Optional client-supplied declaration id. When omitted, the\nservice mints a `UUIDv7` (time-sortable). Useful for clients that\nwant to know the id before the round trip completes."
+              }
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date",
+            "description": "Effective date of the declaration, ISO-8601 `YYYY-MM-DD`.",
+            "example": "2026-05-01"
+          },
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DeclarationKind"
+          }
+        }
+      },
+      "SubmitDeclarationResponse": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "state",
+          "receipt_hash_hex",
+          "submitted_at",
+          "receipt_url"
+        ],
+        "properties": {
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "receipt_hash_hex": {
+            "type": "string",
+            "description": "BLAKE3-256 hash over the canonical receipt bytes, hex-encoded.",
+            "example": "5b4f24c63bda0b6a3c9e7a6f6e2c4d8a9b3c2d1e4f5a6b7c8d9e0f1a2b3c4d5e"
+          },
+          "receipt_url": {
+            "type": "string",
+            "description": "Self-link to the persisted declaration record.",
+            "example": "https://recor.cm/v1/declarations/0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle state of the declaration immediately after the write —\nalmost always `submitted`. See `DeclarationState` for the full\nenumeration.",
+            "example": "submitted"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Submission timestamp in ISO-8601 (server clock).",
+            "example": "2026-05-11T22:39:52.447Z"
+          }
+        }
+      },
+      "SupersedeDeclarationResponse": {
+        "type": "object",
+        "description": "Receipt for a successful supersede. The new declaration's id is\nthe consumer's handle going forward; the old declaration's id is\nechoed back so callers can confirm the chain.",
+        "required": [
+          "new_declaration_id",
+          "superseded_declaration_id",
+          "state",
+          "receipt_hash_hex",
+          "submitted_at",
+          "receipt_url"
+        ],
+        "properties": {
+          "new_declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId",
+            "description": "Identifier of the freshly-minted successor declaration."
+          },
+          "receipt_hash_hex": {
+            "type": "string",
+            "description": "BLAKE3-256 hash over the canonical receipt bytes, hex-encoded."
+          },
+          "receipt_url": {
+            "type": "string",
+            "description": "Self-link to the new declaration record."
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle state of the new declaration — always `submitted`."
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-05-11T22:39:52.447Z"
+          },
+          "superseded_declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId",
+            "description": "Identifier of the declaration that was just superseded."
+          }
+        }
+      },
+      "VerificationLane": {
+        "type": "string",
+        "description": "Lane decision returned by the Verification Engine for a declaration.\nMatches the verification engine's LaneDecision enum byte-for-byte over\nthe wire (snake_case serialisation).",
+        "enum": [
+          "green",
+          "yellow",
+          "red"
+        ]
+      },
+      "VerificationOutcomeRequest": {
+        "type": "object",
+        "description": "Inbound envelope on POST /v1/internal/verification-outcomes.\n\nField names + types MUST match the verification engine's outbox\npayload exactly. See\nservices/verification-engine/src/infrastructure/postgres.rs writeback\npayload construction.",
+        "required": [
+          "case_id",
+          "declaration_id",
+          "lane",
+          "fused_authenticity_belief",
+          "fused_authenticity_plausibility",
+          "fused_risk_belief",
+          "completed_at"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "fused_authenticity_belief": {
+            "type": "number",
+            "format": "double",
+            "description": "Dempster-Shafer belief in payload authenticity, in [0.0, 1.0].",
+            "maximum": 1,
+            "minimum": 0
+          },
+          "fused_authenticity_plausibility": {
+            "type": "number",
+            "format": "double",
+            "description": "Dempster-Shafer plausibility of payload authenticity, in [0.0, 1.0].",
+            "maximum": 1,
+            "minimum": 0
+          },
+          "fused_risk_belief": {
+            "type": "number",
+            "format": "double",
+            "description": "Dempster-Shafer belief that this declaration carries risk, in [0.0, 1.0].",
+            "maximum": 1,
+            "minimum": 0
+          },
+          "lane": {
+            "$ref": "#/components/schemas/VerificationLane"
+          }
+        }
+      },
+      "VerificationOutcomeResponse": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "verification_case_id",
+          "lane",
+          "recorded_new_event"
+        ],
+        "properties": {
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "lane": {
+            "$ref": "#/components/schemas/VerificationLane"
+          },
+          "recorded_new_event": {
+            "type": "boolean",
+            "description": "`true` when the outcome produced a new event; `false` on a\nno-op replay (the verification engine relay is at-least-once,\nso this distinguishes new outcomes from retries)."
+          },
+          "verification_case_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC-issued JWT. The service verifies the signature against the configured issuer's JWKS, plus `iss`/`aud`/`exp`/`nbf` claims. HMAC algorithms are refused (algorithm-confusion mitigation)."
+      },
+      "devPrincipalHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Recor-Dev-Principal",
+        "description": "Dev-only principal shortcut. Refused outside ENVIRONMENT=dev. Production must always use `bearerAuth`."
+      },
+      "hmacSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-RECOR-Signature",
+        "description": "HMAC-SHA256 over the raw request body, hex-encoded, using the shared writeback secret. Constant-time verification; rotation supported via a transient old-secret window."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "declarations",
+      "description": "Beneficial-ownership declaration intake and lookup."
+    },
+    {
+      "name": "system",
+      "description": "Liveness and readiness probes."
+    },
+    {
+      "name": "internal",
+      "description": "Operator and internal-service endpoints. Not intended for general consumption; subject to change."
+    }
+  ]
+}

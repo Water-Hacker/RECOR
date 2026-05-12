@@ -11,6 +11,13 @@ publish.workspace = true
 name = "recor-declaration"
 path = "src/main.rs"
 
+# DOC-1: stand-alone binary that prints the OpenAPI 3.1 spec to stdout.
+# Used by `tools/ci/check-openapi-drift.sh` to regenerate the committed
+# snapshot without booting the full service (no DB, no network).
+[[bin]]
+name = "dump-openapi"
+path = "src/bin/dump-openapi.rs"
+
 [lib]
 name = "recor_declaration"
 path = "src/lib.rs"
@@ -78,6 +85,13 @@ reqwest.workspace = true
 # Rate limiting (OPS-1)
 tower_governor.workspace = true
 governor.workspace = true
+
+# OpenAPI 3.1 spec generation (DOC-1). Annotates every public handler
+# in `api::rest`, `api::dlq`, and `api::internal`, plus every wire-level
+# DTO in `api::dto`. The compiled spec is mounted at GET /openapi.json
+# and rendered as Scalar UI at GET /docs.
+utoipa.workspace = true
+utoipa-scalar.workspace = true
 
 # Note: jsonwebtoken + lru are consumed transitively via recor-auth-oidc;
 # they're still declared here when needed by code outside the verifier.

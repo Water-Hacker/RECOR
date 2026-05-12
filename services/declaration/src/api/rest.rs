@@ -145,7 +145,13 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         .route("/readyz", get(readyz))
         .with_state(state);
 
-    protected.merge(admin).merge(internal).merge(public).layer(
+    // DOC-1: the OpenAPI spec + Scalar UI. Public (no auth) — the spec
+    // is a contract for consumers. Mounted as a sibling router so it
+    // doesn't pick up the bearer-auth middleware. D17 still holds:
+    // these routes do not change state; they describe the surface.
+    let openapi = crate::api::openapi::openapi_routes();
+
+    protected.merge(admin).merge(internal).merge(public).merge(openapi).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -159,13 +165,32 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     )
 }
 
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    tag = "system",
+    operation_id = "healthz",
+    responses(
+        (status = 200, description = "Service process is alive", body = crate::api::dto::HealthzResponse),
+    ),
+)]
 #[tracing::instrument(level = "info")]
-async fn healthz() -> impl IntoResponse {
+pub(crate) async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({"status": "ok"})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    tag = "system",
+    operation_id = "readyz",
+    responses(
+        (status = 200, description = "Service is ready to serve traffic", body = crate::api::dto::ReadyzResponse),
+        (status = 503, description = "Dependency unreachable (typically the database)", body = crate::api::dto::ReadyzResponse),
+    ),
+)]
 #[tracing::instrument(level = "info", skip(state))]
-async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     // Cheap readiness: confirms the idempotency-store pool is alive,
     // which by transitivity means the database is reachable.
     let probe = sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(state.idempotency.pool());
@@ -181,6 +206,31 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/declarations",
+    tag = "declarations",
+    operation_id = "submitDeclaration",
+    request_body = SubmitDeclarationRequest,
+    params(
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "Optional client-supplied idempotency key. Replays of the same key with the same body return the original response."),
+    ),
+    responses(
+        (status = 201, description = "Declaration accepted and persisted", body = SubmitDeclarationResponse),
+        (status = 200, description = "Idempotent replay; returns the recorded response", body = SubmitDeclarationResponse),
+        (status = 400, description = "Malformed request body", body = crate::api::dto::ErrorEnvelope),
+        (status = 401, description = "Missing/invalid bearer token or bad attestation", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Attestation principal mismatch / authorisation denied", body = crate::api::dto::ErrorEnvelope),
+        (status = 409, description = "Idempotency conflict OR optimistic concurrency conflict", body = crate::api::dto::ErrorEnvelope),
+        (status = 429, description = "Rate-limited (OPS-1; token-bucket per principal)", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[tracing::instrument(
     skip_all,
     fields(
@@ -189,7 +239,7 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
         idempotency_key = idempotency_key_field(&headers),
     )
 )]
-async fn submit_declaration(
+pub(crate) async fn submit_declaration(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<Principal>,
     headers: HeaderMap,
@@ -275,6 +325,26 @@ async fn submit_declaration(
     Ok((StatusCode::CREATED, Json(response)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/declarations/{declaration_id}",
+    tag = "declarations",
+    operation_id = "getDeclaration",
+    params(
+        ("declaration_id" = String, Path, format = "uuid", description = "Declaration UUID"),
+    ),
+    responses(
+        (status = 200, description = "Current projection of the declaration", body = GetDeclarationResponse),
+        (status = 401, description = "Authentication required", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Declaration is owned by a different principal", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "Declaration not found", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[tracing::instrument(
     skip_all,
     fields(
@@ -282,7 +352,7 @@ async fn submit_declaration(
         declaration_id = %declaration_id,
     )
 )]
-async fn get_declaration(
+pub(crate) async fn get_declaration(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<Principal>,
     Path(declaration_id): Path<Uuid>,
@@ -351,6 +421,31 @@ fn blake3_hex(bytes: &[u8]) -> String {
     hex::encode(h.finalize().as_bytes())
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/declarations/{declaration_id}/supersede",
+    tag = "declarations",
+    operation_id = "supersedeDeclaration",
+    params(
+        ("declaration_id" = String, Path, format = "uuid",
+            description = "Identifier of the declaration to supersede"),
+    ),
+    request_body = SubmitDeclarationRequest,
+    responses(
+        (status = 201, description = "Successor declaration accepted; previous record marked superseded", body = SupersedeDeclarationResponse),
+        (status = 400, description = "Malformed request body", body = crate::api::dto::ErrorEnvelope),
+        (status = 401, description = "Missing/invalid bearer token or bad attestation", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Caller is not the owner of the prior declaration", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "Prior declaration not found", body = crate::api::dto::ErrorEnvelope),
+        (status = 409, description = "Already superseded or optimistic-concurrency conflict", body = crate::api::dto::ErrorEnvelope),
+        (status = 429, description = "Rate-limited (OPS-1)", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[tracing::instrument(
     skip_all,
     fields(
@@ -359,7 +454,7 @@ fn blake3_hex(bytes: &[u8]) -> String {
         new_entity_id = %req.entity_id,
     )
 )]
-async fn supersede_declaration(
+pub(crate) async fn supersede_declaration(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<Principal>,
     Path(superseded_declaration_id): Path<Uuid>,

@@ -4,9 +4,10 @@
 //! before the command reaches the aggregate.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Algorithm identifier for the signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SignatureAlgorithm {
     /// Ed25519 — the platform's canonical signature scheme per
@@ -29,7 +30,7 @@ impl SignatureAlgorithm {
 /// declaration_kind, effective_from, beneficial_owners, nonce_hex),
 /// serialised with sorted keys, no whitespace, UTF-8 — i.e. JCS
 /// (RFC 8785). The nonce protects against replay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CryptographicAttestation {
     /// Principal identifier the signature is bound to. Matches the
     /// authenticated principal at the API boundary.

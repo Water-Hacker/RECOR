@@ -163,3 +163,33 @@ jobs:
         run: pip install --user pyyaml==6.0.2
       - name: validate .claude/ configuration
         run: ./tools/ci/validate-claude-config.sh
+
+  # ─── API contract ─────────────────────────────────────────────────────────
+  api-openapi-drift:
+    # DOC-1 (#70): the committed `docs/openapi/declaration.json` snapshot
+    # must match what `cargo run --bin dump-openapi` emits. Drift here
+    # means a consumer regenerating its typed client from the snapshot
+    # gets a different shape than the service actually serves — a
+    # silent contract break. Fail-closed: no `continue-on-error`.
+    name: "api / openapi-drift"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install rust toolchain
+        # rust-toolchain.toml at the repo root pins to 1.88.0; this
+        # action honours that file so we don't pin twice.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+      - name: cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: openapi-drift-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            openapi-drift-${{ runner.os }}-cargo-
+      - name: regenerate spec + diff against the committed snapshot
+        run: ./tools/ci/check-openapi-drift.sh

@@ -97,6 +97,18 @@ jsonwebtoken = "9"
 # LRU cache for verified tokens (R-AUTH-4).
 lru = "0.12"
 
+# OpenAPI 3.1 spec generation (DOC-1 / #70). Annotates the axum handlers
+# and DTOs in services/declaration; consumers (notably the declarant
+# portal under R-PORT-7) regenerate their typed clients from the spec
+# emitted at GET /openapi.json. `utoipa-scalar` mounts the Scalar UI at
+# GET /docs. We're on utoipa 5.x because that's the line that supports
+# axum 0.8 + edition 2024; older lines pin to axum 0.7. The "axum_extras"
+# feature wires the `#[utoipa::path]` macro into axum routing types so
+# we can express `Path<Uuid>` etc. directly. V-engine's spec is deferred
+# to a follow-up — TODO(R-VER-OPENAPI) in services/verification-engine.
+utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+
 # Test deps (used by member crates' [dev-dependencies])
 proptest = "1.5"
 rstest = "0.23"

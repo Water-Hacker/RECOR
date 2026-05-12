@@ -1,13 +1,18 @@
 //! Domain value objects — newtype-wrapped primitives that carry domain
 //! meaning the underlying primitive does not.
+//!
+//! `ToSchema` lives on every type that crosses the public wire so the
+//! OpenAPI spec (DOC-1) can describe them.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Stable identifier for a declaration. UUIDv7 — time-sortable, so
 /// natural ordering matches submission order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(transparent)]
+#[schema(value_type = String, format = "uuid", example = "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d")]
 pub struct DeclarationId(pub Uuid);
 
 impl DeclarationId {
@@ -29,8 +34,9 @@ impl std::fmt::Display for DeclarationId {
 }
 
 /// Stable identifier for a legal entity. UUIDv7.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(transparent)]
+#[schema(value_type = String, format = "uuid", example = "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d")]
 pub struct EntityId(pub Uuid);
 
 impl std::fmt::Display for EntityId {
@@ -40,8 +46,9 @@ impl std::fmt::Display for EntityId {
 }
 
 /// Stable identifier for a natural person. UUIDv7.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(transparent)]
+#[schema(value_type = String, format = "uuid", example = "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d")]
 pub struct PersonId(pub Uuid);
 
 impl std::fmt::Display for PersonId {
@@ -54,8 +61,14 @@ impl std::fmt::Display for PersonId {
 /// Range: 0..=10_000. We store basis points rather than floats to
 /// preserve exact arithmetic across additions and avoid rounding
 /// surprises at the 99.99%/100.00% boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 #[serde(transparent)]
+#[schema(
+    description = "Ownership percentage in basis points (1/100 of a percent). \
+        Range 0..=10_000 — i.e. 10_000 == 100.00%. Stored as an integer to \
+        preserve exact arithmetic and avoid the 99.99/100.00 boundary surprise.",
+    example = 5_000
+)]
 pub struct OwnershipBasisPoints(pub u32);
 
 impl OwnershipBasisPoints {
@@ -82,7 +95,7 @@ impl OwnershipBasisPoints {
 }
 
 /// Role under which a declarant is submitting on behalf of the entity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum DeclarantRole {
     /// The declarant is themselves the beneficial owner declaring directly.
     #[serde(rename = "self")]
@@ -108,7 +121,7 @@ impl DeclarantRole {
 }
 
 /// The reason a declaration is being submitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeclarationKind {
     Incorporation,
@@ -133,7 +146,7 @@ impl DeclarationKind {
 /// Lane decision returned by the Verification Engine for a declaration.
 /// Matches the verification engine's LaneDecision enum byte-for-byte over
 /// the wire (snake_case serialisation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationLane {
     /// Auto-accept; verification confidence is high.
@@ -175,7 +188,7 @@ impl VerificationLane {
 }
 
 /// Lifecycle state of a declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeclarationState {
     /// Persisted but not yet sent to the verification engine.
@@ -206,7 +219,7 @@ impl DeclarationState {
 }
 
 /// One declared beneficial owner with their interest in the entity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BeneficialOwnerClaim {
     /// Canonical person identifier. The declarant supplies this; the
     /// Person service is the source of truth that the verification engine
@@ -219,7 +232,7 @@ pub struct BeneficialOwnerClaim {
     pub interest_kind: InterestKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InterestKind {
     /// Direct equity ownership.

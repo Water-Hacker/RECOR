@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tracing::{info, instrument, warn};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::api::auth::Principal;
@@ -37,11 +38,16 @@ pub struct DlqAdminState {
     pub admin_principals: Arc<HashSet<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListDlqQuery {
+    /// Maximum number of rows to return; defaults to 50.
     #[serde(default = "default_limit")]
+    #[param(default = 50, example = 50)]
     pub limit: i64,
+    /// Zero-indexed offset for paging.
     #[serde(default)]
+    #[param(default = 0, example = 0)]
     pub offset: i64,
 }
 
@@ -49,27 +55,37 @@ fn default_limit() -> i64 {
     50
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ListDlqResponse {
+    /// Total number of DLQ rows currently held (unfiltered).
     pub total: i64,
+    /// Limit echoed back from the query string.
     pub limit: i64,
+    /// Offset echoed back from the query string.
     pub offset: i64,
     pub items: Vec<DlqItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DlqItem {
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
+    #[schema(value_type = String, format = "uuid")]
     pub event_id: Uuid,
     pub event_type: String,
     pub event_version: i32,
     pub aggregate_type: String,
+    #[schema(value_type = String, format = "uuid")]
     pub aggregate_id: Uuid,
     pub partition_key: String,
+    /// Original event payload as JSON. Schema depends on `event_type`.
+    #[schema(value_type = Object)]
     pub payload: serde_json::Value,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = DateTime)]
     pub dead_lettered_at: OffsetDateTime,
     pub dispatch_attempts: i32,
     pub last_error: Option<String>,
@@ -94,12 +110,33 @@ impl From<DlqRow> for DlqItem {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ReplayDlqResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
+    /// Always `true` on success; on failure the response is an error
+    /// envelope, not this struct.
     pub replayed: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/internal/outbox-dlq",
+    tag = "internal",
+    operation_id = "listDlq",
+    params(ListDlqQuery),
+    responses(
+        (status = 200, description = "Page of DLQ rows", body = ListDlqResponse),
+        (status = 401, description = "Authentication required", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Principal not on the admin allowlist", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Backend failure", body = crate::api::dto::ErrorEnvelope),
+        (status = 503, description = "Admin endpoints disabled (allowlist empty)", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[instrument(
     skip_all,
     fields(principal = %principal.subject, limit = query.limit, offset = query.offset)
@@ -126,6 +163,27 @@ pub async fn list_dlq(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/internal/outbox-dlq/{id}/replay",
+    tag = "internal",
+    operation_id = "replayDlq",
+    params(
+        ("id" = String, Path, format = "uuid", description = "DLQ row id to replay"),
+    ),
+    responses(
+        (status = 200, description = "Row was moved back to the outbox for retry", body = ReplayDlqResponse),
+        (status = 401, description = "Authentication required", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Principal not on the admin allowlist", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "No DLQ row with the given id", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Backend failure", body = crate::api::dto::ErrorEnvelope),
+        (status = 503, description = "Admin endpoints disabled (allowlist empty)", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[instrument(skip_all, fields(principal = %principal.subject, id = %id))]
 pub async fn replay_dlq(
     State(state): State<DlqAdminState>,

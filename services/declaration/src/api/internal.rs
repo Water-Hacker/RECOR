@@ -83,6 +83,31 @@ pub struct InboundEnvelope {
     pub payload: serde_json::Value,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/internal/verification-outcomes",
+    tag = "internal",
+    operation_id = "handleVerificationOutcome",
+    request_body(
+        description = "Slim outbox envelope from the Verification Engine; payload conforms to VerificationOutcomeRequest.",
+        content_type = "application/json",
+        content = crate::api::dto::VerificationOutcomeRequest,
+    ),
+    responses(
+        (status = 201, description = "New verification outcome recorded", body = crate::api::dto::VerificationOutcomeResponse),
+        (status = 200, description = "Replay of an already-recorded outcome (no-op)", body = crate::api::dto::VerificationOutcomeResponse),
+        (status = 202, description = "Accepted but ignored (unknown event_type)", body = crate::api::dto::VerificationOutcomeResponse),
+        (status = 400, description = "Malformed envelope or payload", body = crate::api::dto::ErrorEnvelope),
+        (status = 401, description = "Missing or bad HMAC signature", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "Referenced declaration does not exist", body = crate::api::dto::ErrorEnvelope),
+        (status = 409, description = "Conflicting outcome for the same case_id", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Backend failure", body = crate::api::dto::ErrorEnvelope),
+        (status = 503, description = "Writeback endpoint disabled (no HMAC secret configured)", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("hmacSignature" = []),
+    ),
+)]
 #[instrument(skip_all)]
 pub async fn handle_verification_outcome(
     State(state): State<InternalAppState>,

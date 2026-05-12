@@ -1,4 +1,12 @@
 //! REST API.
+//
+// TODO(R-VER-OPENAPI): wire utoipa-generated OpenAPI 3.1 spec for this
+// service's public surface, mirroring DOC-1 (#70 — declaration). Same
+// pattern: `#[utoipa::path(...)]` on every handler, `#[derive(ToSchema)]`
+// on every DTO, build the document in `api::openapi`, mount
+// `GET /openapi.json` + Scalar UI at `GET /docs`, commit the snapshot
+// to `docs/openapi/verification-engine.json`, extend
+// `tools/ci/check-openapi-drift.sh` to also assert that snapshot.
 
 use std::sync::Arc;
 use std::time::Duration;
