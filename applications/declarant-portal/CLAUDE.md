@@ -368,6 +368,135 @@ replace every value, change `_translation_status.completeness` from
 - Cryptographic primitives (declaration_id, receipt hash, public
   key, signature hex)
 
+## Offline drafts (R-PORT-2)
+
+The wizard auto-saves the declarant's in-progress form state to the
+browser's IndexedDB so a connectivity drop does not erase 15 minutes
+of typing. Workbox precaches the SPA shell so the portal also loads
+offline.
+
+### Stack
+
+- `vite-plugin-pwa` (Workbox under the hood) — generates `sw.js`
+  and a SPA-shell precache on every production build (`pnpm build`).
+  `registerType: 'autoUpdate'` so new deployments silently update
+  installed clients on next navigation; `devOptions.enabled: false`
+  keeps the SW out of `pnpm dev` where HMR + SW caching clash.
+- `dexie` — typed wrapper around IndexedDB. Database name
+  `recor.drafts`, schema `++id,&declaration_id,last_modified_at`
+  (auto-increment primary key, UNIQUE `declaration_id` for
+  dedup-on-save, indexed `last_modified_at` for the expiration sweep
+  and the "latest draft" lookup).
+- `fake-indexeddb` (devDep) — vitest test polyfill.
+
+### Module layout
+
+- `src/lib/drafts/index.ts` — Dexie schema + `saveDraft` /
+  `loadDraft` / `loadLatestDraft` / `deleteDraft` / `expireDrafts`
+  / `isDraftsAvailable` plus the `stripSecrets` D18 guard.
+- `src/features/declaration/wizard/useDraftAutosave.ts` — the
+  react-hook-form ↔ Dexie autosave bridge. Watches `form.watch()`,
+  debounces to one write per 5 s, flushes on unmount.
+- `src/features/declaration/wizard/DraftResumeBanner.tsx` — the
+  non-modal Resume/Discard banner that emerges when
+  `loadLatestDraft()` returns a row.
+- `src/features/declaration/wizard/index.tsx` (DeclarationWizard) —
+  mounts the banner, runs `expireDrafts()` on boot, wires the
+  autosave hook, and clears the draft on POST 201.
+
+### Schema
+
+```ts
+drafts: {
+  id: ++,                       // auto-increment primary key
+  declaration_id: string,       // UNIQUE — wizard's stable session UUID
+  form_state: Json,             // declarant-typed values only (see D18)
+  created_at: ISOString,
+  last_modified_at: ISOString,
+}
+```
+
+### D18 strip-list
+
+The persisted `form_state` MUST NEVER contain crypto / auth
+material. `saveDraft` walks the form state through `stripSecrets`
+before every write. The strip-list (`DRAFT_SECRET_KEYS`, exported
+for the unit test that locks it):
+
+```
+attestation, receipt, receipt_hash_hex, receipt_url,
+signature, signature_hex, public_key, public_key_hex,
+private_key, private_key_hex, signed_by, nonce_hex,
+bearer_token, auth_token, access_token, id_token,
+refresh_token, authorization
+```
+
+Matching is case-insensitive and recursive — a nested
+`beneficial_owners[].signature_hex` is stripped without dropping the
+surrounding owner row. The unit test in
+`src/lib/drafts/__tests__/drafts.test.ts` ("D18 — strip-list") is
+the load-bearing guard; a regression that re-introduces persisted
+crypto material fails CI before merge.
+
+If a future legitimate field uses one of those names, the friction
+is intentional: rename it or add an explicit allowlist with an ADR
+documenting the exception — never weaken the strip-list silently.
+
+### D14 fail-closed
+
+- `isDraftsAvailable()` is consulted on wizard mount. When
+  IndexedDB is unavailable (Safari private mode,
+  `dom.indexedDB.enabled=false`, hardened browsers) the wizard
+  surfaces a single amber "drafts unavailable" notice via the
+  `drafts.unavailableNotice` i18n key and the autosave hook becomes
+  a no-op. The wizard does NOT fall back to `localStorage` or any
+  other key-leakable store — drafts disabled is preferable to
+  drafts in an attacker-readable cache.
+- The Workbox SW is configured with
+  `navigateFallbackDenylist: [/^\/v1\//, /^\/healthz/]` so the
+  Declaration service's API responses are NEVER served from cache
+  while offline; a stale 200 would silently break the canonical
+  payload byte-parity (D15).
+
+### Lifecycle
+
+| Event | Effect |
+|---|---|
+| Wizard mounts | `expireDrafts()` runs first; then `loadLatestDraft()` populates the resume banner if a < 24 h draft exists |
+| Declarant types | `useDraftAutosave` debounces; one Dexie write per 5 s while `form.formState.isDirty` |
+| Declarant clicks Resume | `form.reset(form_state)` + `declarationIdRef` rewritten to the draft's id (subsequent autosaves update the SAME row) |
+| Declarant clicks Discard | `deleteDraft(draft.declaration_id)`; banner hides |
+| Wizard unmounts | Pending timer cancelled; one best-effort flush write if dirty |
+| Submit returns 201 | `deleteDraft(declarationId)` so the resume banner never re-offers a filed declaration |
+| Boot 24 h later | `expireDrafts()` removes rows with `last_modified_at < now - 24h` |
+
+### Bundle delta (measured at R-PORT-2)
+
+R-PORT-1 baseline (single active locale, gzipped): ~131 KB. After
+R-PORT-2: ~165 KB gzipped including the Dexie chunk (~32 KB
+gzipped) and the registerSW stub. Still well below the 250 KB SLO.
+The SW (`sw.js` + `workbox-*.js`) is served separately and
+registered asynchronously, so it does not count against the
+first-paint critical path.
+
+### Testing
+
+- Unit tests: `src/lib/drafts/__tests__/drafts.test.ts`
+  - Save → load round-trip; idempotent on `declaration_id`
+  - `deleteDraft` idempotency
+  - `loadLatestDraft` ordering
+  - `expireDrafts` — 25 h removed, 23 h kept
+  - D18 — every key in `DRAFT_SECRET_KEYS` scrubbed at every nesting
+    level; input is never mutated
+  - `stripSecrets` — primitive / null / array / nested / case-insensitive
+- Integration tests:
+  `src/features/declaration/wizard/__tests__/useDraftAutosave.test.tsx`
+  — autosave fires after typed input; coalesces a burst into far
+  fewer writes than keystrokes; Resume restores via `form.reset`;
+  Discard clears the banner. Uses `fake-indexeddb/auto` and real
+  timers (vitest fake timers + fake-indexeddb deadlock — fake-IDB
+  schedules its own setTimeout/microtasks).
+
 ## When in doubt
 
 1. Read this document

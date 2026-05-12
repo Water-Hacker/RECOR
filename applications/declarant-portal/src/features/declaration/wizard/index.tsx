@@ -22,7 +22,7 @@
  * behaviour.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
@@ -43,11 +43,20 @@ import {
   submitDeclaration,
   type SubmitDeclarationResponse,
 } from '../../../lib/api';
+import {
+  deleteDraft,
+  expireDrafts,
+  isDraftsAvailable,
+  loadLatestDraft,
+  type DraftRow,
+} from '../../../lib/drafts';
 import { VerificationStatus } from '../VerificationStatus';
+import { DraftResumeBanner } from './DraftResumeBanner';
 import { EntityStep } from './EntityStep';
 import { OwnersStep } from './OwnersStep';
 import { ReviewStep } from './ReviewStep';
 import { SignStep } from './SignStep';
+import { useDraftAutosave } from './useDraftAutosave';
 import { WizardStepper } from './WizardStepper';
 import { FIRST_STEP, LAST_STEP, STEP_FIELDS, type WizardStep } from './types';
 
@@ -63,11 +72,24 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
   const [step, setStep] = useState<WizardStep>(FIRST_STEP);
   const [stepValidating, setStepValidating] = useState(false);
 
-  // Stable identifiers for this wizard session. Generated once so the
-  // canonical bytes the user reviews on step 3 are byte-identical to
-  // what step 4 actually signs (D15).
-  const declarationId = useMemo(() => randomUuid(), []);
+  // R-PORT-2: stable declaration_id is BOTH the wire-level id (so the
+  // canonical bytes reviewed on step 3 are byte-identical to what
+  // step 4 signs — D15) AND the Dexie dedup key for offline drafts.
+  // It lives in a ref so accepting the resume banner can overwrite it
+  // (without a re-render race against the wizard's other state).
+  const initialDeclarationIdRef = useRef<string>(randomUuid());
+  const declarationIdRef = useRef<string>(initialDeclarationIdRef.current);
+  // `declarationIdState` mirrors the ref into React state so
+  // child components (ReviewStep, etc.) re-render when Resume swaps
+  // the underlying id. Keep the two in sync at every mutation site.
+  const [declarationIdState, setDeclarationIdState] = useState<string>(
+    initialDeclarationIdRef.current,
+  );
   const [nonceHex, setNonceHex] = useState<string | null>(null);
+
+  // R-PORT-2: drafts feature-detection + UI state.
+  const [draftsAvailable] = useState<boolean>(() => isDraftsAvailable());
+  const [resumableDraft, setResumableDraft] = useState<DraftRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,7 +134,7 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
   const submitMutation = useMutation<
     SubmitDeclarationResponse,
     Error,
-    { signed: SignedDeclarationRequest }
+    { signed: SignedDeclarationRequest; draftDeclarationId: string }
   >({
     mutationFn: async ({ signed }) =>
       submitDeclaration(
@@ -122,7 +144,91 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
         },
         signed,
       ),
+    onSuccess: async (_response, variables) => {
+      // R-PORT-2 acceptance criterion 5: clear the corresponding
+      // draft after a successful submit so the resume banner never
+      // re-offers an already-filed declaration.
+      if (draftsAvailable) {
+        try {
+          await deleteDraft(variables.draftDeclarationId);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[recor.drafts] post-submit cleanup failed', err);
+        }
+      }
+    },
   });
+
+  // R-PORT-2: boot-time cleanup + resume-banner sourcing. Expire
+  // stale drafts FIRST so `loadLatestDraft()` cannot surface a
+  // > 24 h-old row to the resume banner. The boot sweep runs once on
+  // mount; subsequent autosaves do not retrigger it.
+  useEffect(() => {
+    if (!draftsAvailable) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await expireDrafts();
+        const latest = await loadLatestDraft();
+        if (!cancelled && latest) {
+          // Never offer to resume a draft whose id matches the one
+          // we just minted — that would only happen if the wizard
+          // had already been mounted once in this exact session,
+          // and the autosave has run; in that case the in-memory
+          // form state IS the draft, so re-offering it is noise.
+          if (latest.declaration_id !== initialDeclarationIdRef.current) {
+            setResumableDraft(latest);
+          }
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[recor.drafts] boot sweep failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draftsAvailable]);
+
+  // R-PORT-2: 5-second autosave loop. The hook is a no-op when
+  // `draftsAvailable === false` (D14 — we surface the
+  // drafts-disabled notice below, not a silent partial-save).
+  useDraftAutosave({
+    form,
+    declarationId: declarationIdState,
+    enabled: draftsAvailable,
+  });
+
+  /**
+   * Restore the form state from a saved draft. The persisted state
+   * is a `Partial<FormValues>` (autosave can fire before every
+   * field is dirty), so we layer it onto the wizard defaults via
+   * `form.reset`.
+   *
+   * The stable `declarationIdRef` is rewritten to the draft's id so
+   * subsequent autosaves continue updating the SAME row instead of
+   * creating a second one. The signing step uses this ref too, so a
+   * resumed-then-submitted declaration carries through with a single
+   * stable id end-to-end.
+   */
+  const handleResumeDraft = useCallback(
+    (draft: DraftRow) => {
+      declarationIdRef.current = draft.declaration_id;
+      setDeclarationIdState(draft.declaration_id);
+      const restored = draft.form_state as Partial<FormValues>;
+      form.reset(restored as FormValues);
+      setResumableDraft(null);
+    },
+    [form],
+  );
+
+  const handleDiscardDraft = useCallback((draft: DraftRow) => {
+    setResumableDraft(null);
+    void deleteDraft(draft.declaration_id).catch((err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[recor.drafts] discard failed', err);
+    });
+  }, []);
 
   /**
    * Validate just the fields the active step owns, then advance.
@@ -160,11 +266,15 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
       throw new Error('signing keys or nonce not ready');
     }
     const values = form.getValues();
+    const submittingDeclarationId = declarationIdRef.current;
     const signed = await buildWizardSignedRequest(keys, values, {
-      declaration_id: declarationId,
+      declaration_id: submittingDeclarationId,
       nonce_hex: nonceHex,
     });
-    await submitMutation.mutateAsync({ signed });
+    await submitMutation.mutateAsync({
+      signed,
+      draftDeclarationId: submittingDeclarationId,
+    });
   }
 
   /* ─── early-exit branches (unchanged from single-page form) ───── */
@@ -224,6 +334,22 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
 
   return (
     <div className="space-y-6">
+      {!draftsAvailable && (
+        <aside
+          role="status"
+          aria-live="polite"
+          data-testid="drafts-unavailable-notice"
+          className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          {t('drafts.unavailableNotice')}
+        </aside>
+      )}
+      <DraftResumeBanner
+        draft={resumableDraft}
+        onResume={handleResumeDraft}
+        onDiscard={handleDiscardDraft}
+      />
+
       <WizardStepper current={step} />
 
       <form
@@ -242,7 +368,7 @@ export function DeclarationWizard({ apiBaseUrl }: DeclarationWizardProps) {
         {step === 3 && (
           <ReviewStep
             form={form}
-            declarationId={declarationId}
+            declarationId={declarationIdState}
             nonceHex={effectiveNonce}
           />
         )}
