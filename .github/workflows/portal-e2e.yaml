@@ -1,0 +1,334 @@
+# Declarant-portal Playwright E2E (R-PORT-6).
+#
+# Two jobs:
+#
+#   1. `playwright-mocked` — runs the suite against `pnpm preview` with
+#      every API call intercepted by Playwright's `page.route()`.
+#      Hermetic, ~30s, no Docker required. This is the load-bearing
+#      gate the four critical paths land on.
+#
+#   2. `playwright-live` — brings up the full D↔V compose stack
+#      (services/declaration/docker-compose.integration.yaml) plus the
+#      portal nginx (applications/declarant-portal/docker-compose.yaml),
+#      seeds mock BUNEC with the deterministic person UUID the happy
+#      path depends on, and runs the suite against http://localhost:8082.
+#      Proves the contract end-to-end. Heavier — pulls images, builds
+#      the Rust services, ~10 minutes.
+#
+# Per the R-PORT-6 brief: this workflow is NOT yet in the required-checks
+# orchestrator. Promotion follows the OBS-2 deferral pattern (10 green
+# runs against main → moved into required-checks). The deferred-promotion
+# table at docs/security/branch-protection.md tracks the gate.
+#
+# Doctrines:
+#   - D04 tests       — this workflow IS the four production-acceptance
+#                       gates for the portal.
+#   - D14 fail-closed — `fail-fast: true` on the strategy; no
+#                       `continue-on-error`; Playwright `retries: 0`.
+#   - D19 reproducible — every dependency (browser, pnpm, node) is pinned;
+#                       the mock BUNEC seed is the same UUID committed
+#                       in `tests/e2e/fixtures.ts`.
+
+name: portal-e2e
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'applications/declarant-portal/**'
+      - '.github/workflows/portal-e2e.yaml'
+      - 'services/declaration/**'
+      - 'services/verification-engine/**'
+      - 'docs/openapi/declaration.json'
+  push:
+    branches: [main]
+    paths:
+      - 'applications/declarant-portal/**'
+      - '.github/workflows/portal-e2e.yaml'
+      - 'services/declaration/**'
+      - 'services/verification-engine/**'
+      - 'docs/openapi/declaration.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portal-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Mocked-API suite (fast, hermetic) ───────────────────────────────────
+  playwright-mocked:
+    name: "portal-e2e / mocked"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: applications/declarant-portal
+    strategy:
+      # D14 fail-closed: do not mask one project's failure with another's
+      # success. Today the matrix has one project (chromium); leaving
+      # fail-fast on means a future cross-browser addition does not
+      # silently shrink the gate.
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: install pnpm 9.12.3
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.3"
+          run_install: false
+
+      - name: cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: portal-pnpm-${{ runner.os }}-${{ hashFiles('applications/declarant-portal/pnpm-lock.yaml') }}
+          restore-keys: |
+            portal-pnpm-${{ runner.os }}-
+
+      - name: install portal dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: derive Playwright version for browser cache
+        id: pw
+        run: |
+          version=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install Playwright chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: install Playwright system deps (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        # The cache restores the browser binaries but not the apt-level
+        # system libs (libnss3, libasound2, …). `install-deps` is a
+        # cheap no-op when they're already present.
+        run: pnpm exec playwright install-deps chromium
+
+      - name: build portal production bundle
+        run: pnpm build
+
+      - name: run Playwright suite (mocked mode)
+        env:
+          CI: "true"
+          E2E_MODE: "mocked"
+        run: pnpm exec playwright test --reporter=list
+
+      - name: upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-mocked
+          path: applications/declarant-portal/playwright-report
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ─── Live D↔V loop suite (compose stack + real services) ────────────────
+  playwright-live:
+    name: "portal-e2e / live"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+    env:
+      # Per-run-unique secrets for the integration compose stack. The
+      # compose file fails-closed if any are unset (see the `:?Set ...`
+      # patterns in services/declaration/docker-compose.integration.yaml).
+      # Re-using the workflow's GITHUB_TOKEN as a unique random string
+      # is the same pattern observability-smoke.yaml uses — the token
+      # is short-lived and not used for any auth inside the stack.
+      RECOR_DB_PASSWORD: "ci-${{ github.run_id }}-${{ github.run_attempt }}-db"
+      RECOR_D_TO_V_HMAC: "ci-${{ github.run_id }}-${{ github.run_attempt }}-d2v"
+      RECOR_V_TO_D_HMAC: "ci-${{ github.run_id }}-${{ github.run_attempt }}-v2d"
+      # Stable seed UUID — must match `SEEDED_PERSON_ID` in
+      # applications/declarant-portal/tests/e2e/fixtures.ts. Drift here
+      # would make the happy-path / polling-stops specs flaky in live
+      # mode (the verification engine would route the person to red).
+      SEEDED_PERSON_ID: "018f0000-0000-4000-8000-0000000000a1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install prerequisites
+        run: |
+          set -euo pipefail
+          docker compose version
+          curl --version
+          jq --version
+
+      - name: bring up D↔V loop compose stack
+        working-directory: services/declaration
+        run: |
+          set -euo pipefail
+          # Write the .env file the compose stack expects. Same shape
+          # as scripts/integration-smoke.sh produces; values come from
+          # the per-run-unique env above.
+          {
+            echo "RECOR_DB_PASSWORD=${RECOR_DB_PASSWORD}"
+            echo "RECOR_D_TO_V_HMAC=${RECOR_D_TO_V_HMAC}"
+            echo "RECOR_V_TO_D_HMAC=${RECOR_V_TO_D_HMAC}"
+          } > .env
+          docker compose -f docker-compose.integration.yaml up -d --build
+
+      - name: wait for declaration + verification health
+        run: |
+          set -euo pipefail
+          for svc in http://127.0.0.1:8080/healthz http://127.0.0.1:8081/healthz; do
+            for i in $(seq 1 60); do
+              if curl -fsS "${svc}" >/dev/null 2>&1; then
+                echo "  ${svc} healthy after ${i}s"
+                break
+              fi
+              sleep 1
+              if [ "${i}" = "60" ]; then
+                echo "FAIL: ${svc} did not become healthy in 60s"
+                exit 1
+              fi
+            done
+          done
+
+      - name: seed mock BUNEC with the deterministic person UUID
+        working-directory: services/declaration
+        env:
+          PGPASSWORD: ${{ env.RECOR_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The happy-path + polling-stops specs use SEEDED_PERSON_ID;
+          # the rejected spec uses an OTHER UUID (UNSEEDED_PERSON_ID,
+          # 018f0000-0000-4000-8000-0000000000ff) which we deliberately
+          # do NOT seed so the verification engine routes it to red.
+          docker compose -f docker-compose.integration.yaml exec -T \
+            -e PGPASSWORD="${PGPASSWORD}" postgres-verification \
+            psql -U recor -d verification -c \
+            "INSERT INTO mock_bunec_persons (person_id, canonical_full_name, nationality) \
+             VALUES ('${SEEDED_PERSON_ID}', 'CI Test Declarant', 'CMR') \
+             ON CONFLICT (person_id) DO NOTHING"
+
+      - name: bring up the portal nginx
+        working-directory: applications/declarant-portal
+        run: |
+          set -euo pipefail
+          # The portal compose file expects the declaration service on
+          # the same Docker network as itself; for the live CI we
+          # rebuild the portal image and reach the host-mapped
+          # declaration port via host.docker.internal. Simpler path:
+          # build the portal image inline and run it with
+          # `network_mode: host` so the browser hitting :8082 lands on
+          # the nginx, and nginx-internal proxies fall back to :8080
+          # via host networking.
+          docker build -t recor/declarant-portal:ci .
+          docker run -d --rm \
+            --name recor-portal-ci \
+            --network host \
+            -e CSP_CONNECT_SRC="http://127.0.0.1:8080 http://localhost:8080" \
+            recor/declarant-portal:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8082/healthz >/dev/null 2>&1 \
+               || curl -fsS http://127.0.0.1:8082/ >/dev/null 2>&1; then
+              echo "  portal up after ${i}s"
+              break
+            fi
+            sleep 1
+            if [ "${i}" = "60" ]; then
+              echo "FAIL: portal nginx did not respond on :8082"
+              docker logs recor-portal-ci || true
+              exit 1
+            fi
+          done
+
+      - name: install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: install pnpm 9.12.3
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.3"
+          run_install: false
+
+      - name: cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: portal-pnpm-${{ runner.os }}-${{ hashFiles('applications/declarant-portal/pnpm-lock.yaml') }}
+          restore-keys: |
+            portal-pnpm-${{ runner.os }}-
+
+      - name: install portal dependencies
+        working-directory: applications/declarant-portal
+        run: pnpm install --frozen-lockfile
+
+      - name: derive Playwright version for browser cache
+        id: pw
+        working-directory: applications/declarant-portal
+        run: |
+          version=$(node -p "require('./node_modules/@playwright/test/package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install Playwright chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        working-directory: applications/declarant-portal
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: install Playwright system deps (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: applications/declarant-portal
+        run: pnpm exec playwright install-deps chromium
+
+      - name: run Playwright suite (live mode against the compose stack)
+        working-directory: applications/declarant-portal
+        env:
+          CI: "true"
+          E2E_MODE: "live"
+          E2E_BASE_URL: "http://localhost:8082"
+        run: pnpm exec playwright test --reporter=list
+
+      - name: collect compose stack logs on failure
+        if: failure()
+        working-directory: services/declaration
+        run: |
+          for svc in postgres-declaration postgres-verification declaration verification; do
+            echo "═══ ${svc} ═══"
+            docker compose -f docker-compose.integration.yaml logs --no-color "${svc}" | tail -200 || true
+          done
+          echo "═══ portal (host network) ═══"
+          docker logs recor-portal-ci --tail 200 || true
+
+      - name: upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-live
+          path: applications/declarant-portal/playwright-report
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: tear down
+        if: always()
+        working-directory: services/declaration
+        run: |
+          docker stop recor-portal-ci 2>/dev/null || true
+          docker compose -f docker-compose.integration.yaml down -v --remove-orphans 2>&1 | tail -10

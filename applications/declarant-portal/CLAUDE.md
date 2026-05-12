@@ -72,6 +72,82 @@ each of `src/locales/{fr,en,pidgin}.json`. The Pidgin file carries English
 placeholders behind a `_translation_status: "stub"` marker, matching the rest
 of the file — community translation is the same workflow R-PORT-1 documented.
 
+## Playwright E2E (R-PORT-6)
+
+The portal ships a four-scenario Playwright suite at
+`applications/declarant-portal/tests/e2e/`. The suite is the
+production-acceptance gate for the four critical user paths called
+out in `docs/PRODUCTION-TODO.md` § R-PORT-6:
+
+| Spec file                       | Scenario                                                  |
+|---------------------------------|-----------------------------------------------------------|
+| `happy-path.spec.ts`            | Wizard → submit → verification polls to `accepted`        |
+| `validation.spec.ts`            | Invalid entity_id; step-1 Forward gate refuses to advance |
+| `verification-rejected.spec.ts` | Unseeded person yields a `rejected` / red-lane status     |
+| `polling-stops.spec.ts`         | No `GET /v1/declarations/{id}` fires after terminal state |
+
+### Run modes (`E2E_MODE`)
+
+- **`mocked`** (default; local dev + the load-bearing CI gate) —
+  Playwright `page.route()` intercepts every Declaration-service call
+  and replies with deterministic fixtures from `tests/e2e/fixtures.ts`.
+  No D↔V compose stack required. Boots `pnpm preview` on :5173 via
+  Playwright's `webServer` block; reuses an existing preview server
+  in dev (`reuseExistingServer: !process.env.CI`).
+- **`live`** — talks to the real D↔V loop spun up by the CI workflow
+  (`services/declaration/docker-compose.integration.yaml`) and the
+  portal nginx (`docker-compose.yaml` here). Mock BUNEC is seeded
+  with `SEEDED_PERSON_ID = 018f0000-0000-4000-8000-0000000000a1`
+  before the suite runs; `UNSEEDED_PERSON_ID =
+  018f0000-0000-4000-8000-0000000000ff` is deliberately absent so
+  the rejected spec lands on red. `E2E_BASE_URL` flips to
+  `http://localhost:8082` (the portal nginx). Locale is locked to
+  French (legal primary; R-PORT-1) via `addInitScript`-set
+  `localStorage['recor.locale']='fr'` so assertions never break on
+  a developer's OS locale.
+
+### CI workflow
+
+`.github/workflows/portal-e2e.yaml`. Two jobs —
+`portal-e2e / mocked` and `portal-e2e / live` — both running with
+`fail-fast: true` and Playwright `retries: 0` (D14 fail-closed). The
+Playwright browsers are cached across runs keyed on the
+`@playwright/test` version. On failure the HTML report is uploaded
+as a workflow artefact (`playwright-report-{mocked,live}`).
+
+Both jobs are NOT YET in the required-checks set (per the OBS-2
+deferral pattern: 10-consecutive-green-runs gate before promotion).
+Status tracked in `docs/security/branch-protection.md` § Deferred
+promotions.
+
+### Local invocation
+
+```bash
+cd applications/declarant-portal
+pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
+pnpm build
+pnpm exec playwright test --reporter=list
+```
+
+The wizard's stable test hooks (`data-testid="wizard-step-{n}"`,
+`data-testid="wizard-forward"`, `data-testid="wizard-sign-submit"`)
+are the load-bearing selectors. Translated text is asserted only for
+the verification heading (`Vérification acceptée` / `Vérification
+rejetée`) — the rest of the suite is locale-resilient.
+
+### Determinism
+
+- Three consecutive local runs produce identical pass/fail (D19).
+- `Playwright retries: 0` in `playwright.config.ts` — flake hides
+  bugs, and a flaky suite is its own bug.
+- Mocked-mode trajectories are canned in `fixtures.ts` and the
+  receipt hash is a fixed BLAKE3 value so assertions are byte-stable.
+- Live-mode determinism relies on mock-BUNEC seeding being committed
+  in CI before the suite runs; the seed UUIDs are documented as
+  constants in `fixtures.ts` so a regenerator could rebuild the
+  database from the test source alone.
+
 ## SLOs
 
 | Metric | Budget |

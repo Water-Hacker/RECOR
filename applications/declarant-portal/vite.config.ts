@@ -32,6 +32,11 @@ export default defineConfig({
     environment: 'happy-dom',
     globals: true,
     setupFiles: ['./tests/setup.ts'],
+    // R-PORT-6: the Playwright suite lives under `tests/e2e/` and runs
+    // under the Playwright test runner. Vitest must not pick those up
+    // because they call `test.describe()` from `@playwright/test`,
+    // which trips assertions against the Vitest runtime.
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
