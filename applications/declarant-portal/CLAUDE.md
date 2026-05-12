@@ -21,7 +21,56 @@ Declaration service, displays the cryptographic receipt.
 - State: TanStack Query for server state; react-hook-form for form state
 - Validation: Zod schemas (shared between client validation and the form resolver)
 - Crypto: Web Crypto API native, no third-party crypto library
-- Routing: single-route v1; multi-step wizard is `R-PORT-3`
+- Routing: single-route v1; the declaration view is a 4-step wizard
+  (see "Wizard structure (R-PORT-3)" below)
+
+## Wizard structure (R-PORT-3)
+
+The declaration view is a 4-step linear wizard (`src/features/declaration/wizard/`).
+The single-page form was retired in this ticket — `DeclarationForm.tsx` is now
+a thin pass-through that mounts `<DeclarationWizard>`.
+
+### Files
+
+| File | Responsibility |
+|---|---|
+| `wizard/index.tsx` | Shell. Holds the single `useForm<FormValues>` instance, the Ed25519 keypair, the wizard-stable `declaration_id` + `nonce_hex`, the step index, and the Forward/Back gate. |
+| `wizard/types.ts` | `WizardStep` type, `STEP_FIELDS` mapping (which fields each step owns for `form.trigger()`), `FIRST_STEP`, `LAST_STEP`. |
+| `wizard/WizardStepper.tsx` | Horizontal progress indicator (1/4 Entity → 2/4 Owners → 3/4 Review → 4/4 Sign). Renders as `<nav><ol>` with `aria-current="step"` on the active step. |
+| `wizard/EntityStep.tsx` | Step 1. Inputs: `entity_id`, `declarant_principal`, `declarant_role`, `kind`, `effective_from`. |
+| `wizard/OwnersStep.tsx` | Step 2. `useFieldArray` over `beneficial_owners`; add/remove rows. |
+| `wizard/ReviewStep.tsx` | Step 3. Read-only summary plus the live canonical-payload-bytes preview (hex prefix + total byte length). The preview uses the same `canonicalPayloadBytes` the server-side canonicaliser is mirrored to (D15). |
+| `wizard/SignStep.tsx` | Step 4. Public-key confirmation block and the Sign-and-Submit CTA. The actual signing happens in the shell so the mutation cache lives in one place. |
+| `wizard/field.tsx` | Shared `Field`, `inputCls`, and `tValidationMessage` helpers — extracted so every step renders identical input styling and inline `role="alert"` error placement. |
+
+### Gating contract
+
+- **Forward** invokes `form.trigger(STEP_FIELDS[step])` against the current step's
+  fields and refuses to advance unless they all pass (D14 fail-closed). Step 3 and
+  step 4 own no inputs, so the trigger short-circuits to "valid" — the gate already
+  fired on steps 1 + 2.
+- **Back** is always enabled from step 2 onward; the first step's Back button is
+  disabled rather than hidden so the navigation pattern stays visually consistent.
+- **State** lives on a SINGLE `useForm()` instance shared across steps. Typed values
+  survive forward + back navigation. Do NOT spawn one form per step.
+
+### D15 cryptographic provenance — the parity invariant
+
+The wizard mints a stable `declaration_id` on first render and a stable `nonce_hex`
+on first entry to step 3. Step 3 renders the canonical bytes those values produce
+(via `canonicalPayloadBytes`); step 4 signs over those EXACT same bytes by passing
+the same `declaration_id` and `nonce_hex` into `signPayload`. The byte-parity
+unit test in `src/lib/crypto.test.ts` remains the load-bearing guard between
+client and server canonicalisation — the wizard does NOT introduce a parallel
+canonicaliser.
+
+### i18n keys
+
+All step labels, descriptions, navigation buttons, and the cryptographic-preview
+copy go through `t('wizard.…')`. The keys live under the `wizard.` namespace in
+each of `src/locales/{fr,en,pidgin}.json`. The Pidgin file carries English
+placeholders behind a `_translation_status: "stub"` marker, matching the rest
+of the file — community translation is the same workflow R-PORT-1 documented.
 
 ## SLOs
 
