@@ -77,6 +77,22 @@ pub struct Config {
     /// this list. (R-LOOP-DLQ-3)
     #[serde(default)]
     pub admin_principals: String,
+
+    /// PII-redaction posture for tracing logs (OPS-2). One of:
+    ///   - `enabled` — full redaction (production default)
+    ///   - `disabled-for-dev` — pass-through (dev default)
+    ///   - `disabled` — explicit pass-through; warns at startup
+    ///
+    /// Empty string falls back to `enabled` in non-dev environments,
+    /// `disabled-for-dev` in dev.
+    #[serde(default)]
+    pub log_redaction: String,
+
+    /// 64-hex-char (32-byte) BLAKE3 keyed-MAC key for redaction.
+    /// REQUIRED in non-dev environments when redaction is enabled.
+    /// Dev falls back to a random per-restart key with a startup warn.
+    #[serde(default = "default_secret")]
+    pub log_redaction_key: SecretString,
 }
 
 impl Config {

@@ -1,4 +1,9 @@
-# ADR 0001: Observability stack — dev compose + production Helm
+# ADR 0006: Observability stack — dev compose + production Helm
+
+> Renumbered from ADR-0001 to ADR-0006 in PR DOC-2 to make room for the
+> five foundational ADRs (event sourcing, Dempster-Shafer, outbox relay,
+> OIDC, HMAC rotation), which had been implicit until then. Content is
+> otherwise unchanged from the original.
 
 Date: 2026-05-11
 Status: Accepted

@@ -1,0 +1,24 @@
+[package]
+name = "recor-logging"
+description = "PII-redacting tracing layer for RÉCOR services. Intercepts span field values during recording and rewrites SPIFFE URIs, principal subjects, UUIDs in known PII fields, and BLAKE3 receipt hashes into stable BLAKE3-keyed-MAC redacted forms. Configurable via LOG_REDACTION (enabled|disabled-for-dev|disabled) + LOG_REDACTION_KEY (32-byte hex MAC key). Closes OPS-2."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_logging"
+path = "src/lib.rs"
+
+[dependencies]
+blake3.workspace = true
+hex.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["env-filter", "json", "fmt"] }
