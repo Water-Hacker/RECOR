@@ -164,6 +164,8 @@ fn test_config(
         admin_principals: String::new(),
         rate_limit_per_min,
         rate_limit_burst,
+        log_redaction: String::new(),
+        log_redaction_key: SecretString::from(String::new()),
     }
 }
 
