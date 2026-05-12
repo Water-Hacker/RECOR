@@ -22,7 +22,9 @@ use time::{Duration, OffsetDateTime};
 
 use super::command::{RecordVerificationOutcome, SubmitDeclaration};
 use super::error::DomainError;
-use super::event::{DeclarationEvent, DeclarationSubmittedV1, DeclarationVerifiedV1};
+use super::event::{
+    DeclarationEvent, DeclarationSubmittedV1, DeclarationSupersededV1, DeclarationVerifiedV1,
+};
 use super::value_object::{BeneficialOwnerClaim, DeclarationId, DeclarationState};
 
 /// In-memory representation of a Declaration aggregate, hydrated from
@@ -37,6 +39,18 @@ pub struct DeclarationAggregate {
     /// Set when a `declaration.verified.v1` event is applied; replays
     /// of the same case_id against the same aggregate are no-ops.
     pub verification_case_id: Option<uuid::Uuid>,
+    /// The declaration that has superseded THIS one, if any. Set when
+    /// a `declaration.superseded.v1` event is applied. A declaration
+    /// can be superseded at most once (idempotency anchor — supersede
+    /// chains are strictly linear).
+    pub superseded_by: Option<DeclarationId>,
+    /// The declarant principal recorded on the Submitted event. Used
+    /// by the use-case layer to authorise subsequent commands (today
+    /// only Supersede uses it; future Amend/Correct will too).
+    pub declarant_principal: Option<String>,
+    /// The entity this declaration is about. Used to validate that
+    /// superseding declarations target the same entity.
+    pub entity_id: Option<super::value_object::EntityId>,
 }
 
 impl DeclarationAggregate {
@@ -47,6 +61,9 @@ impl DeclarationAggregate {
             version: 0,
             state: DeclarationState::Draft, // aggregate-not-yet-emitting; "Draft" is the absent placeholder
             verification_case_id: None,
+            superseded_by: None,
+            declarant_principal: None,
+            entity_id: None,
         }
     }
 
@@ -62,12 +79,18 @@ impl DeclarationAggregate {
     /// Apply an event to advance state. Pure; no I/O.
     pub fn apply(&mut self, event: &DeclarationEvent) {
         match event {
-            DeclarationEvent::Submitted(_) => {
+            DeclarationEvent::Submitted(p) => {
                 self.state = DeclarationState::Submitted;
+                self.declarant_principal = Some(p.declarant_principal.clone());
+                self.entity_id = Some(p.entity_id);
             }
             DeclarationEvent::Verified(p) => {
                 self.state = p.lane.to_declaration_state();
                 self.verification_case_id = Some(p.verification_case_id);
+            }
+            DeclarationEvent::Superseded(p) => {
+                self.state = DeclarationState::Superseded;
+                self.superseded_by = Some(p.superseded_by_declaration_id);
             }
         }
         self.version = self.version.saturating_add(1);
@@ -152,6 +175,54 @@ impl DeclarationAggregate {
             recorded_at: OffsetDateTime::now_utc(),
         };
         Ok(Some(DeclarationEvent::Verified(payload)))
+    }
+
+    /// Validate a Supersede command against THIS aggregate (the OLD
+    /// declaration being replaced). Produces the
+    /// `DeclarationSupersededV1` event; the caller is responsible for
+    /// persisting it atomically alongside the NEW declaration's
+    /// `DeclarationSubmittedV1`.
+    ///
+    /// Rules enforced here:
+    ///   - This aggregate must have a prior Submitted event (version > 0)
+    ///   - This aggregate must NOT already be superseded (chains are linear)
+    ///   - The current state must be `Accepted` or `InVerification` —
+    ///     Draft/Submitted-not-yet-verified should be re-submitted
+    ///     instead; Rejected declarations cannot supersede anything
+    ///     because they aren't authoritative
+    ///   - The successor must not be the same id as this aggregate
+    ///     (self-supersede is meaningless)
+    pub fn handle_supersede(
+        &self,
+        superseded_by_declaration_id: DeclarationId,
+        correlation_id: uuid::Uuid,
+    ) -> Result<DeclarationEvent, DomainError> {
+        if self.version == 0 {
+            return Err(DomainError::SupersedeBeforeSubmit(self.id.0));
+        }
+        if self.superseded_by.is_some() {
+            return Err(DomainError::AlreadySuperseded(self.id.0));
+        }
+        if superseded_by_declaration_id == self.id {
+            return Err(DomainError::SelfSupersedeForbidden(self.id.0));
+        }
+        match self.state {
+            DeclarationState::Accepted | DeclarationState::InVerification => {}
+            _ => {
+                return Err(DomainError::SupersedeFromInvalidState {
+                    declaration_id: self.id.0,
+                    state: self.state.as_str(),
+                });
+            }
+        }
+
+        let payload = DeclarationSupersededV1 {
+            declaration_id: self.id,
+            superseded_by_declaration_id,
+            superseded_at: OffsetDateTime::now_utc(),
+            correlation_id,
+        };
+        Ok(DeclarationEvent::Superseded(payload))
     }
 }
 

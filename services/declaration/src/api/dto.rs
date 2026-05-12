@@ -112,6 +112,22 @@ pub struct GetDeclarationResponse {
         default
     )]
     pub verified_at: Option<OffsetDateTime>,
+
+    /// If this declaration replaced an earlier one, the earlier
+    /// declaration's id. Consumers can chase backwards through the
+    /// supersede chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_declaration_id: Option<DeclarationId>,
+    /// If this declaration has been replaced, the successor's id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by_declaration_id: Option<DeclarationId>,
+    /// Time this declaration was superseded.
+    #[serde(
+        with = "crate::domain::serde_helpers::iso_datetime_option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub superseded_at: Option<OffsetDateTime>,
 }
 
 impl From<DeclarationProjection> for GetDeclarationResponse {
@@ -133,6 +149,42 @@ impl From<DeclarationProjection> for GetDeclarationResponse {
             verification_lane: p.verification_lane,
             verification_case_id: p.verification_case_id,
             verified_at: p.verified_at,
+            supersedes_declaration_id: p.supersedes_declaration_id,
+            superseded_by_declaration_id: p.superseded_by_declaration_id,
+            superseded_at: p.superseded_at,
+        }
+    }
+}
+
+/// Receipt for a successful supersede. The new declaration's id is
+/// the consumer's handle going forward; the old declaration's id is
+/// echoed back so callers can confirm the chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupersedeDeclarationResponse {
+    pub new_declaration_id: DeclarationId,
+    pub superseded_declaration_id: DeclarationId,
+    pub state: String,
+    pub receipt_hash_hex: String,
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub submitted_at: OffsetDateTime,
+    pub receipt_url: String,
+}
+
+impl SupersedeDeclarationResponse {
+    pub fn from_receipt(
+        receipt: crate::application::SupersedeReceipt,
+        base_url: &str,
+    ) -> Self {
+        Self {
+            new_declaration_id: receipt.new_declaration_id,
+            superseded_declaration_id: receipt.superseded_declaration_id,
+            state: receipt.state,
+            receipt_hash_hex: receipt.receipt_hash_hex,
+            submitted_at: receipt.submitted_at,
+            receipt_url: format!(
+                "{base_url}/v1/declarations/{id}",
+                id = receipt.new_declaration_id
+            ),
         }
     }
 }

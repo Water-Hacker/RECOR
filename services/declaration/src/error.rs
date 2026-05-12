@@ -9,7 +9,9 @@ use serde_json::json;
 use thiserror::Error;
 use tracing::error;
 
-use crate::application::{GetError, RecordVerificationError, RepositoryError, SubmitError};
+use crate::application::{
+    GetError, RecordVerificationError, RepositoryError, SubmitError, SupersedeError,
+};
 use crate::domain::DomainError;
 
 #[derive(Debug, Error)]
@@ -61,6 +63,16 @@ impl From<RecordVerificationError> for ServiceError {
     }
 }
 
+impl From<SupersedeError> for ServiceError {
+    fn from(value: SupersedeError) -> Self {
+        match value {
+            SupersedeError::Domain(e) => Self::Domain(e),
+            SupersedeError::Repository(e) => Self::Repository(e),
+            SupersedeError::OldDeclarationNotFound(id) => Self::NotFound(id.to_string()),
+        }
+    }
+}
+
 impl IntoResponse for ServiceError {
     fn into_response(self) -> Response {
         let (status, kind, message) = match &self {
@@ -68,15 +80,21 @@ impl IntoResponse for ServiceError {
                 let kind = match e {
                     DomainError::AlreadySubmitted(_) => "conflict",
                     DomainError::VerificationCaseMismatch { .. } => "conflict",
+                    DomainError::AlreadySuperseded(_) => "conflict",
                     DomainError::AttestationPrincipalMismatch { .. } => "forbidden",
+                    DomainError::SupersedeNotOwner { .. } => "forbidden",
                     DomainError::VerificationOutcomeBeforeSubmit(_) => "not_found",
+                    DomainError::SupersedeBeforeSubmit(_) => "not_found",
                     _ => "bad_request",
                 };
                 let status = match e {
                     DomainError::AlreadySubmitted(_) => StatusCode::CONFLICT,
                     DomainError::VerificationCaseMismatch { .. } => StatusCode::CONFLICT,
+                    DomainError::AlreadySuperseded(_) => StatusCode::CONFLICT,
                     DomainError::AttestationPrincipalMismatch { .. } => StatusCode::FORBIDDEN,
+                    DomainError::SupersedeNotOwner { .. } => StatusCode::FORBIDDEN,
                     DomainError::VerificationOutcomeBeforeSubmit(_) => StatusCode::NOT_FOUND,
+                    DomainError::SupersedeBeforeSubmit(_) => StatusCode::NOT_FOUND,
                     _ => StatusCode::BAD_REQUEST,
                 };
                 (status, kind, e.to_string())

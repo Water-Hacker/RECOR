@@ -15,12 +15,14 @@ use super::value_object::{
 
 /// The set of commands the aggregate accepts. Submit creates the
 /// aggregate; RecordVerificationOutcome transitions it after the
-/// Verification Engine returns a lane decision.
+/// Verification Engine returns a lane decision; SupersedeDeclaration
+/// closes a declaration's lifecycle when a successor replaces it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
 pub enum Command {
     Submit(SubmitDeclaration),
     RecordVerificationOutcome(RecordVerificationOutcome),
+    Supersede(SupersedeDeclaration),
 }
 
 /// Submit a new beneficial ownership declaration.
@@ -54,4 +56,21 @@ pub struct RecordVerificationOutcome {
     pub fused_authenticity_plausibility: f64,
     pub fused_risk_belief: f64,
     pub completed_at: OffsetDateTime,
+}
+
+/// Supersede an existing declaration with a new one. The new
+/// declaration's payload (entity_id, owners, attestation, etc.) is the
+/// same shape as `SubmitDeclaration`; it gets a fresh declaration_id.
+/// The OLD declaration referenced here transitions to `Superseded`
+/// state atomically with the new declaration's `Submitted`.
+///
+/// Authorisation: handled at the API layer — the declarant principal
+/// must own the OLD declaration AND be authorised to declare for the
+/// same entity. The domain aggregate does not re-check authz.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupersedeDeclaration {
+    /// The declaration_id being superseded.
+    pub supersedes_declaration_id: DeclarationId,
+    /// The new declaration's full submit payload.
+    pub new_declaration: SubmitDeclaration,
 }

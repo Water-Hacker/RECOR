@@ -35,6 +35,21 @@ pub trait DeclarationRepository: Send + Sync {
         &self,
         id: DeclarationId,
     ) -> Result<Option<crate::application::DeclarationProjection>, RepositoryError>;
+
+    /// Atomic supersede: append the NEW declaration's Submitted event +
+    /// upsert its projection + write its outbox row, AND append the OLD
+    /// aggregate's Superseded event + update its projection + write its
+    /// outbox row, in one Postgres transaction. Both `expected_version`
+    /// values are asserted for optimistic concurrency; a mismatch on
+    /// either aborts the entire transaction.
+    async fn save_supersede(
+        &self,
+        new_event: &DeclarationEvent,
+        new_expected_version: u64,
+        old_id: DeclarationId,
+        old_event: &DeclarationEvent,
+        old_expected_version: u64,
+    ) -> Result<(), RepositoryError>;
 }
 
 /// Outbox writer — abstracted because some adapters (in-memory tests)

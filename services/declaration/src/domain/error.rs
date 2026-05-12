@@ -51,6 +51,34 @@ pub enum DomainError {
     #[error("fused {field} {value} out of range [0.0, 1.0]")]
     FusedBeliefOutOfRange { field: &'static str, value: f64 },
 
+    #[error("cannot supersede declaration {0}: it has no Submitted event")]
+    SupersedeBeforeSubmit(uuid::Uuid),
+
+    #[error("declaration {0} is already superseded; supersede chains are strictly linear")]
+    AlreadySuperseded(uuid::Uuid),
+
+    #[error("declaration {0} cannot supersede itself")]
+    SelfSupersedeForbidden(uuid::Uuid),
+
+    #[error("declaration {declaration_id} cannot be superseded from state {state}; only Accepted or InVerification declarations can be superseded")]
+    SupersedeFromInvalidState {
+        declaration_id: uuid::Uuid,
+        state: &'static str,
+    },
+
+    #[error("supersede authorisation failed: declarant {actual} does not own declaration {declaration_id} (owned by {expected})")]
+    SupersedeNotOwner {
+        declaration_id: uuid::Uuid,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("supersede entity mismatch: new declaration is for entity {new_entity_id} but supersedes declaration for entity {old_entity_id}")]
+    SupersedeEntityMismatch {
+        old_entity_id: uuid::Uuid,
+        new_entity_id: uuid::Uuid,
+    },
+
     #[error(transparent)]
     ValueObject(#[from] ValueObjectError),
 }

@@ -25,6 +25,7 @@ use uuid::Uuid;
 use recor_declaration::api::AppState;
 use recor_declaration::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -61,6 +62,7 @@ async fn spawn_service() -> TestService {
     let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
     let record_verification =
         Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
+    let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool));
 
     // Bind to an ephemeral port.
@@ -76,6 +78,7 @@ async fn spawn_service() -> TestService {
         submit_usecase: submit,
         get_usecase: get,
         record_verification_usecase: record_verification,
+        supersede_usecase: supersede,
         idempotency,
         base_url: format!("http://{bind_addr}"),
         is_dev: true,
