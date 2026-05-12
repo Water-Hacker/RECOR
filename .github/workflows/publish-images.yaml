@@ -1,6 +1,9 @@
-# Publish + cosign-sign container images on merge to main.
+# Publish + scan + sign container images on merge to main.
 #
-# Ticket: CI-1 (docs/PRODUCTION-TODO.md § CI / supply chain).
+# Tickets:
+#   CI-1 — publish + cosign keyless signing (shipped in PR #67)
+#   CI-2 — Trivy HIGH/CRITICAL scan + SPDX/CycloneDX SBOM attestations
+#          (docs/PRODUCTION-TODO.md § CI / supply chain)
 #
 # Trigger:
 #   - push to main (the canonical publish path)
@@ -18,19 +21,35 @@
 # `cosign verify --certificate-identity-regexp 'https://github.com/Water-Hacker/RECOR/.github/workflows/publish-images.yaml@.*' ...`.
 # See docs/runbooks/image-verification.md.
 #
+# Each image is additionally scanned by Trivy (HIGH+CRITICAL, fixed
+# vulns only) and accompanied by two SBOMs (SPDX-JSON and CycloneDX-JSON)
+# attached to the image as cosign-signed attestations. See
+# docs/runbooks/supply-chain.md for the on-call workflow.
+#
 # Doctrines:
-#   D14 fail-closed   — matrix is fail-fast; no continue-on-error
-#   D16 observability — build duration + image size are surfaced to the
-#                       workflow summary
-#   D18 no secrets    — only GITHUB_TOKEN (auto-provisioned). No new
-#                       repo/org secrets introduced by this workflow.
-#   D20 SLSA target   — cosign signs every image; certificate identity
-#                       is pinnable to this workflow file's URL
+#   D14 fail-closed   — matrix is fail-fast; Trivy `exit-code: 1` aborts
+#                       the run before publish-side state (signing,
+#                       attestation) is written. No continue-on-error.
+#   D16 observability — build duration, image size, SBOM byte sizes, and
+#                       Trivy HIGH/CRITICAL counts are surfaced to the
+#                       workflow summary.
+#   D18 no secrets    — only GITHUB_TOKEN (auto-provisioned) + the
+#                       workflow's OIDC token. No new repo/org secrets.
+#   D20 SLSA target   — cosign signs every image AND every SBOM
+#                       attestation; certificate identity is pinnable to
+#                       this workflow file's URL, so a verifier can chain
+#                       trust from "image at registry" back to "this
+#                       workflow ran on a real GitHub-hosted runner".
+#
+# False-positive Trivy findings are managed via `.trivyignore` at the
+# repo root. Adding a CVE there is a doctrine-D7 escalation, not a
+# routine quieting — see docs/runbooks/supply-chain.md.
 #
 # Permissions:
-#   contents: read       — checkout
-#   packages: write      — push to ghcr.io
-#   id-token: write      — cosign keyless OIDC
+#   contents:        read   — checkout
+#   packages:        write  — push to ghcr.io
+#   id-token:        write  — cosign + sbom-action keyless OIDC
+#   security-events: write  — upload Trivy SARIF to code-scanning
 
 name: publish-images
 
@@ -43,6 +62,7 @@ permissions:
   contents: read
   packages: write
   id-token: write
+  security-events: write
 
 concurrency:
   group: publish-images-${{ github.ref }}
@@ -54,7 +74,10 @@ env:
 
 jobs:
   build-and-sign:
-    name: build + sign / ${{ matrix.image }}
+    # Job ID kept as `build-and-sign` so existing branch-protection
+    # required-status-checks references (CI-3) stay valid; the display
+    # name now reflects the full pipeline.
+    name: build + scan + sign / ${{ matrix.image }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -112,6 +135,90 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+      # ─── Vulnerability scan (Trivy) ────────────────────────────────
+      # D14 fail-closed: any HIGH/CRITICAL with a fix available aborts
+      # the job BEFORE cosign sign runs, so a vulnerable image is never
+      # both signed and attested. `ignore-unfixed: true` keeps the gate
+      # actionable — we don't fail on findings we can't yet remediate.
+      # `.trivyignore` at repo root is the documented escape hatch
+      # (per docs/runbooks/supply-chain.md); it is empty by default.
+      #
+      # We run Trivy twice: once for JSON (used for the summary count)
+      # without a gate, then once for SARIF with the gate. The second
+      # run is the authoritative pass/fail; the first reuses Trivy's
+      # local DB cache, so it's cheap.
+      - name: trivy scan — JSON report (for summary counts)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: json
+          output: trivy-${{ matrix.image }}.json
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          trivyignores: .trivyignore
+          vuln-type: os,library
+
+      - name: trivy scan — SARIF + fail-closed gate (D14)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # D14: non-zero exit on any HIGH/CRITICAL with a fix breaks
+          # the job. No continue-on-error anywhere in this step.
+          exit-code: '1'
+          trivyignores: .trivyignore
+          vuln-type: os,library
+
+      - name: upload trivy SARIF to code-scanning
+        # Even if a later step fails, the SARIF should still land on
+        # the Security tab so the finding is visible. We do NOT mask
+        # the upstream failure — `if: always()` here, but Trivy itself
+        # has already gated the run above.
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}
+
+      # ─── SBOM generation (SPDX + CycloneDX) ───────────────────────
+      # Two formats because procurement auditors split between SPDX
+      # (Linux Foundation lineage) and CycloneDX (OWASP lineage). The
+      # action wraps syft; output is deterministic for a given digest.
+      - name: generate SPDX SBOM
+        uses: anchore/sbom-action@v0.17.7
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0.17.7
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.image }}.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: upload SBOM + scan reports as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-${{ matrix.image }}
+          path: |
+            sbom-${{ matrix.image }}.spdx.json
+            sbom-${{ matrix.image }}.cdx.json
+            trivy-${{ matrix.image }}.json
+            trivy-${{ matrix.image }}.sarif
+          if-no-files-found: error
+          retention-days: 90
+
+      # ─── Sign the image ───────────────────────────────────────────
       - name: cosign sign (keyless, OIDC-bound)
         env:
           # Tells cosign to use the workflow's ambient OIDC identity
@@ -124,11 +231,48 @@ jobs:
           echo "Signing ${IMAGE_REF}"
           cosign sign --yes "${IMAGE_REF}"
 
-      - name: surface build duration + image size (D16)
+      # ─── Attach SBOMs as keyless-signed attestations (D20) ───────
+      # `cosign attest` wraps the SBOM in an in-toto statement, signs
+      # the bundle with the same workflow OIDC identity used for the
+      # image signature, and pushes it to ghcr.io alongside the image.
+      # A verifier can `cosign verify-attestation` + `download
+      # attestation` to retrieve the SBOM, chaining trust back to this
+      # workflow file.
+      - name: cosign attest — SPDX SBOM
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          SBOM_FILE: sbom-${{ matrix.image }}.spdx.json
+        run: |
+          set -euo pipefail
+          echo "Attesting SPDX SBOM (${SBOM_FILE}) for ${IMAGE_REF}"
+          cosign attest --yes \
+            --predicate "${SBOM_FILE}" \
+            --type spdxjson \
+            "${IMAGE_REF}"
+
+      - name: cosign attest — CycloneDX SBOM
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          SBOM_FILE: sbom-${{ matrix.image }}.cdx.json
+        run: |
+          set -euo pipefail
+          echo "Attesting CycloneDX SBOM (${SBOM_FILE}) for ${IMAGE_REF}"
+          cosign attest --yes \
+            --predicate "${SBOM_FILE}" \
+            --type cyclonedx \
+            "${IMAGE_REF}"
+
+      # ─── Workflow summary (D16) ───────────────────────────────────
+      - name: surface build + scan + SBOM stats (D16)
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
           DIGEST: ${{ steps.build.outputs.digest }}
           START_EPOCH: ${{ steps.start.outputs.epoch }}
+          TRIVY_JSON: trivy-${{ matrix.image }}.json
+          SBOM_SPDX: sbom-${{ matrix.image }}.spdx.json
+          SBOM_CDX: sbom-${{ matrix.image }}.cdx.json
         run: |
           set -euo pipefail
           end_epoch=$(date +%s)
@@ -138,6 +282,25 @@ jobs:
           size_bytes=$(docker manifest inspect "${IMAGE}" 2>/dev/null \
             | jq '[.layers[].size] | add' || echo 0)
           size_mb=$(awk -v b="${size_bytes}" 'BEGIN { printf "%.2f", b/1048576 }')
+
+          # Vuln counts from the JSON Trivy report. If the SARIF gate
+          # above passed, these are by definition zero for "fixed
+          # HIGH/CRITICAL post-ignore". We still surface them so a
+          # reader can see the gate looked at vulnerabilities and
+          # found none reportable.
+          if [ -f "${TRIVY_JSON}" ]; then
+            crit=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "${TRIVY_JSON}")
+            high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "${TRIVY_JSON}")
+          else
+            crit="n/a"
+            high="n/a"
+          fi
+
+          spdx_bytes=$(stat -c '%s' "${SBOM_SPDX}" 2>/dev/null || echo 0)
+          cdx_bytes=$(stat -c '%s' "${SBOM_CDX}" 2>/dev/null || echo 0)
+          spdx_kb=$(awk -v b="${spdx_bytes}" 'BEGIN { printf "%.1f", b/1024 }')
+          cdx_kb=$(awk -v b="${cdx_bytes}" 'BEGIN { printf "%.1f", b/1024 }')
+
           {
             echo "### ${{ matrix.image }}"
             echo ""
@@ -147,10 +310,15 @@ jobs:
             echo "| Digest | \`${DIGEST}\` |"
             echo "| Build duration | ${duration}s |"
             echo "| Compressed size | ${size_mb} MiB |"
+            echo "| Trivy CRITICAL (fixed, post-ignore) | ${crit} |"
+            echo "| Trivy HIGH (fixed, post-ignore) | ${high} |"
+            echo "| SPDX SBOM size | ${spdx_kb} KiB |"
+            echo "| CycloneDX SBOM size | ${cdx_kb} KiB |"
             echo ""
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: verify signature (post-publish self-check)
+      # ─── Post-publish self-checks ─────────────────────────────────
+      - name: verify image signature (post-publish self-check)
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           # The workflow's own ref — matches what on-call will check.
@@ -158,10 +326,28 @@ jobs:
           ISSUER: https://token.actions.githubusercontent.com
         run: |
           set -euo pipefail
-          echo "Verifying ${IMAGE_REF}"
+          echo "Verifying signature for ${IMAGE_REF}"
           cosign verify \
             --certificate-identity-regexp "${IDENTITY_REGEX}" \
             --certificate-oidc-issuer "${ISSUER}" \
             "${IMAGE_REF}" \
             > /dev/null
           echo "Signature verified for ${IMAGE_REF}"
+
+      - name: verify SBOM attestations (post-publish self-check)
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          IDENTITY_REGEX: https://github.com/Water-Hacker/RECOR/.github/workflows/publish-images.yaml@.*
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          for predicate_type in spdxjson cyclonedx; do
+            echo "Verifying ${predicate_type} attestation for ${IMAGE_REF}"
+            cosign verify-attestation \
+              --type "${predicate_type}" \
+              --certificate-identity-regexp "${IDENTITY_REGEX}" \
+              --certificate-oidc-issuer "${ISSUER}" \
+              "${IMAGE_REF}" \
+              > /dev/null
+            echo "${predicate_type} attestation verified for ${IMAGE_REF}"
+          done
