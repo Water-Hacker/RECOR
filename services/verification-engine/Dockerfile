@@ -14,39 +14,13 @@ WORKDIR /build
 # out rather than silently falling back to a runtime check).
 ENV SQLX_OFFLINE=true
 
-COPY Cargo.toml rust-toolchain.toml ./
-COPY packages/recor-auth-oidc/Cargo.toml ./packages/recor-auth-oidc/
-COPY packages/recor-logging/Cargo.toml ./packages/recor-logging/
-COPY services/declaration/Cargo.toml services/declaration/build.rs ./services/declaration/
-COPY services/verification-engine/Cargo.toml ./services/verification-engine/
-COPY contracts ./contracts
-
-RUN mkdir -p packages/recor-auth-oidc/src \
-             packages/recor-logging/src \
-             services/declaration/src \
-             services/verification-engine/src \
-    && echo "" > packages/recor-auth-oidc/src/lib.rs \
-    && echo "" > packages/recor-logging/src/lib.rs \
-    && echo "fn main() {}" > services/declaration/src/main.rs \
-    && echo "" > services/declaration/src/lib.rs \
-    && echo "fn main() {}" > services/verification-engine/src/main.rs \
-    && echo "" > services/verification-engine/src/lib.rs \
-    && cargo build --release --bin recor-verification-engine --quiet \
-    && rm -rf packages/recor-auth-oidc/src \
-              packages/recor-logging/src \
-              services/declaration/src \
-              services/verification-engine/src
-
-COPY packages/recor-auth-oidc ./packages/recor-auth-oidc
-COPY packages/recor-logging ./packages/recor-logging
-COPY services/verification-engine/src ./services/verification-engine/src
-COPY services/verification-engine/migrations ./services/verification-engine/migrations
-# Offline sqlx cache (committed alongside the source). SQLX_OFFLINE=true
-# above tells the macros to consult this directory instead of opening a
-# database connection.
-COPY services/verification-engine/.sqlx ./services/verification-engine/.sqlx
-
-RUN find packages services -name "*.rs" -exec touch {} +
+# Copy the entire workspace tree. We previously did a manifest-only
+# stub-build phase for finer Docker cache hits, but the workspace
+# now spans many crates added across multiple PRs and any new
+# workspace member silently broke the stub-build's hand-rolled file
+# list. The tradeoff is a slower cold build, but `docker buildx`
+# layer caching on the published image keeps incremental builds fast.
+COPY . .
 
 RUN cargo build --release --bin recor-verification-engine --quiet \
     && strip target/release/recor-verification-engine

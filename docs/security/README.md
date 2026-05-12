@@ -17,6 +17,15 @@ that map each commitment to the running system.
   (CI-3).
 - [Teams](teams.md) — `@recor/*` team membership reference used by
   CODEOWNERS and by the branch-protection review-routing rules.
+- [Pen-test preparation package](pen-test-prep.md) — the technical
+  engagement brief the vendor reads before the external penetration
+  test starts: scope, per-STRIDE-row test objectives, engagement
+  logistics, engineering pre-flight checklist, reporting format
+  (PEN-1).
+- [Pen-test Rules of Engagement](pen-test-rules-of-engagement.md) —
+  the legal-grade contract the vendor signs alongside the NDA:
+  authorised actions, forbidden actions, data-handling, liability,
+  disclosure protocol, contact graph (PEN-1).
 
 ## How to use this directory
 
