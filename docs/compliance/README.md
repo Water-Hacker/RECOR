@@ -24,6 +24,8 @@ operations, and counsel each rely on.
 | `data-classification.md` | Per-column inventory: Public / Internal / Confidential / PII / Sensitive-PII. | Draft, pending counsel sign-off (COMP-3). |
 | `data-retention.md` | Retention policy for every persisted store (event log, outbox, idempotency, projections, audit chain). | In force from Phase 0 (COMP-2 shipped). |
 | `regulatory-mapping.md` | Endpoint → legal-provision map (REST + gRPC) AND invariant → legal-provision map under Cameroon law + OHADA + FATF Rec 24 + GDPR. | Draft, pending counsel sign-off (COMP-4). |
+| `dr-drill-template.md` | Quarterly DR-drill record template; on-call copies it each quarter to `dr-drill-YYYY-Qn.md`. | In force (COMP-5). |
+| `dr-drill-YYYY-Qn.md` | Per-quarter drill record produced by copying `dr-drill-template.md`. | Created quarterly; one file per quarter, never edited after sign-off. |
 
 ## How to use this directory
 
@@ -58,6 +60,24 @@ the verification step, the response template, and the time bounds.
 `regulatory-mapping.md` is the auditor's entry point. Every cited
 provision must point to a specific clause; "see decree XYZ" without an
 article number is not a citation.
+
+### When running the quarterly DR drill
+
+The DR drill (COMP-5) is a quarterly required exercise. The procedure
+and the RTO/RPO commitments live in
+`docs/runbooks/restore-from-backup.md`; the record template lives at
+`dr-drill-template.md`. On-call:
+
+1. Runs `bash scripts/dr-drill.sh` against a recent build of `main`.
+2. Copies `dr-drill-template.md` to `dr-drill-YYYY-Qn.md` and fills in
+   every field (including the observed RTO from the script's final
+   line).
+3. Opens a PR titled `chore(ops): YYYY Qn DR drill record` and asks a
+   second on-call to co-sign.
+4. Files follow-up tickets for any deviation from the procedure.
+
+A missed quarter is itself a finding — see
+`docs/runbooks/restore-from-backup.md` § Quarterly drill cadence.
 
 ## Authority hierarchy
 
