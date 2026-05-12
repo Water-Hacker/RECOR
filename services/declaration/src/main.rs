@@ -11,8 +11,8 @@ use tracing::{error, info};
 
 use recor_declaration::api::{AppState, OidcVerifier};
 use recor_declaration::application::{
-    GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
-    SupersedeDeclarationUseCase,
+    AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
+    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -57,6 +57,8 @@ async fn main() -> Result<()> {
     let record_verification =
         Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
+    let amend = Arc::new(AmendDeclarationUseCase::new(repository.clone()));
+    let correct = Arc::new(CorrectDeclarationUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
     let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
@@ -94,6 +96,8 @@ async fn main() -> Result<()> {
         get_usecase: get,
         record_verification_usecase: record_verification,
         supersede_usecase: supersede,
+        amend_usecase: amend,
+        correct_usecase: correct,
         idempotency,
         outbox_admin,
         base_url,

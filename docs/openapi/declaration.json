@@ -275,6 +275,246 @@
         ]
       }
     },
+    "/v1/declarations/{declaration_id}/amend": {
+      "post": {
+        "tags": [
+          "declarations"
+        ],
+        "operationId": "amendDeclaration",
+        "parameters": [
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Identifier of the declaration to amend in place",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmendDeclarationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Amendment applied; the declaration row was re-projected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AmendDeclarationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body or invariant violation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or bad attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not the owner of the declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State-machine refusal — declaration is Accepted/Rejected/Superseded (use Supersede or re-submit)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate-limited (OPS-1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/declarations/{declaration_id}/correct": {
+      "post": {
+        "tags": [
+          "declarations"
+        ],
+        "operationId": "correctDeclaration",
+        "parameters": [
+          {
+            "name": "declaration_id",
+            "in": "path",
+            "description": "Identifier of the declaration to correct (pre-verification only)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectDeclarationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Correction applied; metadata updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectDeclarationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token or bad attestation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not the owner of the declaration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Declaration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "State-machine refusal — corrections are admitted only in `submitted` (use amend or supersede)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate-limited (OPS-1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
     "/v1/declarations/{declaration_id}/supersede": {
       "post": {
         "tags": [
@@ -698,6 +938,95 @@
   },
   "components": {
     "schemas": {
+      "AmendDeclarationRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/declarations/{id}/amend`. Carries the\nfull replacement value for every amendable field plus a fresh\nEd25519 attestation signed over the AMENDED canonical form by the\ndeclarant. The `declarant_principal` is sourced from authentication\nat the API boundary (D17), not from this body.",
+        "required": [
+          "beneficial_owners",
+          "effective_from",
+          "declarant_role",
+          "attestation"
+        ],
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/CryptographicAttestation",
+            "description": "Fresh attestation signed by the declarant over the AMENDED\ncanonical payload (entity_id, declarant_principal,\ndeclarant_role, kind, effective_from, beneficial_owners,\nnonce_hex). Verified at the API boundary before the command\nreaches the aggregate."
+          },
+          "beneficial_owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeneficialOwnerClaim"
+            }
+          },
+          "declarant_role": {
+            "$ref": "#/components/schemas/DeclarantRole"
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date",
+            "description": "Effective date of the amendment, ISO-8601 `YYYY-MM-DD`.",
+            "example": "2026-05-01"
+          }
+        }
+      },
+      "AmendDeclarationResponse": {
+        "type": "object",
+        "description": "Receipt for a successful amendment.",
+        "required": [
+          "declaration_id",
+          "aggregate_version",
+          "amended_at",
+          "receipt_url"
+        ],
+        "properties": {
+          "aggregate_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Aggregate version after the amendment is applied.",
+            "minimum": 0
+          },
+          "amended_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-05-11T22:39:52.447Z"
+          },
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "receipt_url": {
+            "type": "string",
+            "description": "Self-link to the updated declaration record."
+          }
+        }
+      },
+      "AmendmentSet": {
+        "type": "object",
+        "description": "The set of fields amendable in-place on an existing declaration.\n\nUsed by `AmendDeclaration` commands and stored in\n`DeclarationAmendedV1` events (both as the `before` snapshot — what\nthe aggregate held — and the `after` snapshot — what the declarant\nis replacing them with). Fields NOT in this set cannot be amended:\n  - `entity_id` (a different entity is `Supersede`, not `Amend`)\n  - `declarant_principal` (auth-bound; an \"amend by someone else\"\n    would be a separate authorisation flow)\n  - `kind` (changing the declaration's purpose changes its meaning;\n    out of scope for v1)\n  - `attestation` itself (the attestation IS the amendment's signature)\n  - `correlation_id` / `submitted_at` (lifecycle metadata)",
+        "required": [
+          "beneficial_owners",
+          "effective_from",
+          "declarant_role"
+        ],
+        "properties": {
+          "beneficial_owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeneficialOwnerClaim"
+            },
+            "description": "Replacement beneficial-owner roster. Must still satisfy the\naggregate's owner-sum-invariant (basis points sum to 10_000)\nand the no-duplicate-person-id rule."
+          },
+          "declarant_role": {
+            "$ref": "#/components/schemas/DeclarantRole",
+            "description": "Replacement declarant role. Most amendments leave this\nunchanged; the field is still recorded explicitly in both\nbefore/after snapshots so a replay sees the full intent."
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date",
+            "description": "Replacement effective-from date. Validated by the same\n`validate_effective_from` rule the Submit path uses.",
+            "example": "2026-05-01"
+          }
+        }
+      },
       "BeneficialOwnerClaim": {
         "type": "object",
         "description": "One declared beneficial owner with their interest in the entity.",
@@ -718,6 +1047,65 @@
           "person_id": {
             "$ref": "#/components/schemas/PersonId",
             "description": "Canonical person identifier. The declarant supplies this; the\nPerson service is the source of truth that the verification engine\nvalidates against in a later pipeline stage."
+          }
+        }
+      },
+      "CorrectDeclarationRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/declarations/{id}/correct`. Carries\nthe metadata-correction payload plus a fresh attestation. The\ncanonical declaration body is unchanged; the attestation here\ncovers the corrected metadata bytes.",
+        "required": [
+          "attestation"
+        ],
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/CryptographicAttestation"
+          },
+          "metadata_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Replacement metadata annotation. `null` clears the annotation."
+          }
+        }
+      },
+      "CorrectDeclarationResponse": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "aggregate_version",
+          "corrected_at",
+          "receipt_url"
+        ],
+        "properties": {
+          "aggregate_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "corrected_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-05-11T22:39:52.447Z"
+          },
+          "declaration_id": {
+            "$ref": "#/components/schemas/DeclarationId"
+          },
+          "receipt_url": {
+            "type": "string"
+          }
+        }
+      },
+      "CorrectionSet": {
+        "type": "object",
+        "description": "The set of pre-verification corrections the API supports.\n\nIn v1 the only field is `metadata_notes` — a free-form operator-\nfacing annotation that lets the declarant attach context the\ncanonical declaration body doesn't carry (typo explanations,\nsupporting-document references, etc.). The canonical declaration\npayload is untouched by a correction, which is why corrections\nare restricted to the `Submitted` state: the verification engine\nhas not yet processed the declaration, so changing metadata does\nnot perturb a downstream consumer's view of the aggregate.\n\nFuture correctable fields land here as additive `Option<...>` so\n`CorrectionSet` remains backward-compatible across versions.",
+        "properties": {
+          "metadata_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-form metadata annotation. `None` represents \"no annotation\";\n`Some(\"\")` is normalised to `None` at the API boundary."
           }
         }
       },
@@ -916,11 +1304,27 @@
             "description": "Event-sourced aggregate version (monotonic per declaration).",
             "minimum": 0
           },
+          "amended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Time this declaration was most recently amended. `null` if it\nhas never been amended. See R-DECL-3-AMEND."
+          },
           "beneficial_owners": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BeneficialOwnerClaim"
             }
+          },
+          "corrected_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Time of the most recent correction."
           },
           "correlation_id": {
             "type": "string",
@@ -947,6 +1351,13 @@
           },
           "kind": {
             "$ref": "#/components/schemas/DeclarationKind"
+          },
+          "metadata_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-form metadata annotation attached via the Correct command.\n`null` until a correction is applied. See R-DECL-3-CORRECT."
           },
           "receipt_hash_hex": {
             "type": "string"

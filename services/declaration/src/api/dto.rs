@@ -7,10 +7,13 @@ use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::application::{DeclarationProjection, SubmitReceipt};
+use crate::application::{
+    AmendReceipt, CorrectReceipt, DeclarationProjection, SubmitReceipt,
+};
 use crate::domain::{
-    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId,
-    RecordVerificationOutcome, SubmitDeclaration, VerificationLane,
+    AmendDeclaration, AmendmentSet, BeneficialOwnerClaim, CorrectDeclaration, CorrectionSet,
+    DeclarantRole, DeclarationId, DeclarationKind, EntityId, RecordVerificationOutcome,
+    SubmitDeclaration, VerificationLane,
 };
 use crate::domain::attestation::CryptographicAttestation;
 
@@ -157,6 +160,28 @@ pub struct GetDeclarationResponse {
     )]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub superseded_at: Option<OffsetDateTime>,
+
+    /// Time this declaration was most recently amended. `null` if it
+    /// has never been amended. See R-DECL-3-AMEND.
+    #[serde(
+        with = "crate::domain::serde_helpers::iso_datetime_option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub amended_at: Option<OffsetDateTime>,
+    /// Free-form metadata annotation attached via the Correct command.
+    /// `null` until a correction is applied. See R-DECL-3-CORRECT.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_notes: Option<String>,
+    /// Time of the most recent correction.
+    #[serde(
+        with = "crate::domain::serde_helpers::iso_datetime_option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub corrected_at: Option<OffsetDateTime>,
 }
 
 impl From<DeclarationProjection> for GetDeclarationResponse {
@@ -181,6 +206,9 @@ impl From<DeclarationProjection> for GetDeclarationResponse {
             supersedes_declaration_id: p.supersedes_declaration_id,
             superseded_by_declaration_id: p.superseded_by_declaration_id,
             superseded_at: p.superseded_at,
+            amended_at: p.amended_at,
+            metadata_notes: p.metadata_notes,
+            corrected_at: p.corrected_at,
         }
     }
 }
@@ -324,4 +352,140 @@ pub struct ReadyzResponse {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+// ─── Amend / Correct ──────────────────────────────────────────────────
+//
+// Both commands share the shape (path-id + body holding the new
+// payload + fresh attestation). The DTOs are separate so the OpenAPI
+// spec describes each endpoint precisely (different field semantics:
+// AmendmentSet covers the amendable payload fields; CorrectionSet
+// covers metadata fields).
+
+/// Request body for `POST /v1/declarations/{id}/amend`. Carries the
+/// full replacement value for every amendable field plus a fresh
+/// Ed25519 attestation signed over the AMENDED canonical form by the
+/// declarant. The `declarant_principal` is sourced from authentication
+/// at the API boundary (D17), not from this body.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct AmendDeclarationRequest {
+    pub beneficial_owners: Vec<BeneficialOwnerClaim>,
+    /// Effective date of the amendment, ISO-8601 `YYYY-MM-DD`.
+    #[serde(with = "crate::domain::serde_helpers::iso_date")]
+    #[schema(value_type = String, format = Date, example = "2026-05-01")]
+    pub effective_from: time::Date,
+    pub declarant_role: DeclarantRole,
+    /// Fresh attestation signed by the declarant over the AMENDED
+    /// canonical payload (entity_id, declarant_principal,
+    /// declarant_role, kind, effective_from, beneficial_owners,
+    /// nonce_hex). Verified at the API boundary before the command
+    /// reaches the aggregate.
+    pub attestation: CryptographicAttestation,
+}
+
+impl AmendDeclarationRequest {
+    /// Construct the domain command. `declaration_id`, `declarant_principal`
+    /// and `correlation_id` come from the API context, not from the body.
+    pub fn into_command(
+        self,
+        declaration_id: DeclarationId,
+        declarant_principal: String,
+        correlation_id: Uuid,
+    ) -> AmendDeclaration {
+        AmendDeclaration {
+            declaration_id,
+            declarant_principal,
+            amendments: AmendmentSet {
+                beneficial_owners: self.beneficial_owners,
+                effective_from: self.effective_from,
+                declarant_role: self.declarant_role,
+            },
+            attestation: self.attestation,
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id,
+        }
+    }
+}
+
+/// Receipt for a successful amendment.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AmendDeclarationResponse {
+    pub declaration_id: DeclarationId,
+    /// Aggregate version after the amendment is applied.
+    pub aggregate_version: u64,
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = DateTime, example = "2026-05-11T22:39:52.447Z")]
+    pub amended_at: OffsetDateTime,
+    /// Self-link to the updated declaration record.
+    pub receipt_url: String,
+}
+
+impl AmendDeclarationResponse {
+    pub fn from_receipt(receipt: AmendReceipt, base_url: &str) -> Self {
+        Self {
+            declaration_id: receipt.declaration_id,
+            aggregate_version: receipt.aggregate_version,
+            amended_at: receipt.amended_at,
+            receipt_url: format!(
+                "{base_url}/v1/declarations/{id}",
+                id = receipt.declaration_id
+            ),
+        }
+    }
+}
+
+/// Request body for `POST /v1/declarations/{id}/correct`. Carries
+/// the metadata-correction payload plus a fresh attestation. The
+/// canonical declaration body is unchanged; the attestation here
+/// covers the corrected metadata bytes.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct CorrectDeclarationRequest {
+    /// Replacement metadata annotation. `null` clears the annotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_notes: Option<String>,
+    pub attestation: CryptographicAttestation,
+}
+
+impl CorrectDeclarationRequest {
+    pub fn into_command(
+        self,
+        declaration_id: DeclarationId,
+        declarant_principal: String,
+        correlation_id: Uuid,
+    ) -> CorrectDeclaration {
+        CorrectDeclaration {
+            declaration_id,
+            declarant_principal,
+            corrections: CorrectionSet {
+                metadata_notes: self.metadata_notes,
+            },
+            attestation: self.attestation,
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CorrectDeclarationResponse {
+    pub declaration_id: DeclarationId,
+    pub aggregate_version: u64,
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = DateTime, example = "2026-05-11T22:39:52.447Z")]
+    pub corrected_at: OffsetDateTime,
+    pub receipt_url: String,
+}
+
+impl CorrectDeclarationResponse {
+    pub fn from_receipt(receipt: CorrectReceipt, base_url: &str) -> Self {
+        Self {
+            declaration_id: receipt.declaration_id,
+            aggregate_version: receipt.aggregate_version,
+            corrected_at: receipt.corrected_at,
+            receipt_url: format!(
+                "{base_url}/v1/declarations/{id}",
+                id = receipt.declaration_id
+            ),
+        }
+    }
 }

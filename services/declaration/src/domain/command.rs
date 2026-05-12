@@ -9,20 +9,25 @@ use time::OffsetDateTime;
 
 use super::attestation::CryptographicAttestation;
 use super::value_object::{
-    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId,
-    VerificationLane,
+    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarantRole, DeclarationId,
+    DeclarationKind, EntityId, VerificationLane,
 };
 
 /// The set of commands the aggregate accepts. Submit creates the
 /// aggregate; RecordVerificationOutcome transitions it after the
 /// Verification Engine returns a lane decision; SupersedeDeclaration
 /// closes a declaration's lifecycle when a successor replaces it.
+/// AmendDeclaration updates the aggregate in place (still-mutable
+/// states only). CorrectDeclaration is the narrower pre-verification
+/// metadata sibling of Amend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
 pub enum Command {
     Submit(SubmitDeclaration),
     RecordVerificationOutcome(RecordVerificationOutcome),
     Supersede(SupersedeDeclaration),
+    Amend(AmendDeclaration),
+    Correct(CorrectDeclaration),
 }
 
 /// Submit a new beneficial ownership declaration.
@@ -73,4 +78,38 @@ pub struct SupersedeDeclaration {
     pub supersedes_declaration_id: DeclarationId,
     /// The new declaration's full submit payload.
     pub new_declaration: SubmitDeclaration,
+}
+
+/// Amend a field in place on an existing declaration. Only valid from
+/// `Submitted` or `InVerification`; later states require `Supersede`.
+///
+/// `declarant_principal` carries the authenticated identity (D17 zero
+/// trust) so the aggregate can refuse amendments by anyone but the
+/// owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmendDeclaration {
+    pub declaration_id: DeclarationId,
+    pub declarant_principal: String,
+    pub amendments: AmendmentSet,
+    /// Fresh Ed25519 attestation over the amended canonical form,
+    /// produced by the declarant. Re-verified at the API boundary
+    /// before the command reaches the aggregate; the aggregate stores
+    /// it on the emitted event.
+    pub attestation: CryptographicAttestation,
+    pub submitted_at: OffsetDateTime,
+    pub correlation_id: uuid::Uuid,
+}
+
+/// Apply a pre-verification metadata correction. Only valid from
+/// `Submitted`; everywhere else use `Amend` or `Supersede`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrectDeclaration {
+    pub declaration_id: DeclarationId,
+    pub declarant_principal: String,
+    pub corrections: CorrectionSet,
+    /// Fresh attestation over the corrected metadata bytes — D15
+    /// applies to every consequential event.
+    pub attestation: CryptographicAttestation,
+    pub submitted_at: OffsetDateTime,
+    pub correlation_id: uuid::Uuid,
 }

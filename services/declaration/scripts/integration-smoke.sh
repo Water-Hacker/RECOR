@@ -314,7 +314,149 @@ new_supersedes=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW
 echo "  ✅ new declaration's supersedes_declaration_id points at the old one"
 
 echo ""
-echo "✅ D ↔ V LOOP PHASE 1 + 2 + R-DECL-3 SUPERSEDE: PASS"
+echo "── PHASE 4: R-DECL-3 AMEND on a still-mutable declaration ──"
+# Submit a fresh declaration; do NOT wait for verification (we want
+# the state to stay Submitted so Amend is admitted). Amend changes
+# the beneficial-owner roster while preserving the 10_000 invariant.
+AMEND_DECL_ID=$(cat /proc/sys/kernel/random/uuid)
+AMEND_ENT_ID=$(cat /proc/sys/kernel/random/uuid)
+AMEND_PER1=$(cat /proc/sys/kernel/random/uuid)
+AMEND_NONCE1=$(openssl rand -hex 16)
+AMEND_CANONICAL1=$(jq -c -n --arg eid "$AMEND_ENT_ID" --arg p "$PRINCIPAL" --arg pid "$AMEND_PER1" --arg n "$AMEND_NONCE1" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$AMEND_CANONICAL1" > "$KEYDIR/amend1"
+AMEND_SIG1=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/amend1" | xxd -p -c 128)
+AMEND_REQ1=$(jq -c -n --arg did "$AMEND_DECL_ID" --arg eid "$AMEND_ENT_ID" --arg pid "$AMEND_PER1" --arg p "$PRINCIPAL" \
+                --arg s "$AMEND_SIG1" --arg pk "$PK_HEX" --arg n "$AMEND_NONCE1" \
+    '{declaration_id:$did, entity_id:$eid, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+curl -sS -X POST http://127.0.0.1:8080/v1/declarations \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$AMEND_REQ1" -w "\nHTTP %{http_code}\n" > /dev/null
+
+# Build the AMENDED canonical payload: split 60/40 across two persons.
+AMEND_PER2A=$(cat /proc/sys/kernel/random/uuid)
+AMEND_PER2B=$(cat /proc/sys/kernel/random/uuid)
+AMEND_NONCE2=$(openssl rand -hex 16)
+AMEND_CANONICAL2=$(jq -c -n --arg eid "$AMEND_ENT_ID" --arg p "$PRINCIPAL" --arg pa "$AMEND_PER2A" --arg pb "$AMEND_PER2B" --arg n "$AMEND_NONCE2" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"authorised_agent", kind:"amendment", effective_from:"2026-02-01",
+      beneficial_owners:[
+        {person_id:$pa, ownership_basis_points:6000, interest_kind:"equity"},
+        {person_id:$pb, ownership_basis_points:4000, interest_kind:"equity"}
+      ], nonce_hex:$n}')
+echo -n "$AMEND_CANONICAL2" > "$KEYDIR/amend2"
+AMEND_SIG2=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/amend2" | xxd -p -c 128)
+AMEND_REQ2=$(jq -c -n --arg eid "$AMEND_ENT_ID" --arg pa "$AMEND_PER2A" --arg pb "$AMEND_PER2B" --arg p "$PRINCIPAL" \
+                --arg s "$AMEND_SIG2" --arg pk "$PK_HEX" --arg n "$AMEND_NONCE2" \
+    '{declarant_role:"authorised_agent", effective_from:"2026-02-01",
+      beneficial_owners:[
+        {person_id:$pa, ownership_basis_points:6000, interest_kind:"equity"},
+        {person_id:$pb, ownership_basis_points:4000, interest_kind:"equity"}
+      ],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+AMEND_RESP=$(curl -sS -X POST "http://127.0.0.1:8080/v1/declarations/$AMEND_DECL_ID/amend" \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$AMEND_REQ2" -w "\n%{http_code}")
+AMEND_HTTP=$(echo "$AMEND_RESP" | tail -1)
+AMEND_BODY=$(echo "$AMEND_RESP" | sed '$d')
+echo "Amend POST: HTTP $AMEND_HTTP"
+[ "$AMEND_HTTP" = "200" ] || { echo "FAIL: expected 200"; echo "$AMEND_BODY" | jq '.'; exit 1; }
+echo "$AMEND_BODY" | jq '{declaration_id, aggregate_version, amended_at}'
+
+# Verify GET reflects the amended values.
+echo "── confirming GET reflects amended values ──"
+GET_AMEND=$(curl -sS "http://127.0.0.1:8080/v1/declarations/$AMEND_DECL_ID" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL")
+got_role=$(echo "$GET_AMEND" | jq -r '.declarant_role')
+got_eff=$(echo "$GET_AMEND" | jq -r '.effective_from')
+got_owner_count=$(echo "$GET_AMEND" | jq '.beneficial_owners | length')
+got_owner_sum=$(echo "$GET_AMEND" | jq '[.beneficial_owners[].ownership_basis_points] | add')
+[ "$got_role" = "authorised_agent" ] || { echo "FAIL: declarant_role $got_role != authorised_agent"; exit 1; }
+[ "$got_eff" = "2026-02-01" ] || { echo "FAIL: effective_from $got_eff != 2026-02-01"; exit 1; }
+[ "$got_owner_count" = "2" ] || { echo "FAIL: beneficial_owners count $got_owner_count != 2"; exit 1; }
+[ "$got_owner_sum" = "10000" ] || { echo "FAIL: beneficial_owners sum $got_owner_sum != 10000"; exit 1; }
+echo "  ✅ amendment reflected in GET (role/effective_from/owners updated; sum invariant preserved)"
+
+# Try to amend an Accepted declaration — must refuse with 409 + supersede guidance.
+echo ""
+echo "── confirming Amend refuses on Accepted declaration (409 with supersede hint) ──"
+AMEND_BAD_NONCE=$(openssl rand -hex 16)
+AMEND_BAD_CANONICAL=$(jq -c -n --arg eid "$ACCEPTED_ENT_ID" --arg p "$PRINCIPAL" --arg pid "$PER_ID" --arg n "$AMEND_BAD_NONCE" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"amendment", effective_from:"2026-02-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$AMEND_BAD_CANONICAL" > "$KEYDIR/amend-bad"
+AMEND_BAD_SIG=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/amend-bad" | xxd -p -c 128)
+AMEND_BAD_REQ=$(jq -c -n --arg pid "$PER_ID" --arg p "$PRINCIPAL" --arg s "$AMEND_BAD_SIG" --arg pk "$PK_HEX" --arg n "$AMEND_BAD_NONCE" \
+    '{declarant_role:"self", effective_from:"2026-02-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+# ACCEPTED_DECL_ID may be in 'superseded' state by now (we superseded it
+# in phase 3b). For the 409 assertion we want a non-Submitted/non-
+# InVerification state; the supersede already moved it to Superseded.
+AMEND_BAD_RESP=$(curl -sS -X POST "http://127.0.0.1:8080/v1/declarations/$ACCEPTED_DECL_ID/amend" \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$AMEND_BAD_REQ" -w "\n%{http_code}")
+AMEND_BAD_HTTP=$(echo "$AMEND_BAD_RESP" | tail -1)
+[ "$AMEND_BAD_HTTP" = "409" ] || { echo "FAIL: expected 409 from Amend on non-mutable state; got $AMEND_BAD_HTTP"; echo "$AMEND_BAD_RESP"; exit 1; }
+echo "  ✅ Amend correctly returned 409 on a non-mutable declaration"
+
+echo ""
+echo "── PHASE 5: R-DECL-3 CORRECT on a Submitted declaration ──"
+# Submit another fresh declaration so we have one in pristine Submitted
+# state (correct only admits from Submitted, never InVerification).
+CORR_DECL_ID=$(cat /proc/sys/kernel/random/uuid)
+CORR_ENT_ID=$(cat /proc/sys/kernel/random/uuid)
+CORR_PER=$(cat /proc/sys/kernel/random/uuid)
+CORR_NONCE1=$(openssl rand -hex 16)
+CORR_CANONICAL1=$(jq -c -n --arg eid "$CORR_ENT_ID" --arg p "$PRINCIPAL" --arg pid "$CORR_PER" --arg n "$CORR_NONCE1" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$CORR_CANONICAL1" > "$KEYDIR/corr1"
+CORR_SIG1=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/corr1" | xxd -p -c 128)
+CORR_REQ1=$(jq -c -n --arg did "$CORR_DECL_ID" --arg eid "$CORR_ENT_ID" --arg pid "$CORR_PER" --arg p "$PRINCIPAL" \
+                --arg s "$CORR_SIG1" --arg pk "$PK_HEX" --arg n "$CORR_NONCE1" \
+    '{declaration_id:$did, entity_id:$eid, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+curl -sS -X POST http://127.0.0.1:8080/v1/declarations \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$CORR_REQ1" -w "\nHTTP %{http_code}\n" > /dev/null
+
+CORR_NOTE="operator: typo in supporting docs reference; see incident #42"
+CORR_NONCE2=$(openssl rand -hex 16)
+CORR_CANONICAL2=$(jq -c -n --arg did "$CORR_DECL_ID" --arg p "$PRINCIPAL" --arg notes "$CORR_NOTE" --arg n "$CORR_NONCE2" \
+    '{declaration_id:$did, declarant_principal:$p, kind:"correction", metadata_notes:$notes, nonce_hex:$n}')
+echo -n "$CORR_CANONICAL2" > "$KEYDIR/corr2"
+CORR_SIG2=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/corr2" | xxd -p -c 128)
+CORR_REQ2=$(jq -c -n --arg notes "$CORR_NOTE" --arg p "$PRINCIPAL" --arg s "$CORR_SIG2" --arg pk "$PK_HEX" --arg n "$CORR_NONCE2" \
+    '{metadata_notes:$notes,
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+CORR_RESP=$(curl -sS -X POST "http://127.0.0.1:8080/v1/declarations/$CORR_DECL_ID/correct" \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$CORR_REQ2" -w "\n%{http_code}")
+CORR_HTTP=$(echo "$CORR_RESP" | tail -1)
+CORR_BODY=$(echo "$CORR_RESP" | sed '$d')
+echo "Correct POST: HTTP $CORR_HTTP"
+[ "$CORR_HTTP" = "200" ] || { echo "FAIL: expected 200"; echo "$CORR_BODY" | jq '.'; exit 1; }
+echo "$CORR_BODY" | jq '{declaration_id, aggregate_version, corrected_at}'
+
+echo "── confirming GET reflects the metadata_notes ──"
+GET_CORR=$(curl -sS "http://127.0.0.1:8080/v1/declarations/$CORR_DECL_ID" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL")
+got_notes=$(echo "$GET_CORR" | jq -r '.metadata_notes')
+[ "$got_notes" = "$CORR_NOTE" ] || { echo "FAIL: metadata_notes mismatch: '$got_notes' != '$CORR_NOTE'"; exit 1; }
+echo "  ✅ correction reflected in GET (metadata_notes round-trip)"
+
+echo ""
+echo "✅ D ↔ V LOOP PHASE 1 + 2 + R-DECL-3 SUPERSEDE + AMEND + CORRECT: PASS"
 echo "   • Declaration accepted with HTTP 201 + signed receipt"
 echo "   • Outbox relay fired D → V; verification ran the pipeline"
 echo "   • Verification case persisted with the same declaration_id"
@@ -325,3 +467,8 @@ echo "   • Supersede correctly REFUSED a rejected declaration (HTTP 400)"
 echo "   • Supersede SUCCEEDED on an accepted declaration (HTTP 201)"
 echo "   • Old declaration transitioned to 'superseded'"
 echo "   • New declaration's supersedes_declaration_id points back"
+echo "   • Amend SUCCEEDED on a Submitted declaration (HTTP 200)"
+echo "   • Amend re-projected beneficial_owners + effective_from + declarant_role"
+echo "   • Amend REFUSED on a non-mutable declaration (HTTP 409)"
+echo "   • Correct SUCCEEDED on a Submitted declaration (HTTP 200)"
+echo "   • Correct metadata_notes round-tripped via GET"

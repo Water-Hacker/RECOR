@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE declarations\n                SET metadata_notes    = $2,\n                    aggregate_version = $3,\n                    corrected_at      = $4,\n                    updated_at        = NOW()\n                WHERE declaration_id = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4a15bb45bf20fd72eb2779be6672ec4b05f83366fb1faada1d2b4a94f6fa2676"
+}

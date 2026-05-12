@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE declarations\n                SET beneficial_owners = $2,\n                    effective_from    = $3,\n                    declarant_role    = $4,\n                    aggregate_version = $5,\n                    amended_at        = $6,\n                    updated_at        = NOW()\n                WHERE declaration_id = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Date",
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b367cec477382d1767ab237d0d9d6f811d3276fa45b469f46bcc70ec4092f9d"
+}

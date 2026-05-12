@@ -15,8 +15,8 @@ use time::OffsetDateTime;
 
 use super::attestation::CryptographicAttestation;
 use super::value_object::{
-    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId,
-    VerificationLane,
+    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarantRole, DeclarationId,
+    DeclarationKind, EntityId, VerificationLane,
 };
 
 /// The set of events the aggregate emits.
@@ -34,6 +34,22 @@ pub enum DeclarationEvent {
     /// Both events are written in the same DB transaction by the
     /// `SupersedeDeclaration` use case.
     Superseded(DeclarationSupersededV1),
+    /// A field on the declaration was amended in-place. Allowed only
+    /// from Submitted or InVerification states; carries a fresh
+    /// attestation over the AMENDED canonical form and records
+    /// before/after snapshots for audit replay. Distinct from
+    /// `Superseded`: the aggregate identity does not change, the row
+    /// is updated in place. See R-DECL-3-AMEND.
+    Amended(DeclarationAmendedV1),
+    /// A pre-verification metadata correction was applied. Allowed
+    /// only from Submitted state; before/after snapshots capture the
+    /// changed metadata fields. The canonical declaration payload is
+    /// unchanged — corrections cover display-only / metadata fields
+    /// that would not warrant a re-signature of the declaration body
+    /// itself, but the operation IS attested by a fresh signature
+    /// over the corrected metadata bytes (D15: every consequential
+    /// event carries cryptographic provenance). See R-DECL-3-CORRECT.
+    Corrected(DeclarationCorrectedV1),
 }
 
 impl DeclarationEvent {
@@ -44,6 +60,8 @@ impl DeclarationEvent {
             Self::Submitted(_) => "declaration.submitted.v1",
             Self::Verified(_) => "declaration.verified.v1",
             Self::Superseded(_) => "declaration.superseded.v1",
+            Self::Amended(_) => "declaration.amended.v1",
+            Self::Corrected(_) => "declaration.corrected.v1",
         }
     }
 
@@ -53,6 +71,8 @@ impl DeclarationEvent {
             Self::Submitted(p) => p.declaration_id,
             Self::Verified(p) => p.declaration_id,
             Self::Superseded(p) => p.declaration_id,
+            Self::Amended(p) => p.declaration_id,
+            Self::Corrected(p) => p.declaration_id,
         }
     }
 }
@@ -134,5 +154,73 @@ pub struct DeclarationSupersededV1 {
     pub superseded_at: OffsetDateTime,
     /// Correlation token for tracing the supersede transaction across
     /// the two aggregates' event logs and the two outbox rows.
+    pub correlation_id: uuid::Uuid,
+}
+
+/// Records an in-place amendment of declaration fields. Carries both
+/// the BEFORE and AFTER snapshots of every amendable field so the
+/// event log is sufficient to replay the projection state. The fresh
+/// attestation in `attestation` is signed over the AMENDED canonical
+/// form by the declarant — proof the declarant stands behind the new
+/// values (D15: cryptographic provenance on every consequential event).
+///
+/// Aggregate invariants (validated by `handle_amend`):
+///   - The aggregate must have a prior Submitted event.
+///   - The aggregate must NOT be Superseded.
+///   - The current state must be `Submitted` or `InVerification`.
+///     Accepted declarations require Supersede (more transparency
+///     for downstream consumers); Rejected declarations require
+///     re-submission.
+///   - `after.beneficial_owners` must still sum to 10_000 basis points.
+///   - The attestation principal must match the declarant principal
+///     stored on the aggregate (only the owner can amend).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeclarationAmendedV1 {
+    pub declaration_id: DeclarationId,
+    /// Snapshot of the amendable fields BEFORE the amendment was
+    /// applied — derived from the aggregate state at the time the
+    /// command was handled.
+    pub before: AmendmentSet,
+    /// Snapshot of the amendable fields AFTER the amendment is applied.
+    pub after: AmendmentSet,
+    /// Fresh Ed25519 attestation by the declarant over the AMENDED
+    /// canonical form. Verified at the API boundary before the
+    /// command reaches the aggregate; recorded in the event log so a
+    /// replay can re-verify provenance.
+    pub attestation: CryptographicAttestation,
+    /// Time the amendment was recorded.
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub amended_at: OffsetDateTime,
+    /// Correlation token for tracing the amendment across the event
+    /// log and the outbox row.
+    pub correlation_id: uuid::Uuid,
+}
+
+/// Records a pre-verification metadata correction. Smaller-scope than
+/// `Amended` (the declaration payload is unchanged); the correction
+/// only touches the projection's metadata columns. Allowed only from
+/// `Submitted` state — any later state must use Amend or Supersede.
+///
+/// Aggregate invariants (validated by `handle_correct`):
+///   - The aggregate must have a prior Submitted event.
+///   - The aggregate must NOT be Superseded.
+///   - The current state MUST be `Submitted` (strictly).
+///   - The attestation principal must match the declarant principal
+///     stored on the aggregate (only the owner can correct).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeclarationCorrectedV1 {
+    pub declaration_id: DeclarationId,
+    /// Snapshot of correctable fields BEFORE.
+    pub before: CorrectionSet,
+    /// Snapshot of correctable fields AFTER.
+    pub after: CorrectionSet,
+    /// Fresh attestation by the declarant over the corrected metadata
+    /// bytes — D15 holds even when the canonical declaration body is
+    /// unchanged.
+    pub attestation: CryptographicAttestation,
+    /// Time the correction was recorded.
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub corrected_at: OffsetDateTime,
+    /// Correlation token for tracing.
     pub correlation_id: uuid::Uuid,
 }

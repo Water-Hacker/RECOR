@@ -6,12 +6,16 @@
 //! This separation is the testability boundary: use cases can be
 //! exercised against in-memory adapter doubles in unit tests.
 
+pub mod amend_declaration;
+pub mod correct_declaration;
 pub mod port;
 pub mod submit_declaration;
 pub mod get_declaration;
 pub mod record_verification_outcome;
 pub mod supersede_declaration;
 
+pub use amend_declaration::{AmendDeclarationUseCase, AmendError, AmendReceipt};
+pub use correct_declaration::{CorrectDeclarationUseCase, CorrectError, CorrectReceipt};
 pub use port::{DeclarationRepository, OutboxWriter, RepositoryError};
 pub use submit_declaration::{SubmitDeclarationUseCase, SubmitReceipt, SubmitError};
 pub use get_declaration::{DeclarationProjection, GetDeclarationUseCase, GetError};
