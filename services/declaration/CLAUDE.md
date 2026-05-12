@@ -71,6 +71,10 @@ fail-close at the boundary.
 These are aspirational for v1; measured baselines establish during the
 first sprint of operational traffic.
 
+The legal basis for each endpoint above (and for the load-bearing
+domain invariants the SLOs depend on) is mapped in
+`docs/compliance/regulatory-mapping.md` (COMP-4).
+
 ## Active development context
 
 - This is the first commit of platform code. Many "ideal" features are

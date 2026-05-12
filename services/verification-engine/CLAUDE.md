@@ -51,6 +51,10 @@ The 30s target reflects the Architecture's commitment: green-lane
 declarations complete pipeline in 30s p99 (V4 P14 § Operational
 characteristics).
 
+The legal basis for each endpoint above (verification submission,
+case retrieval, DLQ admin, declaration-events writeback) is mapped in
+`docs/compliance/regulatory-mapping.md` (COMP-4).
+
 ## Doctrines that apply with special weight here
 
 - **D14 fail-closed** — pipeline short-circuits on Stage 1 fail. Lane
