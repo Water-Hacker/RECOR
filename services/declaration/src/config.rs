@@ -148,6 +148,23 @@ pub struct Config {
     #[serde(default = "default_secret")]
     pub log_redaction_key: SecretString,
 
+    /// COMP-2 — outbox retention worker: retention window in days.
+    /// Rows in `outbox` whose `dispatched_at` is older than this are
+    /// pruned by the retention worker. `0` DISABLES pruning entirely
+    /// and is the safe default for tests (so test data is never
+    /// silently dropped) and for any environment where the operator
+    /// has not explicitly opted in. The retention worker NEVER touches
+    /// `outbox_dlq` (forensic surface) or `declaration_events`
+    /// (immutable event log — see migration 0007).
+    #[serde(default)]
+    pub outbox_retention_days: u64,
+
+    /// COMP-2 — outbox retention worker: interval between prune
+    /// cycles, in seconds. Default 86400 (daily). Ignored when
+    /// `outbox_retention_days == 0`.
+    #[serde(default = "default_outbox_retention_interval")]
+    pub outbox_retention_interval_seconds: u64,
+
     /// Bind address for the gRPC server (R-DECL-8). Defaults to empty
     /// so test harnesses and local dev that only exercise REST do not
     /// need to bind a second port. Production sets
@@ -276,4 +293,8 @@ fn default_rate_limit_per_min() -> u32 {
 
 fn default_rate_limit_burst() -> u32 {
     10
+}
+
+fn default_outbox_retention_interval() -> u64 {
+    86_400 // 24 hours
 }

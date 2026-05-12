@@ -36,6 +36,10 @@ pub struct Metrics {
     /// Counter of DLQ replays — label: `result` ∈ {success,failure}.
     pub outbox_dlq_replays_total: IntCounterVec,
 
+    /// COMP-2 — verification-outbox retention prune counter.
+    /// `result` ∈ {success,error}; `success` increments BY rows-pruned.
+    pub outbox_retention_pruned_total: IntCounterVec,
+
     /// Distribution of the fused authenticity belief mass over the
     /// "true" hypothesis. Used to detect drift in lane-router input.
     pub fusion_belief_true: HistogramVec,
@@ -115,6 +119,15 @@ impl Metrics {
         )?;
         registry.register(Box::new(outbox_dlq_replays_total.clone()))?;
 
+        let outbox_retention_pruned_total = IntCounterVec::new(
+            Opts::new(
+                "recor_outbox_retention_pruned_total",
+                "COMP-2 verification-outbox retention prune counter. result=success increments BY rows-pruned per cycle; result=error increments BY 1 per failed cycle.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(outbox_retention_pruned_total.clone()))?;
+
         let fusion_belief_true = HistogramVec::new(
             HistogramOpts::new(
                 "recor_fusion_belief_true",
@@ -171,6 +184,7 @@ impl Metrics {
             verification_cases_total,
             outbox_dlq_size,
             outbox_dlq_replays_total,
+            outbox_retention_pruned_total,
             fusion_belief_true,
             fusion_belief_false,
             oidc_jwks_fetch_latency_seconds,
@@ -266,6 +280,9 @@ mod tests {
         m.outbox_dlq_replays_total
             .with_label_values(&["success"])
             .inc();
+        m.outbox_retention_pruned_total
+            .with_label_values(&["success"])
+            .inc_by(3);
         m.fusion_belief_true
             .with_label_values(&["green"])
             .observe(0.85);
@@ -290,6 +307,7 @@ mod tests {
             "recor_verification_cases_total",
             "recor_outbox_dlq_size",
             "recor_outbox_dlq_replays_total",
+            "recor_outbox_retention_pruned_total",
             "recor_fusion_belief_true",
             "recor_fusion_belief_false",
             "recor_oidc_jwks_fetch_latency_seconds",

@@ -21,7 +21,10 @@ use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
 };
-use recor_declaration::infrastructure::{OutboxAdminStore, OutboxRelay, RelaySubscriber};
+use recor_declaration::infrastructure::{
+    OutboxAdminStore, OutboxRelay, OutboxRetention, RelaySubscriber,
+};
+use recor_declaration::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -194,6 +197,31 @@ async fn main() -> Result<()> {
         None
     };
 
+    // COMP-2 — outbox retention worker. Always spawned so a single
+    // cancellation surface covers every background task; when
+    // OUTBOX_RETENTION_DAYS=0 (test/dev default) it logs "disabled"
+    // and waits on the cancel token, doing no work. Production
+    // operators opt in by setting the env explicitly.
+    warn_if_misconfigured(
+        cfg.outbox_retention_days,
+        cfg.outbox_retention_interval_seconds,
+    );
+    let retention = OutboxRetention::new(pool.clone())
+        .with_retention_days(cfg.outbox_retention_days)
+        .with_interval(std::time::Duration::from_secs(
+            cfg.outbox_retention_interval_seconds,
+        ))
+        .with_metrics(metrics.clone());
+    info!(
+        retention_days = cfg.outbox_retention_days,
+        interval_s = cfg.outbox_retention_interval_seconds,
+        "outbox retention worker spawning"
+    );
+    let cancel_retention = cancel.clone();
+    let retention_handle = tokio::spawn(async move {
+        retention.run(cancel_retention).await;
+    });
+
     let cancel_serve = cancel.clone();
     let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -206,10 +234,11 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!(e));
     }
 
-    // Wait for the relay + gRPC server to finish.
+    // Wait for the relay + retention worker + gRPC server to finish.
     if let Some(h) = relay_handle {
         let _ = h.await;
     }
+    let _ = retention_handle.await;
     if let Some(h) = grpc_handle {
         let _ = h.await;
     }

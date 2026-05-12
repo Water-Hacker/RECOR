@@ -25,6 +25,12 @@ in fact wrong, which is a worse outcome than no platform.
 ## Architecture
 
 - Persistence: PostgreSQL via sqlx (runtime-checked queries)
+- **Audit immutability (COMP-2):** `verification_cases` is enforced
+  append-only by BEFORE UPDATE/DELETE/TRUNCATE triggers (migration
+  `0003_audit_log_immutability.sql`) + REVOKE on PUBLIC. The
+  retention worker (`infrastructure/retention.rs`) prunes
+  `verification_outbox` rows 30 days after `dispatched_at`; the case
+  log and DLQ are NEVER touched. See `docs/compliance/data-retention.md`.
 - Stages: traits implemented in `src/application/stages/`. Stages 1-2
   ship real implementations; 3-7 are honest stubs.
 - Fusion: pure Dempster-Shafer math in `src/domain/fusion.rs`; no I/O,

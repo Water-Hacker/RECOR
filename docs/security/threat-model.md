@@ -102,7 +102,7 @@ tickets):
 |---|---|---|---|
 | S | Forged declarant identity in request body | Principal comes from `auth_middleware` (OIDC sub or dev header), never from request body — D17 | `services/declaration/src/api/auth.rs:58` |
 | S | JWT alg-confusion (sign with HMAC, claim RS256) | HMAC algs (HS256/384/512) refused outright before signature check | `services/declaration/src/api/oidc.rs`, R-DECL-1 closed |
-| T | Tampered event log after write | Event log is append-only at the SQL level; rewriting requires DB-owner role (service role only has INSERT/SELECT on `declaration_events`) | migrations; partial gap: no in-DB checksum chain (deferred to R-DECL-9 Fabric anchoring) |
+| T | Tampered event log after write | Event log is append-only at the SQL level: BEFORE UPDATE/DELETE/TRUNCATE triggers RAISE EXCEPTION on every mutation attempt regardless of invoking role (COMP-2, migration `services/declaration/migrations/0007_audit_log_immutability.sql`); UPDATE/DELETE/TRUNCATE also REVOKEd from PUBLIC. | migrations + integration test `services/declaration/tests/audit_immutability.rs`; partial gap: no in-DB checksum chain (deferred to R-DECL-9 Fabric anchoring) |
 | T | Outbox row mutated between write and relay | Outbox + event + projection in single Postgres transaction (D13); relay is idempotent on `event_id` | `services/declaration/src/infrastructure/outbox.rs` |
 | R | Declarant later disputes that they signed | Ed25519 attestation persisted alongside the event; BLAKE3 receipt deterministic from canonical bytes | D15 |
 | I | PII leaked via tracing logs | OPS-2 (shipped): `recor-logging::RedactingLayer` masks SPIFFE paths, UUID PII fields, partial receipt hashes | `packages/recor-logging/src/lib.rs` |
@@ -151,7 +151,7 @@ tickets):
 | STRIDE | Threat | Current mitigation | Code / accepted-risk |
 |---|---|---|---|
 | S | Service-role credential used by an unauthorised client | DB credential is a `SecretString` in env; no shared role; refuses to start without `DATABASE_URL` | D18 |
-| T | Direct row mutation on event log bypasses domain | Event log has no UPDATE/DELETE grants for the service role; tested via integration | migrations |
+| T | Direct row mutation on event log bypasses domain | UPDATE/DELETE/TRUNCATE refused by BEFORE trigger that fires regardless of invoking role (COMP-2); REVOKE strips PUBLIC; tested by `services/declaration/tests/audit_immutability.rs`. Same mirror on `verification_cases`. | migrations 0007 (declaration) + 0003 (verification-engine) |
 | T | sqlx query injection | sqlx runtime-checked queries with parameterised binds; no string-built SQL | code-review-enforced |
 | R | DBA later denies running a destructive statement | Production DBA access is procedural (DOC-3 incident-response-template) | **Gap G4** — no in-database audit of DBA-role statements; OBS-1 (Phase 2) ships programmatic audit |
 | I | Backup theft (see Declaration § I) | Filesystem encryption + access restrictions on backup hosts | accepted-risk for v1 |
@@ -175,7 +175,7 @@ tickets):
 
 | # | Gap | Closing ticket |
 |---|---|---|
-| G1 | No in-DB audit chain on the event log (today: append-only via grants only) | R-DECL-9 (Fabric anchoring, Phase 2) |
+| G1 | No in-DB audit chain on the event log (today: append-only via triggers + grants — COMP-2 shipped — but no cryptographic chaining between rows) | R-DECL-9 (Fabric anchoring, Phase 2) |
 | G2 | D↔V replay window not bound to envelope timestamp | TBD — Phase 2 follow-up; tracked in `docs/PRODUCTION-TODO.md` R-LOOP-2 (Kafka migration carries the iat enforcement) |
 | G3 | Declaration body PII unencrypted at rest in the projection table | TBD — encryption-at-rest ticket to file; not in Phase 0 |
 | G4 | DBA-role statement audit | OBS-1 (Phase 2 — production observability) |

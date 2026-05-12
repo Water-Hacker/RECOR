@@ -22,8 +22,9 @@ use recor_verification_engine::config::Config;
 use recor_verification_engine::domain::{LaneThresholds, Stage};
 use recor_verification_engine::infrastructure::{
     OutboxAdminStore, PostgresMockBunec, PostgresVerificationRepository,
-    VerificationOutboxRelay, WritebackSubscriber,
+    VerificationOutboxRelay, VerificationOutboxRetention, WritebackSubscriber,
 };
+use recor_verification_engine::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -144,6 +145,29 @@ async fn main() -> Result<()> {
         None
     };
 
+    // COMP-2 — verification outbox retention worker. Same shape as the
+    // declaration service: spawned unconditionally but a 0-day setting
+    // disables pruning at runtime (safe default for tests).
+    warn_if_misconfigured(
+        cfg.outbox_retention_days,
+        cfg.outbox_retention_interval_seconds,
+    );
+    let retention = VerificationOutboxRetention::new(pool.clone())
+        .with_retention_days(cfg.outbox_retention_days)
+        .with_interval(std::time::Duration::from_secs(
+            cfg.outbox_retention_interval_seconds,
+        ))
+        .with_metrics(metrics.clone());
+    info!(
+        retention_days = cfg.outbox_retention_days,
+        interval_s = cfg.outbox_retention_interval_seconds,
+        "verification outbox retention worker spawning"
+    );
+    let cancel_retention = cancel.clone();
+    let retention_handle = tokio::spawn(async move {
+        retention.run(cancel_retention).await;
+    });
+
     let cancel_serve = cancel.clone();
     let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -159,6 +183,7 @@ async fn main() -> Result<()> {
     if let Some(h) = relay_handle {
         let _ = h.await;
     }
+    let _ = retention_handle.await;
 
     info!("recor-verification-engine stopped");
     Ok(())

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM verification_outbox\n            WHERE dispatched_at IS NOT NULL\n              AND dispatched_at < NOW() - make_interval(secs => $1::double precision)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "833ac31dbce3cd9b031190f6c0de53daa14d11385095a2f05b69cdbf2466842d"
+}
