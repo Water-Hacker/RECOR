@@ -1,0 +1,39 @@
+# gitleaks configuration for RÉCOR.
+#
+# Extends the bundled default ruleset; adds an allowlist for files that
+# legitimately contain high-entropy content (test fixtures, secrets
+# baseline, lockfiles).
+#
+# To regenerate the secrets baseline: detect-secrets scan > .secrets.baseline
+# To add a single allowlist entry by fingerprint: prefer .gitleaksignore
+# (path:rule:line tuples) for one-off exceptions; this file is for
+# whole-path allowlists.
+
+[extend]
+# Inherit the default ruleset shipped with gitleaks.
+useDefault = true
+
+[allowlist]
+description = "Files that legitimately contain high-entropy strings"
+
+# Paths excluded from scanning entirely.
+paths = [
+    # The detect-secrets baseline is a record of expected-false-positives.
+    # By design it contains many hex/base64 strings that look like
+    # secrets but aren't. Scanning the baseline is circular.
+    '''^\.secrets\.baseline$''',
+
+    # Test-only RSA private/public keys for OIDC unit + integration tests
+    # (services/{declaration,verification-engine}/tests/fixtures/). These
+    # are NEVER used to sign anything in production; the matching public
+    # JWKs are also committed for round-trip verification. See PR #45.
+    '''^services/[^/]+/tests/fixtures/test_rsa_(pkcs8|pub)\.pem$''',
+    '''^services/[^/]+/tests/fixtures/test_rsa_jwk\.json$''',
+
+    # Lock files contain integrity hashes that look like secrets.
+    '''(^|/)pnpm-lock\.yaml$''',
+    '''(^|/)package-lock\.json$''',
+    '''(^|/)Cargo\.lock$''',
+    '''(^|/)go\.sum$''',
+    '''(^|/)uv\.lock$''',
+]
