@@ -23,6 +23,9 @@ recor-logging = { path = "../../packages/recor-logging" }
 # in the declaration service — config knobs in src/config.rs gate
 # whether the service brings up mTLS at startup.
 recor-spiffe = { path = "../../packages/recor-spiffe" }
+# OPS-4: Vault client. Optional at runtime; required when VAULT_ADDR
+# is set (D14 fail-closed).
+recor-vault-client = { path = "../../packages/recor-vault-client" }
 
 tokio.workspace = true
 tokio-util.workspace = true

@@ -28,6 +28,50 @@ use recor_declaration::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // OPS-4: load secrets from Vault before the env-based config loader
+    // runs. When VAULT_ADDR is non-empty, the bridge logs in via AppRole,
+    // reads the secret/recor/declaration/* paths, and injects the
+    // resolved values into process env. The existing Config::from_env()
+    // then sees them like any other env var and runs its cross-field
+    // validation. When VAULT_ADDR is empty, `populate_from_vault`
+    // returns Ok(false) after emitting a startup warn! so operators see
+    // they are NOT using Vault. D14: a non-empty VAULT_ADDR with an
+    // unreachable Vault is a hard-fail.
+    let vault_paths: &[(&str, &[(&str, &str)])] = &[
+        (
+            "recor/declaration/database",
+            &[("DATABASE_URL", "DATABASE_URL")],
+        ),
+        (
+            "recor/declaration/relay",
+            &[
+                ("RELAY_HMAC_SECRET", "RELAY_HMAC_SECRET"),
+                ("RELAY_HMAC_SECRET_OLD", "RELAY_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/declaration/writeback",
+            &[
+                ("WRITEBACK_HMAC_SECRET", "WRITEBACK_HMAC_SECRET"),
+                ("WRITEBACK_HMAC_SECRET_OLD", "WRITEBACK_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/declaration/oidc",
+            &[
+                ("OIDC_ISSUER_URL", "OIDC_ISSUER_URL"),
+                ("OIDC_AUDIENCE", "OIDC_AUDIENCE"),
+            ],
+        ),
+        (
+            "recor/declaration/observability",
+            &[("LOG_REDACTION_KEY", "LOG_REDACTION_KEY")],
+        ),
+    ];
+    recor_vault_client::populate_from_vault(vault_paths)
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault secret loading failed (D14 fail-closed): {e}"))?;
+
     let cfg = Config::from_env().context("loading configuration from environment")?;
     let _tracing_guard = recor_declaration::observability::init(&cfg)
         .map_err(|e| anyhow::anyhow!("tracing init failed: {e}"))?;

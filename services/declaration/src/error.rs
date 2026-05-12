@@ -42,6 +42,13 @@ impl From<SubmitError> for ServiceError {
         match value {
             SubmitError::Domain(e) => Self::Domain(e),
             SubmitError::Repository(e) => Self::Repository(e),
+            // R-DECL-4: a transport-layer failure when reaching the
+            // Person service. Surface as 503 so the client retries —
+            // the submission has not been persisted (fail-closed, D14).
+            SubmitError::PersonRegistry(e) => {
+                tracing::error!(error = ?e, "person registry transport failure");
+                Self::Internal
+            }
         }
     }
 }

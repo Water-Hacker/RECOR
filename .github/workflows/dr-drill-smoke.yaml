@@ -1,0 +1,112 @@
+# DR drill smoke — nightly exercise of scripts/dr-drill.sh against main.
+#
+# Per COMP-5, the disaster-recovery drill is a quarterly required
+# exercise. To catch rot in the restore path long before the quarterly
+# drill needs to find it, this workflow runs the same script nightly
+# against main.
+#
+# This workflow is NOT in the required-checks set referenced by branch
+# protection. Per the OBS-2 deferral pattern documented in
+# observability-smoke.yaml, promotion to required check happens after
+# 10 consecutive green runs.
+#
+# Triggers:
+#   - schedule  : nightly at 03:30 UTC (chosen to not collide with the
+#                 02:00 UTC observability-smoke job).
+#   - workflow_dispatch : on-demand from the Actions UI.
+#   - pull_request paths : the script + the runbook + the drill
+#                          template, so changes to the drill itself
+#                          are exercised before merge.
+
+name: dr-drill-smoke
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/dr-drill.sh'
+      - 'docs/runbooks/restore-from-backup.md'
+      - 'docs/compliance/dr-drill-template.md'
+      - '.github/workflows/dr-drill-smoke.yaml'
+      - 'services/declaration/docker-compose.integration.yaml'
+      - 'services/declaration/Dockerfile'
+      - 'services/verification-engine/Dockerfile'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/dr-drill.sh'
+      - 'services/declaration/docker-compose.integration.yaml'
+  workflow_dispatch:
+  schedule:
+    # Nightly at 03:30 UTC against main.
+    - cron: '30 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dr-drill-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drill:
+    name: dr-drill (docker compose)
+    runs-on: ubuntu-latest
+    # The integration compose stack builds two Rust images on first
+    # run; 60 min is the same envelope publish-images.yaml uses.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install prerequisites
+        run: |
+          set -euo pipefail
+          docker compose version
+          openssl version
+          jq --version
+          xxd -v 2>&1 | head -1 || true
+
+      - name: shellcheck the drill script
+        uses: ludeeus/action-shellcheck@2.0.0
+        env:
+          SHELLCHECK_OPTS: -e SC1091 -e SC2034 -e SC2053 -e SC2155
+        with:
+          scandir: ./scripts
+          severity: error
+
+      - name: validate the integration compose syntax
+        working-directory: services/declaration
+        env:
+          RECOR_DB_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          RECOR_D_TO_V_HMAC: ${{ secrets.GITHUB_TOKEN }}
+          RECOR_V_TO_D_HMAC: ${{ secrets.GITHUB_TOKEN }}
+        run: docker compose -f docker-compose.integration.yaml config > /dev/null
+
+      - name: run the drill
+        env:
+          DR_DRILL_SNAPSHOT_DIR: ${{ runner.temp }}/dr-drill-snapshots
+        run: |
+          mkdir -p "$DR_DRILL_SNAPSHOT_DIR"
+          bash scripts/dr-drill.sh
+
+      - name: upload snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-snapshots-${{ github.run_id }}
+          path: ${{ runner.temp }}/dr-drill-snapshots
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: collect logs on failure
+        if: failure()
+        working-directory: services/declaration
+        run: |
+          for svc in postgres-declaration postgres-verification declaration verification; do
+            echo "═══ ${svc} ═══"
+            docker compose -f docker-compose.integration.yaml logs --no-color "$svc" 2>&1 | tail -200 || true
+          done
+
+      - name: tear down
+        if: always()
+        working-directory: services/declaration
+        run: docker compose -f docker-compose.integration.yaml down -v --remove-orphans 2>&1 | tail -10

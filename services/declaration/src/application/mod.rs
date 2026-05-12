@@ -18,7 +18,10 @@ pub mod supersede_declaration;
 pub use amend_declaration::{AmendDeclarationUseCase, AmendError, AmendReceipt};
 pub use correct_declaration::{CorrectDeclarationUseCase, CorrectError, CorrectReceipt};
 pub use list_by_principal::{ListByPrincipalError, ListByPrincipalUseCase};
-pub use port::{DeclarationRepository, OutboxWriter, RepositoryError};
+pub use port::{
+    DeclarationRepository, OutboxWriter, PersonRegistryDisabled, PersonRegistryError,
+    PersonRegistryPort, RepositoryError,
+};
 pub use submit_declaration::{SubmitDeclarationUseCase, SubmitReceipt, SubmitError};
 pub use get_declaration::{DeclarationProjection, GetDeclarationUseCase, GetError};
 pub use record_verification_outcome::{
