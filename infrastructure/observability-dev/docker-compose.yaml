@@ -1,0 +1,171 @@
+# RÉCOR — dev observability stack
+# Runnable on any developer laptop with Docker. Brings up:
+#   - OpenTelemetry Collector (OTLP receiver, fans out to the three backends)
+#   - Prometheus (metrics, receives via remote-write)
+#   - Tempo (distributed traces, OTLP push from collector)
+#   - Loki (logs, OTLP/loki-exporter push from collector)
+#   - Grafana (dashboards, pre-provisioned with all three data sources)
+#
+# Bring up:  cd infrastructure/observability-dev && docker compose up -d
+# Tear down: docker compose down -v   (the -v drops the named volumes)
+#
+# Smoke:     ./smoke-test.sh
+#
+# Ports — all bound to 127.0.0.1 only (per D17; do not expose the dev
+# stack on the LAN; the platform's production stack is not this one):
+#   3000   Grafana UI
+#   9090   Prometheus UI
+#   3200   Tempo HTTP API
+#   3100   Loki HTTP API
+#   4317   OTel Collector OTLP/gRPC
+#   4318   OTel Collector OTLP/HTTP
+#   13133  OTel Collector health-check extension
+#   8888   OTel Collector internal metrics
+#
+# Image versions pinned per V3 P7. Bumps follow the dependency-upgrade
+# policy.
+
+name: recor-observability-dev
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  tempo-data:
+  loki-data:
+  grafana-data:
+
+services:
+  # ─── OpenTelemetry Collector ──────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    container_name: recor-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:13133:13133"
+      - "127.0.0.1:8888:8888"
+    networks:
+      - observability
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    # No in-container healthcheck: the otel/opentelemetry-collector-contrib
+    # image is distroless (no wget / curl / sh), so any standard probe
+    # binary is absent. Liveness is verified externally via the
+    # `/13133/` health-check extension at step 3 of smoke-test.sh.
+
+  # ─── Prometheus (metrics) ─────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: recor-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1d
+      - --storage.tsdb.retention.size=1GB
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # ─── Tempo (traces) ───────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.7.0
+    container_name: recor-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    user: "0:0"  # tempo writes /var/tempo as root in the upstream image
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3200/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  # ─── Loki (logs) ──────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: recor-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    user: "0:0"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  # ─── Grafana (dashboards) ─────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: recor-grafana
+    restart: unless-stopped
+    environment:
+      # D18: admin password sourced from env; no hardcoded default in this file.
+      # See .env.example for the dev-only convention.
+      GF_SECURITY_ADMIN_USER: "${RECOR_GRAFANA_ADMIN_USER:-recor-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${RECOR_GRAFANA_ADMIN_PASSWORD:?Set RECOR_GRAFANA_ADMIN_PASSWORD in .env or environment}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor,traceqlSearch,publicDashboards"
+    volumes:
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - observability
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s

@@ -1,0 +1,195 @@
+# CODEOWNERS — RÉCOR
+#
+# Per Architecture V4 P10 § CODEOWNERS and Companion V1 P5.
+#
+# Rules:
+#   - Every directory has at least one owner team.
+#   - Stricter (≥2 teams required) on:
+#       policies/                 (security + architect)
+#       contracts/                (architect + integration)
+#       services/frost-coordinator, libraries/rust/recor-crypto,
+#         infrastructure/ansible (crypto + security)
+#       docs/adversarial-corpus/  (architect + security + verification)
+#   - .claude/ is architect-owned because its artefacts shape how every
+#     future ticket is executed.
+#
+# Validation:
+#   tools/ci/validate-codeowners.sh enforces coverage + stricter-rule
+#   semantics + two-way team reference against docs/security/teams.md.
+#
+# Enforcement:
+#   These rules engage GitHub's "Require review from Code Owners" branch
+#   protection setting on `main`. Note: CODEOWNERS enforcement requires
+#   the repository to be either public OR on a GitHub Pro/Team/Enterprise
+#   plan. On a personal-account GitHub Free private repo, CODEOWNERS is
+#   advisory (the rules are documented; review is not yet enforced).
+#   See docs/security/branch-protection.md for the transitional posture.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default catch-all so no path is unowned
+# ─────────────────────────────────────────────────────────────────────────────
+*                                       @recor/platform-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Top-level governance and agent ecosystem
+# ─────────────────────────────────────────────────────────────────────────────
+/README.md                              @recor/architect-team
+/CLAUDE.md                              @recor/architect-team
+/ARCHITECTURE.md                        @recor/architect-team
+/CONTRIBUTING.md                        @recor/architect-team
+/SECURITY.md                            @recor/security-team
+/LICENSE                                @recor/legal-team @recor/architect-team
+/mise.toml                              @recor/architect-team @recor/sre-team
+/justfile                               @recor/architect-team @recor/sre-team
+/renovate.json                          @recor/sre-team @recor/architect-team
+/.pre-commit-config.yaml                @recor/architect-team
+/.secrets.baseline                      @recor/security-team
+/.gitignore                             @recor/architect-team
+/.gitattributes                         @recor/architect-team
+
+# .claude/ shapes how every future ticket is executed
+/.claude/                               @recor/architect-team
+/.claude/settings.json                  @recor/architect-team @recor/security-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Documentation
+# ─────────────────────────────────────────────────────────────────────────────
+/docs/                                  @recor/architect-team
+/docs/architecture/                     @recor/architect-team @recor/security-team
+/docs/build-spec/                       @recor/architect-team
+/docs/concept-note/                     @recor/architect-team
+/docs/companion/                        @recor/architect-team
+/docs/adr/                              @recor/architect-team
+/docs/runbooks/                         @recor/sre-team @recor/security-team
+/docs/security/                         @recor/security-team
+/docs/onboarding/                       @recor/architect-team @recor/people-ops
+
+# STRICTER — adversarial corpus calibrates the verification engine
+/docs/adversarial-corpus/               @recor/architect-team @recor/security-team @recor/verification-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Policies — STRICTER (security-critical)
+# ─────────────────────────────────────────────────────────────────────────────
+/policies/                              @recor/security-team @recor/architect-team
+/policies/access/                       @recor/security-team @recor/architect-team
+/policies/access-encrypted-tier/        @recor/security-team @recor/architect-team @recor/legal-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contracts — STRICTER (consumer-facing surfaces)
+# ─────────────────────────────────────────────────────────────────────────────
+/contracts/                             @recor/architect-team @recor/integration-team
+/contracts/grpc/                        @recor/architect-team
+/contracts/rest/                        @recor/architect-team @recor/integration-team
+/contracts/graphql/                     @recor/architect-team
+/contracts/events/                      @recor/architect-team
+/contracts/bods/                        @recor/architect-team @recor/integration-team
+
+# Crypto-touching contracts have even stricter ownership
+/contracts/grpc/frost.proto             @recor/crypto-team @recor/security-team @recor/architect-team
+/contracts/grpc/inference.proto         @recor/verification-team @recor/security-team @recor/architect-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cryptographic substrate — STRICTEST (crypto + security required)
+# ─────────────────────────────────────────────────────────────────────────────
+/services/frost-coordinator/            @recor/crypto-team @recor/security-team
+/services/chaincode/                    @recor/crypto-team @recor/integration-team
+/libraries/rust/recor-crypto/           @recor/crypto-team @recor/security-team
+/libraries/rust/recor-hsm/              @recor/crypto-team @recor/security-team
+/libraries/rust/recor-frost/            @recor/crypto-team @recor/security-team
+/libraries/rust/recor-zk/               @recor/crypto-team @recor/security-team
+/infrastructure/ansible/                @recor/crypto-team @recor/security-team @recor/sre-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verification engine
+# ─────────────────────────────────────────────────────────────────────────────
+/services/verification/                 @recor/verification-team @recor/architect-team
+/services/verification-engine/          @recor/verification-team @recor/architect-team
+/services/inference-gateway/            @recor/verification-team @recor/security-team
+/libraries/rust/recor-prompts/          @recor/verification-team @recor/security-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Domain services
+# ─────────────────────────────────────────────────────────────────────────────
+/services/entity/                       @recor/domain-team
+/services/person/                       @recor/domain-team @recor/security-team
+/services/declaration/                  @recor/domain-team
+/services/ownership/                    @recor/domain-team
+/services/risk/                         @recor/domain-team @recor/verification-team
+/services/identity-resolution/          @recor/domain-team
+/services/access/                       @recor/security-team @recor/domain-team
+/services/audit/                        @recor/security-team @recor/domain-team
+/services/workflow/                     @recor/domain-team @recor/sre-team
+/services/notification/                 @recor/domain-team
+/services/reporting/                    @recor/domain-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumer integrations (per-integration teams + liaisons)
+# ─────────────────────────────────────────────────────────────────────────────
+/services/integrations/armp/            @recor/integration-team @recor/armp-liaison
+/services/integrations/anif-goaml/      @recor/integration-team @recor/anif-liaison
+/services/integrations/dgi/             @recor/integration-team @recor/dgi-liaison
+/services/integrations/beac-banking/    @recor/integration-team @recor/beac-liaison
+/services/integrations/customs-asycuda/ @recor/integration-team @recor/customs-liaison
+/services/integrations/sectoral-cadastres/ @recor/integration-team
+/services/integrations/conac/           @recor/integration-team @recor/conac-liaison
+/services/integrations/interpol-star/   @recor/integration-team @recor/legal-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Applications
+# ─────────────────────────────────────────────────────────────────────────────
+/applications/declarant-portal/         @recor/frontend-team @recor/declarant-experience
+/applications/officer-console/          @recor/frontend-team
+/applications/investigation-workbench/  @recor/frontend-team @recor/verification-team
+/applications/public-portal/            @recor/frontend-team @recor/legal-team
+/applications/whistleblower-intake/     @recor/frontend-team @recor/security-team
+/applications/admin-console/            @recor/frontend-team @recor/architect-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared libraries (catch-all under the strict per-library rules above)
+# ─────────────────────────────────────────────────────────────────────────────
+/libraries/                             @recor/architect-team @recor/platform-team
+/libraries/rust/                        @recor/platform-team
+/libraries/go/                          @recor/platform-team
+/libraries/ts/                          @recor/frontend-team
+/libraries/protos/                      @recor/architect-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Infrastructure
+# ─────────────────────────────────────────────────────────────────────────────
+/infrastructure/                        @recor/sre-team
+/infrastructure/terraform/              @recor/sre-team @recor/security-team
+/infrastructure/kubernetes/             @recor/sre-team
+/infrastructure/helm/                   @recor/sre-team
+/infrastructure/argocd/                 @recor/sre-team
+/infrastructure/networks/               @recor/sre-team @recor/security-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CI/CD and repo governance
+# ─────────────────────────────────────────────────────────────────────────────
+/.github/                               @recor/architect-team @recor/sre-team
+/.github/CODEOWNERS                     @recor/architect-team @recor/security-team
+/.github/workflows/                     @recor/sre-team @recor/security-team
+/.github/pull_request_template.md       @recor/architect-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tooling
+# ─────────────────────────────────────────────────────────────────────────────
+/tools/                                 @recor/sre-team @recor/architect-team
+/tools/cli/                             @recor/sre-team @recor/platform-team
+/tools/codegen/                         @recor/architect-team
+/tools/ci/                              @recor/sre-team @recor/security-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tests
+# ─────────────────────────────────────────────────────────────────────────────
+/tests/                                 @recor/architect-team
+/tests/e2e/                             @recor/architect-team @recor/sre-team
+/tests/contract/                        @recor/architect-team @recor/integration-team
+/tests/chaos/                           @recor/sre-team
+/tests/performance/                     @recor/sre-team
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboards and alerts
+# ─────────────────────────────────────────────────────────────────────────────
+/dashboards/                            @recor/sre-team
+/alerts/                                @recor/sre-team @recor/security-team

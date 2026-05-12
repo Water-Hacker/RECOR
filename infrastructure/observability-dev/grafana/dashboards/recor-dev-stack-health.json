@@ -1,0 +1,213 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Health of the RÉCOR dev observability stack itself. The dev components self-report through Prometheus; tracing throughput visible through Tempo metrics. Per Architecture V5 P22.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Self-scraped `up` status of every component in the stack. 1 = healthy, 0 = down.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 0, "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "index": 1, "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "up",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Stack components — up status",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Rate at which the OTel Collector accepts spans on its OTLP receiver.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "spans/sec",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by(receiver) (rate(otelcol_receiver_accepted_spans_total[1m]))",
+          "legendFormat": "{{receiver}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by(receiver) (rate(otelcol_receiver_refused_spans_total[1m]))",
+          "legendFormat": "{{receiver}} (refused)",
+          "refId": "B"
+        }
+      ],
+      "title": "OTel Collector — span throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Rate at which the OTel Collector exports spans to Tempo.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "spans/sec",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by(exporter) (rate(otelcol_exporter_sent_spans_total[1m]))",
+          "legendFormat": "{{exporter}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by(exporter) (rate(otelcol_exporter_send_failed_spans_total[1m]))",
+          "legendFormat": "{{exporter}} (failed)",
+          "refId": "B"
+        }
+      ],
+      "title": "OTel Collector — exporter throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Collector resource usage. Stays well under the memory_limiter ceiling.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          },
+          "unit": "decbytes"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "process_resident_memory_bytes{job=\"otel-collector\"}",
+          "legendFormat": "RSS",
+          "refId": "A"
+        }
+      ],
+      "title": "OTel Collector — memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "recor-tempo" },
+      "description": "Live trace search across the stack. Use the TraceQL editor below to query specific spans. Default query lists recent traces.",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 5,
+      "options": {},
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "recor-tempo" },
+          "limit": 20,
+          "queryType": "traceql",
+          "query": "{}",
+          "refId": "A",
+          "tableType": "traces"
+        }
+      ],
+      "title": "Tempo — recent traces",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["recor", "observability", "dev"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RÉCOR dev stack health",
+  "uid": "recor-dev-stack-health",
+  "version": 1,
+  "weekStart": ""
+}

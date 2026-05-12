@@ -28,3 +28,63 @@ package-lock.json text linguist-generated=true
 pnpm-lock.yaml text linguist-generated=true
 go.sum text linguist-generated=true
 uv.lock text linguist-generated=true
+
+# ──────────────────────────────────────────────────────────────────
+# GitHub Linguist hints — make the language bar reflect what runs in
+# production, not what supports it.
+#
+# What's production code (kept visible to Linguist):
+#   - services/*/src         — Rust services (Declaration, Verification engine)
+#   - services/*/tests       — service test suites
+#   - applications/*/src     — TypeScript portal
+#   - services/*/migrations  — SQL schema is part of the product
+#   - chaincode/             — future Fabric chaincode
+#   - packages/              — future shared crates
+#
+# What's tooling / infrastructure (hidden from Linguist):
+#   - shell scripts (smoke tests, CI helpers, dev hooks)
+#   - Helm charts and Kubernetes manifests
+#   - Docker Compose files
+#   - Observability stack configs (OTel, Prometheus, Grafana, Tempo, Loki)
+#   - CI workflow YAML
+#   - test fixtures (keys, JWKs)
+#
+# Why: a registry like this is a Rust + TypeScript system. The shell
+# scripts orchestrate Docker for local-dev smoke; they don't run in
+# prod. The YAML in infrastructure/ templates Kubernetes/Helm; it isn't
+# the runtime code. Marking them linguist-vendored keeps the language
+# bar honest about what's actually serving requests.
+# ──────────────────────────────────────────────────────────────────
+
+# Shell scripts — every .sh in this repo is tooling, never production
+# runtime. Smoke tests, CI helpers, dev hooks, validation utilities.
+*.sh linguist-vendored=true
+*.bash linguist-vendored=true
+
+# Infrastructure YAML — Helm charts, K8s manifests, observability
+# configs, Docker Compose. Templating + orchestration glue, not the
+# product itself.
+infrastructure/** linguist-vendored=true
+**/docker-compose*.yaml linguist-vendored=true
+**/docker-compose*.yml linguist-vendored=true
+.github/** linguist-vendored=true
+
+# Claude Code config + hooks — tooling for AI-assisted development,
+# not part of the running system.
+.claude/** linguist-vendored=true
+
+# CI / repository tooling
+tools/** linguist-vendored=true
+tests/contract/** linguist-vendored=true
+
+# Test fixtures — RSA keys, JWKs, etc. Inputs to tests, not code.
+**/tests/fixtures/** linguist-vendored=true
+
+# Local working state — extracted source docs, graphify output
+_extracted/** linguist-vendored=true
+graphify-out/** linguist-vendored=true
+
+# Service-internal scripts (smoke probes that exercise the running
+# stack). Treated as tooling for the same reason as the top-level ones.
+services/*/scripts/** linguist-vendored=true
+applications/*/scripts/** linguist-vendored=true

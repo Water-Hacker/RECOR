@@ -1,0 +1,156 @@
+# Required-checks orchestrator for RÉCOR.
+#
+# The job names in this file are the names branch-protection on `main` will
+# reference as required status checks. Adding/removing jobs here is therefore
+# a branch-protection-relevant change; coordinate with the apply-branch-protection
+# script and re-run it after merge.
+#
+# Per Architecture V1 P3 § DevSecOps integration: security checks shift left
+# and run on every PR, not only at a pre-release gate.
+
+name: required-checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: required-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Linting ──────────────────────────────────────────────────────────────
+  lint-yaml:
+    name: "lint / yaml"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: yamllint
+        run: |
+          pip install --user yamllint==1.35.1
+          # Helm templates contain Go-template directives that yamllint
+          # cannot parse; exclude that subtree.
+          yamllint \
+            --strict \
+            -d "{extends: relaxed, rules: {line-length: {max: 200}}}" \
+            .github/ \
+            $(find infrastructure -name '*.yaml' -not -path '*/helm/*/templates/*' 2>/dev/null || true)
+
+  lint-shell:
+    name: "lint / shell"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n syntax check
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' f; do
+            bash -n "$f"
+          done < <(find tools .claude/hooks tests -name '*.sh' -print0 2>/dev/null)
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        env:
+          SHELLCHECK_OPTS: -e SC1091 -e SC2034
+        with:
+          scandir: ./tools
+          additional_files: '.claude/hooks/pre-edit-doctrine-check.sh .claude/hooks/pre-bash-allowlist.sh .claude/hooks/post-edit-format.sh .claude/hooks/post-bash-audit.sh'
+
+  lint-markdown:
+    name: "lint / markdown"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          config: |
+            {
+              "default": true,
+              "MD013": false,
+              "MD024": { "siblings_only": true },
+              "MD033": false,
+              "MD041": false
+            }
+          globs: |
+            **/*.md
+            !node_modules/**
+            !target/**
+            !_extracted/**
+
+  # ─── Secrets ──────────────────────────────────────────────────────────────
+  secrets-gitleaks:
+    name: "secrets / gitleaks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  secrets-detect-secrets:
+    name: "secrets / detect-secrets"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: detect-secrets
+        run: |
+          pip install --user detect-secrets==1.5.0
+          detect-secrets scan --baseline .secrets.baseline
+
+  # ─── Governance ───────────────────────────────────────────────────────────
+  governance-codeowners-validate:
+    name: "governance / codeowners-validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: validate CODEOWNERS
+        run: ./tools/ci/validate-codeowners.sh
+
+  governance-pr-hygiene:
+    name: "governance / pr-hygiene"
+    runs-on: ubuntu-latest
+    # pr-hygiene runs in its own workflow (.github/workflows/pr-hygiene.yaml)
+    # because it needs additional permissions; this job is the protection
+    # placeholder so branch protection can reference the name. The actual
+    # check is in the dedicated workflow.
+    steps:
+      - run: echo "pr-hygiene runs in .github/workflows/pr-hygiene.yaml"
+
+  governance-no-dangling:
+    name: "governance / no-dangling"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: TODO-age check (best-effort at this stage)
+        run: |
+          # Doctrine 8: TODOs older than 2 sprints (28 days) are flagged.
+          # At this stage of the build we have no merged TODOs yet; this
+          # check enforces the rule going forward.
+          set -euo pipefail
+          old_todos=$(git log --since='28 days ago' --diff-filter=A --name-only --pretty=format: 2>/dev/null | sort -u | xargs -I{} sh -c '
+            if [ -f "{}" ] && grep -lE "TODO|FIXME|XXX" "{}" >/dev/null 2>&1; then
+              echo "{}"
+            fi
+          ' 2>/dev/null || true)
+          # No assertion yet — this is the stub. Real enforcement when the
+          # codebase has accumulated content.
+          echo "TODO-age check: ${old_todos:-no findings}"
+
+  # ─── Claude Code config ───────────────────────────────────────────────────
+  claude-config-validate:
+    name: "claude-config-validate"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install pyyaml
+        run: pip install --user pyyaml==6.0.2
+      - name: validate .claude/ configuration
+        run: ./tools/ci/validate-claude-config.sh

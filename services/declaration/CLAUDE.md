@@ -1,0 +1,94 @@
+# Service: recor-declaration
+# Layer: 2 (Architecture V4 P13 § Declaration Service)
+# Owner: @recor/domain-team
+# Doctrines reference: V1 P2
+
+## What this service does
+
+Accepts beneficial-ownership declarations from the Declarant Portal (and
+other authorised clients), validates the canonical domain invariants,
+verifies the declarant's Ed25519 cryptographic attestation, persists the
+declaration event-sourced in PostgreSQL with an outbox row for
+downstream relay, returns a signed receipt.
+
+The service is the entry point of the platform's declared-data flow.
+What it captures, the verification engine processes; what the
+verification engine accepts, the consumers consume. Failures here
+fail-close at the boundary.
+
+## Language and toolchain
+
+- Rust 1.88.0 (rust-toolchain.toml) — bumped from V3 P12's 1.84.0 because
+  the modern dep graph requires edition 2024 stable. See R-LANG-1.
+- Cargo workspace at the service root (not yet wired to the monorepo
+  workspace — `R-DECL-6` follow-up).
+- Build via Docker: `docker run -v $PWD:/work -w /work rust:1.88-bookworm cargo ...`
+- Test: `cargo test --lib` (unit, fast) or `cargo test --test api_integration -- --ignored` (testcontainers, slower, needs docker daemon).
+- Lint: `cargo clippy --all-targets -- -D warnings`.
+
+## Architecture
+
+- Persistence: **PostgreSQL 17** via `sqlx 0.8` (runtime-checked queries,
+  not the compile-time `query!` macro — see migration files and
+  `R-DECL-7` follow-up for moving to `.sqlx/` cache).
+- Events: declarations are event-sourced. Today: `declaration.submitted.v1`.
+- Outbox: every event is written to `outbox` in the same transaction; a
+  future outbox-relay worker publishes to Kafka.
+- gRPC contracts: none yet. REST is the v1 surface; gRPC is a follow-up
+  ticket (`R-DECL-8`).
+- Public APIs: REST under `/v1/declarations` (see `src/api/rest.rs` and
+  the dto module).
+
+## SLOs
+
+| Operation | p99 latency | Availability |
+|-----------|-------------|--------------|
+| `POST /v1/declarations` | < 500 ms | 99.95% |
+| `GET /v1/declarations/{id}` | < 50 ms | 99.95% |
+| `GET /healthz` | < 10 ms | 100% |
+| `GET /readyz` | < 100 ms | 99.95% |
+
+These are aspirational for v1; measured baselines establish during the
+first sprint of operational traffic.
+
+## Active development context
+
+- This is the first commit of platform code. Many "ideal" features are
+  deferred to subsequent tickets — see the follow-ups list at the bottom
+  of the service README. Do not silently add to scope without an ADR.
+- OIDC JWT verification is real: `src/api/oidc.rs` does discovery,
+  JWKS fetching with TTL caching, signature + `iss` + `aud` + `exp` +
+  `nbf` verification. HMAC algorithms (HS256/384/512) are refused
+  outright — algorithm-confusion attacks have nothing to land on.
+  Production refuses to start when `ENVIRONMENT != dev` and
+  `OIDC_ISSUER_URL` is empty; `OIDC_AUDIENCE` is required whenever
+  `OIDC_ISSUER_URL` is set. R-DECL-1 is CLOSED (was: peeking at claims
+  unverified).
+- The integration tests are `#[ignore]`-gated; CI must use the
+  testcontainers Docker socket pattern to un-ignore them. Today: run
+  manually with `cargo test -- --ignored`.
+
+## Doctrines that apply with special weight here
+
+- **D13 idempotency** — `POST /v1/declarations` honours the
+  `Idempotency-Key` header; replay returns the same receipt. Adding a
+  new state-changing endpoint here without idempotency is a doctrine
+  violation. Talk to the architect-reviewer if you think a new endpoint
+  doesn't need it.
+- **D15 cryptographic provenance** — Every declaration carries an
+  Ed25519 attestation. Receipt hash is BLAKE3 over the canonical form.
+  Future: anchor receipts to the Fabric audit channel
+  (`R-DECL-9`).
+- **D18 no secrets** — The Postgres password lives in `.env`
+  (gitignored). The service refuses to start without `DATABASE_URL`.
+- **D14 fail-closed** — Any malformed request, bad attestation,
+  conflict, or downstream failure returns 4xx/5xx. Never 2xx on a
+  partial success.
+
+## When in doubt
+
+1. Read this document.
+2. Read `docs/architecture/` V4 P13 § Declaration Service.
+3. Read `docs/architecture/` V4 P14 § Canonical Data Model.
+4. Check the ADR record in `/docs/adr/`.
+5. Ask the lead architect — do not improvise.

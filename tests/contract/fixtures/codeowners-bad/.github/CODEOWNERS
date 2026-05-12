@@ -1,0 +1,17 @@
+# Deliberately-broken CODEOWNERS fixture.
+#
+# This fixture exercises validator rejection. Specific defects below; the
+# validator must reject the file as a whole.
+#
+# Defects:
+#   1. NO catch-all `*` rule (Check 6 must fail)
+#   2. /policies/ rule has only ONE owner — violates the stricter ≥2-owner
+#      rule (Check 5 must fail)
+#   3. References @recor/ghost-team which is not in teams.md (Check 2 must fail)
+#   4. Several top-level domain directories have no rule at all
+#      (Check 4 must fail): no /services/, no /contracts/, no /infrastructure/,
+#      etc.
+
+/CLAUDE.md          @recor/architect-team
+/policies/          @recor/security-team
+/.claude/           @recor/ghost-team

@@ -64,6 +64,18 @@ local-up:
 local-down:
     @./tools/cli/local-down.sh
 
+# Bring up the dev observability stack (compose: OTel + Prometheus + Tempo + Loki + Grafana)
+observability-up:
+    @cd infrastructure/observability-dev && docker compose up -d
+
+# Tear down the dev observability stack and drop its volumes
+observability-down:
+    @cd infrastructure/observability-dev && docker compose down -v
+
+# Run the F-007 smoke test (emits traces, verifies end-to-end ingestion)
+observability-smoke:
+    @./tests/contract/observability-smoke.test.sh
+
 # Apply pending migrations against the local development databases
 migrate:
     @for svc in services/*/migrations; do \

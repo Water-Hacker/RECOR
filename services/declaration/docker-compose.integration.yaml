@@ -1,0 +1,126 @@
+# D ↔ V loop integration stack: Postgres × 2 + Declaration + Verification.
+#
+# Bring up with:
+#   docker compose -f docker-compose.integration.yaml up -d --build
+#
+# Smoke (from this directory):
+#   ./scripts/integration-smoke.sh
+
+name: recor-dv-loop
+
+networks:
+  loop:
+    driver: bridge
+
+volumes:
+  pg-decl-data:
+  pg-ver-data:
+
+services:
+  # ─── Postgres for the Declaration service ───────────────────────────
+  postgres-declaration:
+    image: postgres:17-alpine
+    container_name: recor-loop-pg-decl
+    environment:
+      POSTGRES_USER: recor
+      POSTGRES_PASSWORD: "${RECOR_DB_PASSWORD:?Set RECOR_DB_PASSWORD}"
+      POSTGRES_DB: declaration
+    volumes: [pg-decl-data:/var/lib/postgresql/data]
+    networks: [loop]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recor -d declaration"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ─── Postgres for the Verification engine ───────────────────────────
+  postgres-verification:
+    image: postgres:17-alpine
+    container_name: recor-loop-pg-ver
+    environment:
+      POSTGRES_USER: recor
+      POSTGRES_PASSWORD: "${RECOR_DB_PASSWORD}"
+      POSTGRES_DB: verification
+    volumes: [pg-ver-data:/var/lib/postgresql/data]
+    networks: [loop]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recor -d verification"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ─── Declaration service (with outbox relay enabled) ────────────────
+  declaration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: recor/declaration:dev
+    container_name: recor-loop-declaration
+    depends_on:
+      postgres-declaration: { condition: service_healthy }
+      verification:        { condition: service_healthy }
+    environment:
+      RUST_BACKTRACE: "1"
+      BIND_ADDR: "0.0.0.0:8080"
+      DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres-declaration:5432/declaration"
+      DB_POOL_MAX_CONNECTIONS: "10"
+      OTLP_ENDPOINT: ""
+      LOG_FILTER: "info,recor_declaration=debug,sqlx=warn"
+      SERVICE_NAME: "recor-declaration"
+      ENVIRONMENT: "dev"
+      HTTP_TIMEOUT_SECONDS: "10"
+      RECOR_BASE_URL: "http://localhost:8080"
+      # Outbound relay — D → V: events POST to the verification engine's
+      # internal webhook. HMAC secret matches the one verification uses
+      # to verify the signature.
+      RELAY_WEBHOOK_URL: "http://verification:8081/v1/internal/declaration-events"
+      RELAY_HMAC_SECRET: "${RECOR_HMAC_SECRET:?Set RECOR_HMAC_SECRET}"
+      RELAY_POLL_INTERVAL_SECONDS: "2"
+      # Inbound writeback — V → D: verification engine's outbox relay
+      # POSTs verification.completed.v1 here, signed with the same
+      # shared secret. The same key is fine in this PoC; production
+      # rotates secrets per-channel.
+      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [loop]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # ─── Verification engine (inbound webhook enabled) ──────────────────
+  verification:
+    build:
+      context: ../verification-engine
+      dockerfile: Dockerfile
+    image: recor/verification-engine:dev
+    container_name: recor-loop-verification
+    depends_on:
+      postgres-verification: { condition: service_healthy }
+    environment:
+      RUST_BACKTRACE: "1"
+      BIND_ADDR: "0.0.0.0:8081"
+      DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres-verification:5432/verification"
+      DB_POOL_MAX_CONNECTIONS: "10"
+      OTLP_ENDPOINT: ""
+      LOG_FILTER: "info,recor_verification_engine=debug,sqlx=warn"
+      SERVICE_NAME: "recor-verification-engine"
+      ENVIRONMENT: "dev"
+      HTTP_TIMEOUT_SECONDS: "30"
+      RECOR_BASE_URL: "http://localhost:8081"
+      INBOUND_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      # Writeback relay — V → D: ships verification.completed.v1 events
+      # back to the Declaration service so the aggregate can transition.
+      WRITEBACK_URL: "http://declaration:8080/v1/internal/verification-outcomes"
+      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      WRITEBACK_POLL_INTERVAL_SECONDS: "2"
+    ports: ["127.0.0.1:8081:8081"]
+    networks: [loop]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s

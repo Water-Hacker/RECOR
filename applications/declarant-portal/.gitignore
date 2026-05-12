@@ -1,0 +1,20 @@
+# Build outputs
+dist/
+node_modules/
+.pnpm-store/
+.vite/
+.turbo/
+coverage/
+
+# Local env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

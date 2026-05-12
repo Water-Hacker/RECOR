@@ -1,0 +1,85 @@
+# Dev k8s overrides for the recor-observability chart.
+# Use when deploying to a dev Kubernetes cluster (kind / k3s / minikube)
+# OR to the consortium's dev cluster once provisioned.
+#
+# Difference from base (values.yaml):
+#   - Single replica per component (no HA)
+#   - In-cluster MinIO for object storage (no AWS S3)
+#   - Ephemeral storage (no PVC retention guarantees)
+#   - Grafana admin password from a chart-managed secret with a known
+#     dev-only default
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      retention: 7d
+      retentionSize: 5GiB
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 5Gi
+  grafana:
+    admin:
+      existingSecret: recor-grafana-admin-dev
+    persistence:
+      size: 2Gi
+  alertmanager:
+    alertmanagerSpec:
+      retention: 24h
+      replicas: 1
+  prometheusOperator:
+    admissionWebhooks:
+      patch:
+        enabled: false
+
+tempo-distributed:
+  ingester:
+    replicas: 1
+    persistence:
+      size: 2Gi
+  distributor:
+    replicas: 1
+  querier:
+    replicas: 1
+  queryFrontend:
+    replicas: 1
+  storage:
+    trace:
+      backend: s3
+      s3:
+        endpoint: minio.observability.svc.cluster.local:9000
+        bucket: tempo-dev
+        access_key: minio-dev
+        secret_key: minio-dev-password
+        insecure: true
+
+loki-distributed:
+  ingester:
+    replicas: 1
+  distributor:
+    replicas: 1
+  querier:
+    replicas: 1
+  queryFrontend:
+    replicas: 1
+  loki:
+    storage:
+      s3:
+        endpoint: minio.observability.svc.cluster.local:9000
+        accessKeyId: minio-dev
+        secretAccessKey: minio-dev-password
+        s3ForcePathStyle: true
+        insecure: true
+
+opentelemetry-collector:
+  replicaCount: 1
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
