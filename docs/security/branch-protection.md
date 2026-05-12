@@ -205,6 +205,8 @@ gh run list --workflow=<workflow-file>.yaml --limit 20 \
 | Context (job `name:`)        | Workflow                                            | Runs observed | Green-in-a-row | Last evaluated | Status   |
 |------------------------------|-----------------------------------------------------|---------------|----------------|----------------|----------|
 | `docker-compose smoke`       | `.github/workflows/observability-smoke.yaml`        | 4             | 0 (all failed) | 2026-05-12     | Deferred |
+| `portal-e2e / mocked`        | `.github/workflows/portal-e2e.yaml`                 | 0             | 0 (new)        | 2026-05-12     | Deferred |
+| `portal-e2e / live`          | `.github/workflows/portal-e2e.yaml`                 | 0             | 0 (new)        | 2026-05-12     | Deferred |
 
 Promotion procedure once the gate is met:
 
@@ -231,6 +233,26 @@ required-contexts list in `tools/ci/apply-branch-protection.sh` is
 unchanged by the OBS-2 PR; only the deferred-promotion table (this section)
 and the script's header comment / OBS-2 status comment are updated. A
 follow-up PR promotes the check once the 10-green-run gate is met.
+
+### R-PORT-6 evaluation note (2026-05-12)
+
+`docs/PRODUCTION-TODO.md` R-PORT-6 introduces the `portal-e2e` workflow
+(`.github/workflows/portal-e2e.yaml`) with two jobs: `portal-e2e / mocked`
+(hermetic Playwright suite against `pnpm preview` with route-mocked APIs)
+and `portal-e2e / live` (Playwright against the full D↔V compose stack
+plus the portal nginx, mock-BUNEC seeded with the deterministic person
+UUID committed in `tests/e2e/fixtures.ts`). Both jobs are **deferred**
+until the 10-consecutive-green-runs gate is met against `main` — same
+posture as OBS-2.
+
+The `mocked` job is the load-bearing gate (every critical-path
+assertion lives there; no Docker required); the `live` job is the
+contract-end-to-end gate against the real services. Promoting `mocked`
+first is the lower-risk path; `live` follows once it has accumulated
+10 green runs in its own right. The `required-contexts` list in
+`tools/ci/apply-branch-protection.sh` is unchanged by the R-PORT-6 PR;
+only this table and this note are updated. A follow-up PR promotes the
+checks once the gate is met.
 
 ## Applied state as of 2026-05-12
 
