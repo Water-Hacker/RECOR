@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+# R-DECL-8: build.rs compiles contracts/declaration.proto via tonic-build.
+# The generated server + client stubs land in $OUT_DIR and are pulled
+# in from src/api/grpc.rs via tonic::include_proto!.
+build = "build.rs"
 
 [[bin]]
 name = "recor-declaration"
@@ -93,8 +97,22 @@ governor.workspace = true
 utoipa.workspace = true
 utoipa-scalar.workspace = true
 
+# gRPC (R-DECL-8). Server + client runtime; the build.rs invokes
+# tonic-build at compile time to emit Rust stubs from
+# contracts/declaration.proto.
+tonic.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+
 # Note: jsonwebtoken + lru are consumed transitively via recor-auth-oidc;
 # they're still declared here when needed by code outside the verifier.
+
+[build-dependencies]
+# R-DECL-8: code-generation for the gRPC surface. tonic-build wraps
+# prost-build with a tonic-specific output. No DATABASE_URL required —
+# the proto compile is hermetic, preserving R-DECL-7's offline-build
+# invariant.
+tonic-build.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
@@ -107,3 +125,6 @@ ed25519-dalek.workspace = true
 jsonwebtoken.workspace = true
 # Used in rate_limit unit tests to read response bodies.
 http-body-util = "0.1"
+# R-DECL-8: the gRPC integration test uses the generated tonic client
+# alongside the existing REST test harness. tonic + prost are already
+# in [dependencies]; this section pulls in nothing new for them.

@@ -109,6 +109,20 @@ lru = "0.12"
 utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 
+# gRPC surface (R-DECL-8 / #78). tonic provides the runtime; tonic-build
+# generates Rust client + server stubs from contracts/declaration.proto
+# at build time; prost is the wire codec. Versions track the prost 0.13
+# line — tonic 0.13.x is the matching release. The OIDC interceptor
+# lives in services/declaration/src/api/grpc.rs. The .proto under
+# contracts/ is the source of truth for the gRPC surface; Rust types
+# derive from it. REST DTOs stay hand-written under utoipa (different
+# transport, different shape; see services/declaration/CLAUDE.md for
+# the OpenAPI-exemption rationale).
+tonic = "0.13"
+tonic-build = "0.13"
+prost = "0.13"
+prost-types = "0.13"
+
 # Test deps (used by member crates' [dev-dependencies])
 proptest = "1.5"
 rstest = "0.23"

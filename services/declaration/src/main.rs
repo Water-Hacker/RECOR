@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use recor_declaration::api::{AppState, OidcVerifier};
+use recor_declaration::api::{
+    AppState, DeclarationGrpcService, GrpcAuthConfig, OidcVerifier,
+};
 use recor_declaration::application::{
     AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
     RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
@@ -106,7 +108,7 @@ async fn main() -> Result<()> {
         oidc,
     };
 
-    let router = recor_declaration::api::router(app_state, &cfg);
+    let router = recor_declaration::api::router(app_state.clone(), &cfg);
 
     let addr: SocketAddr = cfg.bind_addr.parse().context("parsing bind address")?;
     let listener = TcpListener::bind(addr)
@@ -114,8 +116,43 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding to {addr}"))?;
     info!(%addr, "listening");
 
-    // Cancellation token shared with the relay so shutdown is coordinated.
+    // Cancellation token shared with the relay + gRPC server so
+    // shutdown is coordinated across all transports.
     let cancel = CancellationToken::new();
+
+    // gRPC server (R-DECL-8). Coexists with REST; same use cases, same
+    // OIDC verifier (D17 zero-trust holds across transports). The
+    // server is disabled when GRPC_BIND_ADDR is empty — the safe
+    // default for environments that only need REST.
+    let grpc_handle = if cfg.grpc_bind_addr.is_empty() {
+        info!("gRPC server disabled (GRPC_BIND_ADDR not set)");
+        None
+    } else {
+        let grpc_addr: SocketAddr = cfg
+            .grpc_bind_addr
+            .parse()
+            .context("parsing gRPC bind address")?;
+        let grpc_state = app_state.clone();
+        let auth = GrpcAuthConfig {
+            is_dev: cfg.is_dev(),
+            oidc: grpc_state.oidc.clone(),
+        };
+        let service =
+            DeclarationGrpcService::new(grpc_state).into_server_with_auth(auth);
+        let cancel_grpc = cancel.clone();
+        info!(%grpc_addr, "gRPC listening (recor.declaration.v1.DeclarationService)");
+        Some(tokio::spawn(async move {
+            if let Err(e) = tonic::transport::Server::builder()
+                .add_service(service)
+                .serve_with_shutdown(grpc_addr, async move {
+                    cancel_grpc.cancelled().await;
+                })
+                .await
+            {
+                warn!(error = ?e, "gRPC server exited with error");
+            }
+        }))
+    };
 
     // Outbox relay — optional. Enabled when RELAY_WEBHOOK_URL is set.
     // When disabled, outbox rows accumulate; a future ticket relays them.
@@ -155,8 +192,11 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!(e));
     }
 
-    // Wait for the relay to finish.
+    // Wait for the relay + gRPC server to finish.
     if let Some(h) = relay_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = grpc_handle {
         let _ = h.await;
     }
 

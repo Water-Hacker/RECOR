@@ -1,0 +1,323 @@
+// RÉCOR Declaration service — gRPC contract (R-DECL-8).
+//
+// The wire schema for service-to-service communication with the
+// Declaration service. Mirrors the REST surface defined in
+// services/declaration/src/api/rest.rs and services/declaration/src/api/dto.rs;
+// the gRPC handlers in services/declaration/src/api/grpc.rs are thin
+// adapters that convert proto messages into the same domain commands
+// already exercised by the REST handlers.
+//
+// Doctrine alignment:
+//
+//   - D15 cryptographic provenance: the Attestation message and the
+//     beneficial-owner field ordering MUST mirror the REST DTO so that
+//     the canonical-payload byte form is invariant across transports.
+//     Clients sign over the SAME canonical bytes for either surface.
+//   - D17 zero trust: the declarant principal is sourced server-side
+//     from the gRPC interceptor (OIDC verifier shared with REST). The
+//     proto-level field `signed_by` on Attestation is the client's
+//     claim of identity, validated against the authenticated principal
+//     by the handler.
+//   - D14 fail-closed: handlers translate domain errors to tonic::Status
+//     with deliberate, non-Unknown codes (see services/declaration/src/api/grpc.rs).
+//
+// Stability:
+//   - All field numbers are stable. Removed fields use `reserved`.
+//   - The package name is versioned (`recor.declaration.v1`); a
+//     breaking change introduces `v2` rather than mutating `v1`.
+//   - Generous numeric gaps are left between groups of fields so future
+//     additions can land in logical clusters.
+
+syntax = "proto3";
+
+package recor.declaration.v1;
+
+// ─── Service ─────────────────────────────────────────────────────────
+
+// DeclarationService is the v1 gRPC surface. Every RPC has a REST
+// counterpart documented at services/declaration/src/api/rest.rs.
+service DeclarationService {
+  // Submit a new declaration. Mirrors POST /v1/declarations.
+  rpc SubmitDeclaration(SubmitDeclarationRequest)
+      returns (SubmitDeclarationResponse);
+
+  // Fetch the current projection for a declaration. Mirrors
+  // GET /v1/declarations/{declaration_id}.
+  rpc GetDeclaration(GetDeclarationRequest)
+      returns (GetDeclarationResponse);
+
+  // Replace an existing declaration with a freshly-signed successor.
+  // Mirrors POST /v1/declarations/{declaration_id}/supersede.
+  rpc SupersedeDeclaration(SupersedeDeclarationRequest)
+      returns (SupersedeDeclarationResponse);
+
+  // Amend an existing declaration in place (declarable lifecycle states
+  // only). Mirrors POST /v1/declarations/{declaration_id}/amend.
+  rpc AmendDeclaration(AmendDeclarationRequest)
+      returns (AmendDeclarationResponse);
+
+  // Apply a pre-verification metadata correction. Mirrors
+  // POST /v1/declarations/{declaration_id}/correct (added in PR #74).
+  rpc CorrectDeclaration(CorrectDeclarationRequest)
+      returns (CorrectDeclarationResponse);
+}
+
+// ─── Shared messages ─────────────────────────────────────────────────
+
+// A declared beneficial owner with their interest in the entity.
+// Matches services/declaration/src/domain/value_object.rs
+// `BeneficialOwnerClaim` byte-for-byte over the canonical form.
+message BeneficialOwner {
+  // UUIDv7 of the person record, as a canonical string ("…-…-…-…").
+  string person_id = 1;
+  // Ownership in basis points (1/100 of a percent), 0..=10_000.
+  uint32 ownership_basis_points = 2;
+  // Nature of the interest — see InterestKind values below.
+  InterestKind interest_kind = 3;
+
+  reserved 4 to 10;
+}
+
+// Mirror of services/declaration/src/domain/value_object.rs InterestKind.
+// Wire values match the snake_case JSON representation used in REST so
+// that canonical bytes survive transport.
+enum InterestKind {
+  INTEREST_KIND_UNSPECIFIED = 0;
+  INTEREST_KIND_EQUITY = 1;
+  INTEREST_KIND_VOTING = 2;
+  INTEREST_KIND_FAMILY_PROXY = 3;
+  INTEREST_KIND_CONTRACTUAL = 4;
+  INTEREST_KIND_OTHER = 5;
+
+  reserved 6 to 15;
+}
+
+// Mirror of DeclarantRole. The wire string used over REST is the
+// `serde(rename = …)` value (e.g. "self", "authorised_agent",
+// "operator_assisted"); the handler converts to/from the proto enum.
+enum DeclarantRole {
+  DECLARANT_ROLE_UNSPECIFIED = 0;
+  DECLARANT_ROLE_SELF = 1;
+  DECLARANT_ROLE_AUTHORISED_AGENT = 2;
+  DECLARANT_ROLE_OPERATOR_ASSISTED = 3;
+
+  reserved 4 to 15;
+}
+
+// Mirror of DeclarationKind.
+enum DeclarationKind {
+  DECLARATION_KIND_UNSPECIFIED = 0;
+  DECLARATION_KIND_INCORPORATION = 1;
+  DECLARATION_KIND_ANNUAL_RENEWAL = 2;
+  DECLARATION_KIND_CHANGE_OF_CONTROL = 3;
+  DECLARATION_KIND_CORRECTION = 4;
+  DECLARATION_KIND_AMENDMENT = 5;
+
+  reserved 6 to 15;
+}
+
+// Mirror of VerificationLane (snake_case wire values).
+enum VerificationLane {
+  VERIFICATION_LANE_UNSPECIFIED = 0;
+  VERIFICATION_LANE_GREEN = 1;
+  VERIFICATION_LANE_YELLOW = 2;
+  VERIFICATION_LANE_RED = 3;
+
+  reserved 4 to 15;
+}
+
+// Cryptographic attestation by the declarant. The handler verifies the
+// signature against the canonical payload before the command reaches
+// the aggregate — identical contract to the REST surface (D15).
+message Attestation {
+  // The declarant principal the signature is bound to. The handler
+  // cross-checks this against the authenticated principal.
+  string signed_by = 1;
+  // Signature algorithm. Only "ed25519" is accepted in v1.
+  string signature_algorithm = 2;
+  // Signature, hex-encoded.
+  string signature_hex = 3;
+  // Declarant's public key, hex-encoded.
+  string public_key_hex = 4;
+  // Random nonce, hex-encoded. Prevents replay.
+  string nonce_hex = 5;
+
+  reserved 6 to 15;
+}
+
+// Replacement amendable fields. Matches `AmendmentSet`.
+message AmendmentSet {
+  repeated BeneficialOwner beneficial_owners = 1;
+  // Effective-from date, ISO-8601 "YYYY-MM-DD".
+  string effective_from = 2;
+  DeclarantRole declarant_role = 3;
+
+  reserved 4 to 10;
+}
+
+// Pre-verification corrections. Matches `CorrectionSet`. Future
+// correctable fields land as additive optional siblings.
+message CorrectionSet {
+  // Free-form metadata annotation. An unset value is "no annotation";
+  // an empty string is normalised to unset at the API boundary.
+  optional string metadata_notes = 1;
+
+  reserved 2 to 10;
+}
+
+// Standard error envelope. Mirrors `ErrorEnvelope` in the REST surface:
+// machine-friendly `kind` + human `message`. Returned as tonic::Status
+// details on non-OK responses where the handler chooses to carry a body;
+// otherwise the gRPC status code carries the signal.
+message ErrorEnvelope {
+  string kind = 1;
+  string message = 2;
+
+  reserved 3 to 10;
+}
+
+// ─── SubmitDeclaration ───────────────────────────────────────────────
+
+message SubmitDeclarationRequest {
+  // Optional client-supplied declaration id (UUIDv7 string). Empty
+  // means the server mints one.
+  string declaration_id = 1;
+  // Entity the declaration is about (UUIDv7 string).
+  string entity_id = 2;
+  // Role under which the declarant is filing.
+  DeclarantRole declarant_role = 3;
+  DeclarationKind kind = 4;
+  // ISO-8601 "YYYY-MM-DD".
+  string effective_from = 5;
+  repeated BeneficialOwner beneficial_owners = 6;
+  Attestation attestation = 7;
+
+  reserved 8 to 15;
+}
+
+message SubmitDeclarationResponse {
+  // The declaration's UUIDv7 string.
+  string declaration_id = 1;
+  // Lifecycle state immediately after the write — typically "submitted".
+  string state = 2;
+  // BLAKE3-256 receipt hash, hex-encoded.
+  string receipt_hash_hex = 3;
+  // ISO-8601 timestamp of submission (server clock).
+  string submitted_at = 4;
+  // Self-link to the persisted declaration record (REST GET URL).
+  string receipt_url = 5;
+
+  reserved 6 to 15;
+}
+
+// ─── GetDeclaration ──────────────────────────────────────────────────
+
+message GetDeclarationRequest {
+  string declaration_id = 1;
+
+  reserved 2 to 10;
+}
+
+message GetDeclarationResponse {
+  string declaration_id = 1;
+  string entity_id = 2;
+  string declarant_principal = 3;
+  DeclarantRole declarant_role = 4;
+  DeclarationKind kind = 5;
+  string effective_from = 6;
+  repeated BeneficialOwner beneficial_owners = 7;
+  // Lifecycle state — see `DeclarationState` in the domain layer for
+  // the full enumeration. v1 uses a string carrier so consumers do not
+  // re-deploy when states are added.
+  string state = 8;
+  uint64 aggregate_version = 9;
+  string submitted_at = 10;
+  string receipt_hash_hex = 11;
+  string correlation_id = 12;
+
+  // Downstream verification engine outcome.
+  string verification_state = 20;
+  optional VerificationLane verification_lane = 21;
+  optional string verification_case_id = 22;
+  optional string verified_at = 23;
+
+  // Supersede chain.
+  optional string supersedes_declaration_id = 30;
+  optional string superseded_by_declaration_id = 31;
+  optional string superseded_at = 32;
+
+  // Amend / correct metadata.
+  optional string amended_at = 40;
+  optional string metadata_notes = 41;
+  optional string corrected_at = 42;
+
+  reserved 13 to 19, 24 to 29, 33 to 39, 43 to 50;
+}
+
+// ─── SupersedeDeclaration ────────────────────────────────────────────
+
+message SupersedeDeclarationRequest {
+  // The id of the existing declaration being replaced.
+  string superseded_declaration_id = 1;
+  // The freshly-signed successor declaration body. Same shape as
+  // SubmitDeclarationRequest minus `declaration_id` (the handler
+  // mints a fresh one for the successor).
+  string new_declaration_id = 2;
+  string entity_id = 3;
+  DeclarantRole declarant_role = 4;
+  DeclarationKind kind = 5;
+  string effective_from = 6;
+  repeated BeneficialOwner beneficial_owners = 7;
+  Attestation attestation = 8;
+
+  reserved 9 to 15;
+}
+
+message SupersedeDeclarationResponse {
+  string new_declaration_id = 1;
+  string superseded_declaration_id = 2;
+  string state = 3;
+  string receipt_hash_hex = 4;
+  string submitted_at = 5;
+  string receipt_url = 6;
+
+  reserved 7 to 15;
+}
+
+// ─── AmendDeclaration ────────────────────────────────────────────────
+
+message AmendDeclarationRequest {
+  string declaration_id = 1;
+  AmendmentSet amendments = 2;
+  Attestation attestation = 3;
+
+  reserved 4 to 10;
+}
+
+message AmendDeclarationResponse {
+  string declaration_id = 1;
+  uint64 aggregate_version = 2;
+  string amended_at = 3;
+  string receipt_url = 4;
+
+  reserved 5 to 10;
+}
+
+// ─── CorrectDeclaration ──────────────────────────────────────────────
+
+message CorrectDeclarationRequest {
+  string declaration_id = 1;
+  CorrectionSet corrections = 2;
+  Attestation attestation = 3;
+
+  reserved 4 to 10;
+}
+
+message CorrectDeclarationResponse {
+  string declaration_id = 1;
+  uint64 aggregate_version = 2;
+  string corrected_at = 3;
+  string receipt_url = 4;
+
+  reserved 5 to 10;
+}
