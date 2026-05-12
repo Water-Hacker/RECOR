@@ -154,7 +154,7 @@ tickets):
 | T | Direct row mutation on event log bypasses domain | UPDATE/DELETE/TRUNCATE refused by BEFORE trigger that fires regardless of invoking role (COMP-2); REVOKE strips PUBLIC; tested by `services/declaration/tests/audit_immutability.rs`. Same mirror on `verification_cases`. | migrations 0007 (declaration) + 0003 (verification-engine) |
 | T | sqlx query injection | sqlx runtime-checked queries with parameterised binds; no string-built SQL | code-review-enforced |
 | R | DBA later denies running a destructive statement | Production DBA access is procedural (DOC-3 incident-response-template) | **Gap G4** — no in-database audit of DBA-role statements; OBS-1 (Phase 2) ships programmatic audit |
-| I | Backup theft (see Declaration § I) | Filesystem encryption + access restrictions on backup hosts | accepted-risk for v1 |
+| I | Backup theft (see Declaration § I) | Filesystem encryption + access restrictions on backup hosts. Per-column PII / Sensitive-PII inventory and handling rules in `docs/compliance/data-classification.md` (COMP-3) define which columns must be field-level encrypted before backups stop carrying plaintext PII (Gap G3 closure path). | accepted-risk for v1; classification doc enumerates the columns in scope |
 | D | Connection pool exhaustion under load | `db_pool_max_connections` (configurable); per-request timeout in axum | `services/declaration/src/config.rs` |
 | E | Privilege escalation via Postgres extension | No extensions installed beyond `pgcrypto` for `gen_random_uuid()`; testcontainers pinned to `postgres:17-alpine` matching production | migrations |
 
