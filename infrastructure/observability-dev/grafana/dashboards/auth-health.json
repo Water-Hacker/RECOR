@@ -1,0 +1,194 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "OBS-1: OIDC authentication health. JWKS fetch latency, per-outcome verify rates, 401 spikes. Use this when the RecorOidcVerifierDown alert fires or when declarants report being unable to authenticate.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Verify outcomes per second by result. `unavailable` ⇒ JWKS/discovery is unreachable (infrastructure fault); `invalid` ⇒ client-side fault (bad token, expired, unknown kid); `success` ⇒ verified.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "verifies/s",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "success" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "invalid" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "unavailable" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (result) (rate(recor_oidc_verify_total[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "OIDC verify outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Rate of `unavailable` outcomes by service. The RecorOidcVerifierDown alert fires when this exceeds 0.5/s for 5m. Drives the runbook's verifier-down branch.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.5 }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (job) (rate(recor_oidc_verify_total{result=\"unavailable\"}[5m]))",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "OIDC unavailable rate (alert source)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "p50/p95/p99 of OIDC JWKS fetch latency by outcome. A healthy fetch is sub-second; a steady-state above 500ms p99 should prompt investigation of the discovery network path.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "seconds",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, result) (rate(recor_oidc_jwks_fetch_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{result}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, result) (rate(recor_oidc_jwks_fetch_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{result}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, result) (rate(recor_oidc_jwks_fetch_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{result}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "JWKS fetch latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "401 responses per second across both services. A sustained spike usually correlates with an expired token rollout or a JWKS rotation that hasn't propagated.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "401/s",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (job) (rate(http_requests_total{status=\"401\",job=~\"recor-.*\"}[5m]))",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 401 rate by service",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["recor", "obs-1", "auth-health"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RÉCOR — Auth Health",
+  "uid": "recor-auth-health",
+  "version": 1,
+  "weekStart": ""
+}

@@ -37,6 +37,8 @@ use crate::config::Config;
 use crate::domain::{DeclarationSnapshot, VerificationCase, VerificationCaseId};
 use crate::error::ServiceError;
 use crate::infrastructure::{OutboxAdminStore, PostgresVerificationRepository};
+// OBS-1: Prometheus metrics.
+use crate::metrics::{metrics_handler, metrics_middleware, Metrics};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -46,12 +48,15 @@ pub struct AppState {
     pub outbox_admin: Arc<OutboxAdminStore>,
     pub is_dev: bool,
     pub oidc: Option<Arc<OidcVerifier>>,
+    /// OBS-1: shared Prometheus metrics handle. See `crate::metrics`.
+    pub metrics: Arc<Metrics>,
 }
 
 pub fn router(state: AppState, cfg: &Config) -> Router {
     let auth_state = AuthConfig {
         is_dev: state.is_dev,
         oidc: state.oidc.clone(),
+        metrics: state.metrics.clone(),
     };
 
     let protected = Router::new()
@@ -77,6 +82,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let dlq_admin_state = DlqAdminState {
         store: state.outbox_admin.clone(),
         admin_principals: Arc::new(admin_principals),
+        metrics: state.metrics.clone(),
     };
     let admin = Router::new()
         .route(
@@ -112,9 +118,29 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .with_state(state);
+        .with_state(state.clone());
 
-    protected.merge(admin).merge(internal).merge(public).layer(
+    // OBS-1: GET /metrics — Prometheus exposition. No auth; in-cluster
+    // network only (see runbook). Mounted as a sibling router so the
+    // metrics handler reads `State<Arc<Metrics>>` (the typed metrics
+    // state) rather than the full AppState. The request-timing
+    // middleware is NOT applied here so scrape traffic doesn't inflate
+    // the latency histogram.
+    let metrics_router: Router = Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(state.metrics.clone());
+
+    let app_routes = protected.merge(admin).merge(internal).merge(public);
+
+    // Per-endpoint timing + counter middleware over the app routes
+    // only (not /metrics).
+    let metrics_state = state.metrics.clone();
+    let app_routes = app_routes.layer(axum::middleware::from_fn_with_state(
+        metrics_state,
+        metrics_middleware,
+    ));
+
+    app_routes.merge(metrics_router).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -128,15 +154,23 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     )
 }
 
-#[tracing::instrument]
-async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"status": "ok"})))
+#[tracing::instrument(skip(state))]
+async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let resp = (StatusCode::OK, Json(json!({"status": "ok"})));
+    state
+        .metrics
+        .health_check_duration_seconds
+        .with_label_values(&["healthz"])
+        .observe(start.elapsed().as_secs_f64());
+    resp
 }
 
 #[tracing::instrument(skip(state))]
 async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     let probe = sqlx::query_scalar!(r#"SELECT 1 AS "probe!: i32""#).fetch_one(state.repository.pool());
-    match probe.await {
+    let resp = match probe.await {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ready"}))),
         Err(e) => {
             warn!(error = %e, "readiness probe failed");
@@ -145,7 +179,13 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
                 Json(json!({"status": "not_ready", "reason": "database_unreachable"})),
             )
         }
-    }
+    };
+    state
+        .metrics
+        .health_check_duration_seconds
+        .with_label_values(&["readyz"])
+        .observe(start.elapsed().as_secs_f64());
+    resp
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,6 +228,24 @@ async fn submit_verification(
     let base_url = std::env::var("RECOR_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:8081".to_string());
     let resp = SubmitVerificationResponse::from_case(&case, &base_url);
+    // OBS-1: lane counter + fusion-belief histograms. `lane` is a
+    // 3-value bounded enum (Green/Yellow/Red) — D18 safe.
+    let lane = case.lane.as_str();
+    state
+        .metrics
+        .verification_cases_total
+        .with_label_values(&[lane])
+        .inc();
+    state
+        .metrics
+        .fusion_belief_true
+        .with_label_values(&[lane])
+        .observe(case.fused_authenticity.belief_true());
+    state
+        .metrics
+        .fusion_belief_false
+        .with_label_values(&[lane])
+        .observe(case.fused_authenticity.belief_false());
     Ok((StatusCode::CREATED, Json(resp)))
 }
 

@@ -276,6 +276,15 @@ impl DeclarationService for DeclarationGrpcService {
             .await
             .map_err(submit_error_to_status)?;
 
+        // OBS-1: increment the per-kind submit counter for gRPC traffic
+        // too. Same shared registry as REST so a single
+        // `recor_declarations_submitted_total` counts both transports.
+        self.state
+            .metrics
+            .declarations_submitted_total
+            .with_label_values(&[kind.as_str()])
+            .inc();
+
         let receipt_url = format!(
             "{base}/v1/declarations/{id}",
             base = self.state.base_url,

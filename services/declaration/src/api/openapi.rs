@@ -31,6 +31,21 @@
 //! The committed snapshot lives at `docs/openapi/declaration.json`;
 //! `tools/ci/check-openapi-drift.sh` enforces that the snapshot matches
 //! what the build produces.
+//!
+//! # OBS-1: operational endpoints are NOT in the consumer contract
+//!
+//! The Prometheus exposition endpoint at `GET /metrics` is intentionally
+//! NOT enumerated in `paths(...)` below. The OpenAPI spec is the
+//! consumer-facing contract; `/metrics` is an operational surface served
+//! to in-cluster Prometheus scrapers only. Documenting it here would
+//! (a) imply it is part of the consumer contract (it is not — its shape
+//! follows the Prometheus text-exposition format, version 0.0.4, which
+//! is documented by Prometheus, not by us), and (b) leak the existence
+//! of an internal endpoint into the public spec. D17 zero-trust: the
+//! deployment expectation is that `/metrics` is reachable only from
+//! within the cluster network, never from the public internet — see
+//! `docs/runbooks/observability-dashboards.md` for the deployment-network
+//! contract. The endpoint is implemented in `crate::metrics`.
 
 use axum::http::header;
 use axum::response::IntoResponse;

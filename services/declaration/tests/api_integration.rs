@@ -96,6 +96,7 @@ async fn spawn_service() -> TestService {
         is_dev: true,
         idempotency_ttl_seconds: 3600,
         oidc: None,
+        metrics: recor_declaration::metrics::Metrics::new().expect("metrics registry"),
     };
     let router = recor_declaration::api::router(app_state, &cfg);
 

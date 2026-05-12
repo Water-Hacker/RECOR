@@ -93,6 +93,14 @@ async fn main() -> Result<()> {
         Some(v)
     };
 
+    // OBS-1: build the per-service Prometheus registry once at startup.
+    // The same handle is shared with the REST router (timing middleware
+    // + /metrics handler), the use cases (domain counters), and the
+    // OIDC auth layer (verify counter + JWKS-fetch histogram).
+    let metrics = recor_declaration::metrics::Metrics::new()
+        .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
+    info!("prometheus metrics registry initialised");
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
@@ -106,6 +114,7 @@ async fn main() -> Result<()> {
         is_dev: cfg.is_dev(),
         idempotency_ttl_seconds: cfg.idempotency_ttl_seconds,
         oidc,
+        metrics: metrics.clone(),
     };
 
     let router = recor_declaration::api::router(app_state.clone(), &cfg);
@@ -165,7 +174,8 @@ async fn main() -> Result<()> {
         let relay = OutboxRelay::new(pool.clone(), subscriber)
             .with_poll_interval(std::time::Duration::from_secs(
                 cfg.relay_poll_interval_seconds,
-            ));
+            ))
+            .with_metrics(metrics.clone());
         let cancel_relay = cancel.clone();
         info!(
             webhook = %cfg.relay_webhook_url,

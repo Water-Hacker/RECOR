@@ -30,6 +30,7 @@ use tracing::warn;
 
 use crate::api::oidc::{OidcVerifier, VerificationError};
 use crate::error::ServiceError;
+use crate::metrics::Metrics;
 
 #[derive(Debug, Clone)]
 pub struct Principal {
@@ -50,6 +51,10 @@ pub enum PrincipalSource {
 pub struct AuthConfig {
     pub is_dev: bool,
     pub oidc: Option<Arc<OidcVerifier>>,
+    /// OBS-1: shared Prometheus registry so the middleware can record
+    /// per-verify outcomes (`recor_oidc_verify_total{result}`). The
+    /// label `result` is a 3-value bounded enum (D18).
+    pub metrics: Arc<Metrics>,
 }
 
 /// Axum middleware that resolves the request principal and inserts it
@@ -109,6 +114,20 @@ async fn resolve_principal(
 
     let claims = verifier.verify(token).await.map_err(|e| {
         warn!(error = %e, "bearer token failed verification");
+        // OBS-1: bounded-cardinality outcome label. `unavailable` is
+        // an infrastructure fault (JWKS / discovery 5xx) — distinct
+        // from a client-side `invalid` so on-call can tell apart
+        // "OIDC backend down" from "bad tokens flooding in".
+        let label = match &e {
+            VerificationError::DiscoveryFailed { .. }
+            | VerificationError::JwksFetchFailed { .. } => "unavailable",
+            _ => "invalid",
+        };
+        state
+            .metrics
+            .oidc_verify_total
+            .with_label_values(&[label])
+            .inc();
         match e {
             VerificationError::TokenInvalid(_)
             | VerificationError::MalformedHeader
@@ -126,8 +145,18 @@ async fn resolve_principal(
     })?;
 
     if claims.sub.trim().is_empty() {
+        state
+            .metrics
+            .oidc_verify_total
+            .with_label_values(&["invalid"])
+            .inc();
         return Err(ServiceError::AuthenticationRequired);
     }
+    state
+        .metrics
+        .oidc_verify_total
+        .with_label_values(&["success"])
+        .inc();
     Ok(Principal {
         subject: claims.sub,
         source: PrincipalSource::Bearer,

@@ -44,6 +44,11 @@ pub struct OutboxRelay {
     http: reqwest::Client,
     poll_interval: Duration,
     max_attempts: i32,
+    /// OBS-1: optional metrics handle. The relay records delivery
+    /// latency + dispatches a gauge sample (undispatched count, DLQ
+    /// size) on every poll. Optional so tests can run without
+    /// constructing a full registry.
+    metrics: Option<std::sync::Arc<crate::metrics::Metrics>>,
 }
 
 impl OutboxRelay {
@@ -58,6 +63,7 @@ impl OutboxRelay {
             http,
             poll_interval: Duration::from_secs(5),
             max_attempts: 12, // 12 × 5s ≈ 1 min before dead-letter
+            metrics: None,
         }
     }
 
@@ -68,6 +74,16 @@ impl OutboxRelay {
 
     pub fn with_max_attempts(mut self, attempts: i32) -> Self {
         self.max_attempts = attempts;
+        self
+    }
+
+    /// OBS-1: wire the shared Prometheus registry handle. The relay
+    /// emits `recor_outbox_undispatched`, `recor_outbox_dlq_size`,
+    /// and `recor_relay_delivery_latency_seconds` samples when set.
+    /// When `metrics` is `None` (the test/legacy path), the relay
+    /// behaves identically but does not emit samples.
+    pub fn with_metrics(mut self, metrics: std::sync::Arc<crate::metrics::Metrics>) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 
@@ -100,6 +116,29 @@ impl OutboxRelay {
     /// rows failed (errors logged); Err only on a structural problem like
     /// a DB outage.
     async fn process_batch(&self) -> Result<(), sqlx::Error> {
+        // OBS-1: sample the outbox + DLQ gauges every poll. Using
+        // `sqlx::query_scalar` (non-macro form) so this read does not
+        // require an entry in the prepared-query cache. The gauges are
+        // best-effort — failing to sample logs at debug! and proceeds.
+        if let Some(m) = self.metrics.as_ref() {
+            match sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM outbox WHERE dispatched_at IS NULL",
+            )
+            .fetch_one(&self.pool)
+            .await
+            {
+                Ok(n) => m.outbox_undispatched.set(n),
+                Err(e) => debug!(error = ?e, "outbox-undispatched gauge sample failed"),
+            }
+            match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox_dlq")
+                .fetch_one(&self.pool)
+                .await
+            {
+                Ok(n) => m.outbox_dlq_size.set(n),
+                Err(e) => debug!(error = ?e, "outbox-dlq-size gauge sample failed"),
+            }
+        }
+
         let rows = sqlx::query!(
             r#"
             SELECT id, event_id, event_type, event_version, aggregate_id, payload, dispatch_attempts
@@ -138,6 +177,10 @@ impl OutboxRelay {
             let body = serde_json::to_vec(&envelope).expect("envelope is always serialisable");
             let signature = hmac_hex(&self.subscriber.hmac_secret, &body);
 
+            // OBS-1: time the POST itself so we can record subscriber
+            // delivery latency. This is the per-attempt round-trip; on
+            // success we observe it into the latency histogram.
+            let send_start = std::time::Instant::now();
             let result = self
                 .http
                 .post(&self.subscriber.webhook_url)
@@ -151,6 +194,7 @@ impl OutboxRelay {
 
             match result {
                 Ok(resp) if resp.status().is_success() => {
+                    let elapsed = send_start.elapsed().as_secs_f64();
                     sqlx::query!(
                         r#"UPDATE outbox
                            SET dispatched_at = NOW(),
@@ -160,6 +204,11 @@ impl OutboxRelay {
                     )
                     .execute(&self.pool)
                     .await?;
+                    if let Some(m) = self.metrics.as_ref() {
+                        m.relay_delivery_latency_seconds
+                            .with_label_values(&[self.subscriber.name.as_str()])
+                            .observe(elapsed);
+                    }
                     info!(
                         %event_id, event_type, attempt = prior_attempts + 1,
                         "relay delivered"

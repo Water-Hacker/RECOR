@@ -1,0 +1,243 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "OBS-1: verification-engine health. Per-lane case rates, fused belief distributions, processing latency. Watch for drift in the lane distribution — that's a sign either declarant traffic mix has shifted or the verifier's stages have regressed.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Verification cases adjudicated per lane (green/yellow/red), 5m rate.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "cases/s",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "green" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "yellow" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "red" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (lane) (rate(recor_verification_cases_total[5m]))",
+          "legendFormat": "{{lane}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Verification cases per lane",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Lane distribution as a share of all adjudicated cases.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "share",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "mode": "percent", "group": "A" }
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["last"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (lane) (rate(recor_verification_cases_total[5m])) / ignoring(lane) group_left sum(rate(recor_verification_cases_total[5m]))",
+          "legendFormat": "{{lane}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Lane share (percent stacked)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "p50/p95/p99 of the fused authenticity belief over the `true` hypothesis. The lane router thresholds (defaults: green >= 0.85, red < 0.40) appear as the natural inflection points.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "belief",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["last", "mean"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, lane) (rate(recor_fusion_belief_true_bucket[5m])))",
+          "legendFormat": "{{lane}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, lane) (rate(recor_fusion_belief_true_bucket[5m])))",
+          "legendFormat": "{{lane}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, lane) (rate(recor_fusion_belief_true_bucket[5m])))",
+          "legendFormat": "{{lane}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Fused authenticity belief (true) — quantiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "p50/p95/p99 of the fused authenticity belief over the `false` hypothesis.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "belief",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["last", "mean"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, lane) (rate(recor_fusion_belief_false_bucket[5m])))",
+          "legendFormat": "{{lane}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, lane) (rate(recor_fusion_belief_false_bucket[5m])))",
+          "legendFormat": "{{lane}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, lane) (rate(recor_fusion_belief_false_bucket[5m])))",
+          "legendFormat": "{{lane}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Fused authenticity belief (false) — quantiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "p99 latency of POST /v1/verifications (the submit-verification endpoint). The verification engine's pipeline is the slow path; this panel surfaces the wall-clock cost.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "seconds",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 5,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"recor-verification-engine\",path=\"/v1/verifications\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        }
+      ],
+      "title": "Submit-verification p99 latency",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["recor", "obs-1", "verification-health"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RÉCOR — Verification Health",
+  "uid": "recor-verification-health",
+  "version": 1,
+  "weekStart": ""
+}
