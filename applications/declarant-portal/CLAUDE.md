@@ -165,6 +165,84 @@ OpenAPI spec, not hand-written.
   The byte-parity unit test in `crypto.test.ts` is the load-bearing
   guard.
 
+## Internationalisation (R-PORT-1)
+
+The portal is trilingual: **French (legal primary)**, **English
+(secondary)**, **Cameroonian Pidgin / Kamtok (tertiary, stub)**.
+
+### Stack
+
+- `i18next` + `react-i18next` for the runtime
+- `i18next-browser-languagedetector` for first-boot detection
+  (order: `localStorage` → `navigator.language`)
+- `i18next-resources-to-backend` for per-locale dynamic `import()`,
+  so each locale ships as its own hashed JS chunk
+  (`dist/assets/locale-{fr,en,pidgin}-<hash>.js`)
+- Central config: `src/i18n.ts`
+- Locale JSON: `src/locales/{fr,en,pidgin}.json`
+- Selector: `App.tsx`'s header `<select data-testid="locale-selector">`
+- Persistence key: `recor.locale` in `localStorage`
+
+### D14 fail-closed behaviour
+
+- `fallbackLng: 'fr'` — the legal primary catches every missing key,
+  so a half-translated en.json or stub pidgin.json never renders a
+  raw key in production
+- Anything outside `['fr', 'en', 'pidgin']` collapses to `fr`
+- Zod validation messages are i18n keys (`'validation.uuid'`, …); the
+  form component resolves them via `t()` and defensively falls back
+  to the raw message if a key is somehow absent
+
+### Bundle-size invariant
+
+- Each locale chunk is < 30 KB gzipped (measured at R-PORT-1: ~2.2–2.6 KB)
+- The active-locale chunk is loaded on first paint; switching the
+  locale triggers a separate dynamic import that the browser caches
+  for the session
+- Re-measure when adding a fourth locale or growing the key tree
+  beyond ~150 keys per locale
+
+### Translation review workflow
+
+The codebase ships translations; **only Cameroonian humans sign them
+off as authoritative**. Engineering never alters fr.json without
+re-triggering the legal review.
+
+| Locale | Reviewer | Cadence | Sign-off artefact |
+|---|---|---|---|
+| `fr.json` (legal primary) | Cameroonian beneficial-ownership lawyer (engagement via project legal lead, @recor/legal) | Before every public-facing release; after any new `validation.*` or `verification.*` key | ADR in `docs/decisions/` capturing the reviewing lawyer + commit SHA they signed off |
+| `en.json` (secondary) | Bilingual project liaison (declarant-experience team) | Before every public-facing release | PR review comment from the liaison's GitHub handle |
+| `pidgin.json` (tertiary, stub) | Community linguist contracted via the declarant-experience team | One-shot full translation, then ad-hoc updates | ADR + linguist's attestation file under `docs/decisions/` |
+
+### Pidgin stub policy
+
+Until the community translation lands, `pidgin.json` carries English
+placeholders so the UI never regresses to raw key names if a
+declarant selects Pidgin. The leading `_translation_status` key
+documents the stub state and is the search-marker reviewers use to
+locate the in-progress file. When the linguist returns translations,
+replace every value, change `_translation_status.completeness` from
+`"stub"` to `"complete-pending-legal-review"`, and remove the
+`todo` field.
+
+### What MUST flow through `t()`
+
+- Every visible string in `App.tsx`, `DeclarationForm.tsx`,
+  `VerificationStatus.tsx`, and any future component
+- Every Zod validation message (stored as keys under
+  `validation.*`)
+- Every `aria-label` and `sr-only` text
+
+### What MUST NOT flow through `t()`
+
+- Protocol tokens displayed for cross-locale citation
+  (verification lane `green` / `yellow` / `red`, verification state
+  `accepted` / `pending` / …). These are stable identifiers analysts
+  and declarants use across languages and the `StatusBadge`
+  deliberately renders them raw.
+- Cryptographic primitives (declaration_id, receipt hash, public
+  key, signature hex)
+
 ## When in doubt
 
 1. Read this document
