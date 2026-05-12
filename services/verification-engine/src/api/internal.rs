@@ -31,7 +31,13 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone)]
 pub struct InternalAppState {
     pub submit_usecase: Arc<SubmitVerificationUseCase>,
+    /// Current HMAC secret for the D→V inbound channel.
     pub hmac_secret: String,
+    /// Optional "still-valid old" secret accepted during a rotation
+    /// window. Empty means rotation not in progress. See the
+    /// declaration service's internal.rs doc comment for the full
+    /// rotation procedure.
+    pub old_hmac_secret: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,7 +121,12 @@ pub async fn handle_declaration_event(
             "X-RECOR-Signature header required",
         ));
     };
-    if !verify_hmac(&state.hmac_secret, &body, provided_hex) {
+    if !verify_hmac_with_rotation(
+        &state.hmac_secret,
+        &state.old_hmac_secret,
+        &body,
+        provided_hex,
+    ) {
         warn!("inbound HMAC verification failed");
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
@@ -220,6 +231,26 @@ fn error_response(
     )
 }
 
+/// Same dual-secret rotation primitive as the declaration service's
+/// internal.rs. See that file for the full rotation procedure doc.
+fn verify_hmac_with_rotation(
+    current_secret: &str,
+    old_secret: &str,
+    payload: &[u8],
+    signature_hex: &str,
+) -> bool {
+    if verify_hmac(current_secret, payload, signature_hex) {
+        return true;
+    }
+    if !old_secret.is_empty() && verify_hmac(old_secret, payload, signature_hex) {
+        tracing::warn!(
+            "inbound request verified against OLD HMAC secret — rotation in progress"
+        );
+        return true;
+    }
+    false
+}
+
 fn verify_hmac(secret: &str, payload: &[u8], signature_hex: &str) -> bool {
     let Ok(provided) = hex::decode(signature_hex) else {
         return false;
@@ -247,6 +278,29 @@ mod tests {
         assert!(verify_hmac("k", b"hello", &sig));
         assert!(!verify_hmac("wrong", b"hello", &sig));
         assert!(!verify_hmac("k", b"tampered", &sig));
+    }
+
+    #[test]
+    fn rotation_off_only_current_secret_works() {
+        let sig_current = hmac_hex("current", b"x");
+        let sig_old = hmac_hex("old", b"x");
+        assert!(verify_hmac_with_rotation("current", "", b"x", &sig_current));
+        assert!(!verify_hmac_with_rotation("current", "", b"x", &sig_old));
+    }
+
+    #[test]
+    fn rotation_active_both_old_and_current_accepted() {
+        let sig_current = hmac_hex("current", b"x");
+        let sig_old = hmac_hex("old", b"x");
+        assert!(verify_hmac_with_rotation("current", "old", b"x", &sig_current));
+        assert!(verify_hmac_with_rotation("current", "old", b"x", &sig_old));
+    }
+
+    #[test]
+    fn rotation_third_party_signature_still_rejected() {
+        let sig_attacker = hmac_hex("attacker", b"x");
+        assert!(!verify_hmac_with_rotation("current", "old", b"x", &sig_attacker));
+        assert!(!verify_hmac_with_rotation("current", "", b"x", &sig_attacker));
     }
 }
 

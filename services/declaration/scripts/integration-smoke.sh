@@ -13,12 +13,15 @@ cd "$(dirname "$0")/.."
 COMPOSE_FILE="docker-compose.integration.yaml"
 
 if [ ! -f .env ]; then
-    # hex (not base64) so DATABASE_URL parsing doesn't choke on '/'
+    # hex (not base64) so DATABASE_URL parsing doesn't choke on '/'.
+    # Per R-LOOP-4-ROT, the two D↔V channels use DISTINCT secrets so
+    # compromise of one does not affect the other.
     {
         echo "RECOR_DB_PASSWORD=$(openssl rand -hex 24)"
-        echo "RECOR_HMAC_SECRET=$(openssl rand -hex 32)"
+        echo "RECOR_D_TO_V_HMAC=$(openssl rand -hex 32)"
+        echo "RECOR_V_TO_D_HMAC=$(openssl rand -hex 32)"
     } > .env
-    echo "[generated .env]"
+    echo "[generated .env with per-channel HMAC secrets]"
 fi
 
 echo "── compose up ──"

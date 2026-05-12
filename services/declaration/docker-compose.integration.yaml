@@ -72,16 +72,19 @@ services:
       HTTP_TIMEOUT_SECONDS: "10"
       RECOR_BASE_URL: "http://localhost:8080"
       # Outbound relay — D → V: events POST to the verification engine's
-      # internal webhook. HMAC secret matches the one verification uses
-      # to verify the signature.
+      # internal webhook. Channel-specific secret (R-LOOP-4-ROT); a
+      # compromise of one channel's secret does not affect the other.
       RELAY_WEBHOOK_URL: "http://verification:8081/v1/internal/declaration-events"
-      RELAY_HMAC_SECRET: "${RECOR_HMAC_SECRET:?Set RECOR_HMAC_SECRET}"
+      RELAY_HMAC_SECRET: "${RECOR_D_TO_V_HMAC:?Set RECOR_D_TO_V_HMAC}"
       RELAY_POLL_INTERVAL_SECONDS: "2"
       # Inbound writeback — V → D: verification engine's outbox relay
-      # POSTs verification.completed.v1 here, signed with the same
-      # shared secret. The same key is fine in this PoC; production
-      # rotates secrets per-channel.
-      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      # POSTs verification.completed.v1 here. Distinct secret for the
+      # V → D channel.
+      WRITEBACK_HMAC_SECRET: "${RECOR_V_TO_D_HMAC:?Set RECOR_V_TO_D_HMAC}"
+      # Optional "still-valid old" secret accepted during rotation.
+      # Empty in steady state; set during a rotation window. See
+      # docs/runbooks/hmac-secret-rotation.md.
+      WRITEBACK_HMAC_SECRET_OLD: "${RECOR_V_TO_D_HMAC_OLD:-}"
     ports: ["127.0.0.1:8080:8080"]
     networks: [loop]
     healthcheck:
@@ -112,11 +115,15 @@ services:
       ENVIRONMENT: "dev"
       HTTP_TIMEOUT_SECONDS: "30"
       RECOR_BASE_URL: "http://localhost:8081"
-      INBOUND_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      # D → V channel: verifies envelopes from the declaration service's
+      # outbox relay. Same secret value the signer side uses.
+      INBOUND_HMAC_SECRET: "${RECOR_D_TO_V_HMAC}"
+      # Optional "still-valid old" secret accepted during rotation.
+      INBOUND_HMAC_SECRET_OLD: "${RECOR_D_TO_V_HMAC_OLD:-}"
       # Writeback relay — V → D: ships verification.completed.v1 events
       # back to the Declaration service so the aggregate can transition.
       WRITEBACK_URL: "http://declaration:8080/v1/internal/verification-outcomes"
-      WRITEBACK_HMAC_SECRET: "${RECOR_HMAC_SECRET}"
+      WRITEBACK_HMAC_SECRET: "${RECOR_V_TO_D_HMAC}"
       WRITEBACK_POLL_INTERVAL_SECONDS: "2"
     ports: ["127.0.0.1:8081:8081"]
     networks: [loop]

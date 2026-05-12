@@ -51,7 +51,25 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone)]
 pub struct InternalAppState {
     pub record_verification_usecase: Arc<RecordVerificationOutcomeUseCase>,
+    /// Current HMAC secret. Used for both verify (incoming requests)
+    /// and rejected when empty.
     pub hmac_secret: String,
+    /// Optional "still-valid old" secret accepted during a rotation
+    /// window. Empty string means rotation not in progress.
+    ///
+    /// Rotation procedure (zero-downtime):
+    ///   1. Operator generates a new secret, sets it as `old_hmac_secret`
+    ///      on the verifier side AND as `hmac_secret` on the signer
+    ///      side. Both signers continue to use the OLD secret;
+    ///      verifiers accept both.
+    ///   2. Operator updates signer-side `hmac_secret` to the new
+    ///      value. New signatures use the new secret; in-flight
+    ///      requests with the old signature still verify against
+    ///      `old_hmac_secret`.
+    ///   3. After all in-flight requests have drained (poll interval
+    ///      + retry budget), operator clears `old_hmac_secret`. Only
+    ///      the new secret is accepted from now on.
+    pub old_hmac_secret: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +109,12 @@ pub async fn handle_verification_outcome(
             "X-RECOR-Signature header required",
         ));
     };
-    if !verify_hmac(&state.hmac_secret, &body, provided_hex) {
+    if !verify_hmac_with_rotation(
+        &state.hmac_secret,
+        &state.old_hmac_secret,
+        &body,
+        provided_hex,
+    ) {
         warn!("writeback HMAC verification failed");
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
@@ -207,6 +230,32 @@ fn error_response(
     )
 }
 
+/// Verify an HMAC signature against the current secret, and if a
+/// non-empty `old_secret` is configured (rotation in progress), also
+/// against the old secret. Either match passes. This is the
+/// zero-downtime rotation primitive: during a rotation window the
+/// signer can switch over without dropping any in-flight requests.
+///
+/// An empty `old_secret` is treated as "rotation not active" and
+/// only the current secret is consulted.
+fn verify_hmac_with_rotation(
+    current_secret: &str,
+    old_secret: &str,
+    payload: &[u8],
+    signature_hex: &str,
+) -> bool {
+    if verify_hmac(current_secret, payload, signature_hex) {
+        return true;
+    }
+    if !old_secret.is_empty() && verify_hmac(old_secret, payload, signature_hex) {
+        tracing::warn!(
+            "inbound request verified against OLD HMAC secret — rotation in progress, expected for the duration of the rollout"
+        );
+        return true;
+    }
+    false
+}
+
 fn verify_hmac(secret: &str, payload: &[u8], signature_hex: &str) -> bool {
     let Ok(provided) = hex::decode(signature_hex) else {
         return false;
@@ -234,5 +283,44 @@ mod tests {
         assert!(verify_hmac("k", b"hello", &sig));
         assert!(!verify_hmac("wrong", b"hello", &sig));
         assert!(!verify_hmac("k", b"tampered", &sig));
+    }
+
+    #[test]
+    fn rotation_off_only_current_secret_works() {
+        let sig_current = hmac_hex("current", b"x");
+        let sig_old = hmac_hex("old", b"x");
+
+        // No rotation: empty old_secret means only `current` is accepted.
+        assert!(verify_hmac_with_rotation("current", "", b"x", &sig_current));
+        assert!(!verify_hmac_with_rotation("current", "", b"x", &sig_old));
+    }
+
+    #[test]
+    fn rotation_active_both_old_and_current_accepted() {
+        let sig_current = hmac_hex("current", b"x");
+        let sig_old = hmac_hex("old", b"x");
+
+        // Rotation window: both secrets valid.
+        assert!(verify_hmac_with_rotation("current", "old", b"x", &sig_current));
+        assert!(verify_hmac_with_rotation("current", "old", b"x", &sig_old));
+    }
+
+    #[test]
+    fn rotation_third_party_signature_still_rejected() {
+        let sig_attacker = hmac_hex("attacker", b"x");
+        // Even during rotation, any signature NOT matching either of
+        // the two valid secrets is rejected.
+        assert!(!verify_hmac_with_rotation("current", "old", b"x", &sig_attacker));
+        assert!(!verify_hmac_with_rotation("current", "", b"x", &sig_attacker));
+    }
+
+    #[test]
+    fn rotation_tampered_payload_still_rejected() {
+        // Sign the original payload with the current secret, then try
+        // to verify a tampered payload — should fail under both
+        // rotation-on and rotation-off configs.
+        let sig = hmac_hex("current", b"original");
+        assert!(!verify_hmac_with_rotation("current", "", b"tampered", &sig));
+        assert!(!verify_hmac_with_rotation("current", "old", b"tampered", &sig));
     }
 }

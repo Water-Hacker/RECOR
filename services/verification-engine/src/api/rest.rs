@@ -60,6 +60,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let internal_state = crate::api::internal::InternalAppState {
         submit_usecase: state.submit_usecase.clone(),
         hmac_secret: cfg.inbound_hmac_secret.expose_secret().to_string(),
+        old_hmac_secret: cfg.inbound_hmac_secret_old.expose_secret().to_string(),
     };
     let internal = Router::new()
         .route(

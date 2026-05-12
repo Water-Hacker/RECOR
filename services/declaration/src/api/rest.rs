@@ -79,6 +79,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let internal_state = InternalAppState {
         record_verification_usecase: state.record_verification_usecase.clone(),
         hmac_secret: cfg.writeback_hmac_secret.expose_secret().to_string(),
+        old_hmac_secret: cfg.writeback_hmac_secret_old.expose_secret().to_string(),
     };
     let internal = Router::new()
         .route(
