@@ -376,6 +376,10 @@ the data RÉCOR holds:
 
 ## Cross-references
 
+- **`docs/compliance/regulatory-mapping.md`** (COMP-4) — endpoint /
+  invariant → legal-provision map under Cameroon law + OHADA + FATF
+  Rec 24 + GDPR; the legal-basis projection for every right discussed
+  above.
 - **OPS-2 PII redaction** — `packages/recor-logging/src/lib.rs` — the
   log-line redaction layer that protects against PII leaking into
   operational logs.
