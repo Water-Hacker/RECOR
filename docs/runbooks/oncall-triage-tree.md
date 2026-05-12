@@ -248,3 +248,4 @@ runbook's "Rollback" section applies.
 - [restore-database-from-backup](restore-database-from-backup.md)
 - [observability-prod-stack](observability-prod-stack.md)
 - [incident-response-template](incident-response-template.md)
+- [soft-launch-playbook](soft-launch-playbook.md) — stage-aware rollback triggers during the ramp-up
