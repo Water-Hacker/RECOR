@@ -76,6 +76,12 @@ pub struct Metrics {
     /// the wall-clock time from outbox row creation to successful 2xx.
     pub relay_delivery_latency_seconds: HistogramVec,
 
+    /// COMP-2 — outbox retention prune counter. Label
+    /// `result` ∈ {"success","error"}: `success` increments BY the
+    /// number of rows pruned in the cycle; `error` increments BY 1
+    /// when a cycle fails before reaching the row count.
+    pub outbox_retention_pruned_total: IntCounterVec,
+
     // OIDC verifier metrics (shared shape with V-engine).
     /// JWKS fetch latency histogram.
     pub oidc_jwks_fetch_latency_seconds: HistogramVec,
@@ -195,6 +201,15 @@ impl Metrics {
         )?;
         registry.register(Box::new(relay_delivery_latency_seconds.clone()))?;
 
+        let outbox_retention_pruned_total = IntCounterVec::new(
+            Opts::new(
+                "recor_outbox_retention_pruned_total",
+                "COMP-2 outbox retention prune counter. result=success increments BY rows-pruned per cycle; result=error increments BY 1 per failed cycle.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(outbox_retention_pruned_total.clone()))?;
+
         let oidc_jwks_fetch_latency_seconds = HistogramVec::new(
             HistogramOpts::new(
                 "recor_oidc_jwks_fetch_latency_seconds",
@@ -235,6 +250,7 @@ impl Metrics {
             outbox_dlq_size,
             outbox_dlq_replays_total,
             relay_delivery_latency_seconds,
+            outbox_retention_pruned_total,
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             health_check_duration_seconds,
@@ -360,6 +376,9 @@ mod tests {
         m.relay_delivery_latency_seconds
             .with_label_values(&["verification-engine"])
             .observe(0.5);
+        m.outbox_retention_pruned_total
+            .with_label_values(&["success"])
+            .inc_by(7);
         m.oidc_jwks_fetch_latency_seconds
             .with_label_values(&["success"])
             .observe(0.05);
@@ -382,6 +401,7 @@ mod tests {
             "recor_outbox_dlq_size",
             "recor_outbox_dlq_replays_total",
             "recor_relay_delivery_latency_seconds",
+            "recor_outbox_retention_pruned_total",
             "recor_oidc_jwks_fetch_latency_seconds",
             "recor_oidc_verify_total",
             "recor_health_check_duration_seconds",

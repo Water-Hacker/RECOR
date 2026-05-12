@@ -159,6 +159,10 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         // R-DECL-8: empty disables the gRPC server. The REST-only
         // integration tests do not exercise the gRPC surface.
         grpc_bind_addr: String::new(),
+        // COMP-2: retention disabled in tests so the worker doesn't
+        // race with declared assertions about outbox rows.
+        outbox_retention_days: 0,
+        outbox_retention_interval_seconds: 86_400,
     }
 }
 

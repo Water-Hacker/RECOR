@@ -1,0 +1,281 @@
+//! Outbox retention worker (COMP-2).
+//!
+//! Periodically prunes `outbox` rows whose `dispatched_at` is older
+//! than `OUTBOX_RETENTION_DAYS` (default 30). The DLQ and the
+//! `declaration_events` log are NEVER touched — see
+//! `docs/compliance/data-retention.md` for the full policy and the
+//! reasoning per table.
+//!
+//! ## Doctrine compliance
+//!
+//! - **D14 fail-closed** — the safe default is `OUTBOX_RETENTION_DAYS=0`,
+//!   which DISABLES pruning entirely. Tests run with this default so
+//!   they never accidentally delete data that another test depends on.
+//!   A future deployment that wants real retention must opt in by
+//!   setting the env explicitly.
+//! - **D15 cryptographic provenance** — never touches
+//!   `declaration_events`; the event log is the substrate the BLAKE3
+//!   receipts pin to (architecturally + via the immutability trigger
+//!   in migration `0007_audit_log_immutability.sql`).
+//! - **D16 observability** — every prune cycle records both a
+//!   `tracing::info!` event (with the row count) and increments the
+//!   `recor_outbox_retention_pruned_total` counter so operators can
+//!   alert on a pruning loop that suddenly drops to zero (would
+//!   indicate either a DB outage or the retention clock skewing).
+//!
+//! ## Why a tokio task and not a cron / k8s `CronJob`?
+//!
+//! For the v1 deployment envelope (single-binary, single-pod, Phase 0)
+//! a tokio task keeps the operational surface tight: one process to
+//! deploy, one log stream to grep, the same metrics endpoint exposes
+//! both the relay and the retention sample counts. When the deployment
+//! moves to multi-replica (Phase 2), the worker MUST become a leader-
+//! elected singleton (a `CronJob` is the obvious refactor). The
+//! interface exposed by this module — `OutboxRetention::run(cancel)` —
+//! is shaped so a `CronJob` shell-out wrapper would call
+//! `prune_once()` directly.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use sqlx::PgPool;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, instrument, warn};
+
+/// Result of a single prune cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneOutcome {
+    /// Number of outbox rows deleted.
+    pub pruned: u64,
+}
+
+/// Background worker that prunes the `outbox` table on a tokio interval.
+///
+/// Construct with [`OutboxRetention::new`], optionally tune the
+/// behaviour with the builder-style `with_*` methods, then spawn
+/// `tokio::spawn(retention.run(cancel))` from the composition root.
+pub struct OutboxRetention {
+    pool: PgPool,
+    /// Number of days after `dispatched_at` before a row is pruned.
+    /// Zero disables pruning entirely — the test-safe default.
+    retention_days: u64,
+    /// Interval between prune cycles.
+    interval: Duration,
+    /// Optional metrics handle. Tests construct the worker without one.
+    metrics: Option<Arc<crate::metrics::Metrics>>,
+}
+
+impl OutboxRetention {
+    /// Build a new retention worker bound to the given pool.
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            pool,
+            retention_days: 0,
+            interval: Duration::from_secs(86_400),
+            metrics: None,
+        }
+    }
+
+    /// Set the retention window in days. `0` disables pruning.
+    #[must_use]
+    pub fn with_retention_days(mut self, days: u64) -> Self {
+        self.retention_days = days;
+        self
+    }
+
+    /// Set the cycle interval.
+    #[must_use]
+    pub fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Wire the shared metrics registry so prune cycles increment the
+    /// `recor_outbox_retention_pruned_total` counter.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<crate::metrics::Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Run the worker until `cancel` fires. Returns immediately (after
+    /// emitting an `info!`) when retention is disabled — there is no
+    /// reason to keep a sleeping task alive that will never do work.
+    #[instrument(skip_all, fields(retention_days = self.retention_days, interval_s = self.interval.as_secs()))]
+    pub async fn run(&self, cancel: CancellationToken) {
+        if self.retention_days == 0 {
+            info!(
+                "outbox retention worker disabled (OUTBOX_RETENTION_DAYS=0); declaration_events and outbox_dlq are NEVER touched"
+            );
+            // We still wait on the cancel token so the join handle in
+            // `main.rs` resolves on shutdown rather than hanging.
+            cancel.cancelled().await;
+            return;
+        }
+        info!(
+            retention_days = self.retention_days,
+            interval_s = self.interval.as_secs(),
+            "outbox retention worker started"
+        );
+        let mut tick = tokio::time::interval(self.interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // First tick fires immediately — perform one prune at startup so
+        // a long-stopped service catches up promptly rather than waiting
+        // a full interval after restart.
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("outbox retention worker shutting down");
+                    return;
+                }
+                _ = tick.tick() => {
+                    match self.prune_once().await {
+                        Ok(outcome) => {
+                            if let Some(m) = self.metrics.as_ref() {
+                                m.outbox_retention_pruned_total
+                                    .with_label_values(&["success"])
+                                    .inc_by(outcome.pruned);
+                            }
+                            info!(
+                                pruned = outcome.pruned,
+                                retention_days = self.retention_days,
+                                "outbox retention cycle complete"
+                            );
+                        }
+                        Err(e) => {
+                            if let Some(m) = self.metrics.as_ref() {
+                                m.outbox_retention_pruned_total
+                                    .with_label_values(&["error"])
+                                    .inc();
+                            }
+                            error!(error = ?e, "outbox retention cycle failed");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Execute one prune cycle. Public for tests + the future CronJob
+    /// shell-out wrapper.
+    ///
+    /// SQL: `DELETE FROM outbox WHERE dispatched_at IS NOT NULL AND
+    /// dispatched_at < NOW() - INTERVAL '<retention_days> days'`.
+    /// The retention worker NEVER deletes rows where `dispatched_at IS
+    /// NULL` — that would silently drop un-delivered events. It also
+    /// never touches `outbox_dlq` (forensic surface) or
+    /// `declaration_events` (event log, immutable by trigger).
+    pub async fn prune_once(&self) -> Result<PruneOutcome, sqlx::Error> {
+        if self.retention_days == 0 {
+            debug!("retention disabled; prune_once is a no-op");
+            return Ok(PruneOutcome { pruned: 0 });
+        }
+        let days = i64::try_from(self.retention_days).unwrap_or(i64::MAX);
+        // sqlx 0.8 doesn't support binding an INTERVAL literal directly,
+        // so we compute the cutoff timestamp client-side and bind that.
+        // Using NOW() - ($1 days) inside the query would be cleaner but
+        // requires either CAST gymnastics or a string-interpolated
+        // interval; the explicit cutoff makes the test path easier too.
+        let cutoff_secs = days.saturating_mul(86_400);
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM outbox
+            WHERE dispatched_at IS NOT NULL
+              AND dispatched_at < NOW() - make_interval(secs => $1::double precision)
+            "#,
+            cutoff_secs as f64,
+        )
+        .execute(&self.pool)
+        .await?;
+        let pruned = result.rows_affected();
+        if pruned == 0 {
+            debug!("outbox retention prune: no eligible rows");
+        } else {
+            // A loud info! at debug! level instead — the run() loop
+            // already emits an info! per cycle. Avoid duplicate
+            // signal on the operational stream.
+            debug!(pruned, "outbox retention prune: rows deleted");
+        }
+        Ok(PruneOutcome { pruned })
+    }
+}
+
+/// Helper for `main.rs`: warns when retention is enabled but the
+/// interval is suspiciously short (< 60 seconds) — usually a
+/// configuration mistake (someone passing the value in days where the
+/// env expected seconds). Loud at startup, never silent.
+pub fn warn_if_misconfigured(retention_days: u64, interval_secs: u64) {
+    if retention_days > 0 && interval_secs < 60 {
+        warn!(
+            interval_s = interval_secs,
+            "OUTBOX_RETENTION_INTERVAL_SECONDS is very short (<60s); did you mean to express it in minutes?"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn disabled_when_days_zero() {
+        // Constructed with default — retention disabled. Wrapped in
+        // tokio::test because sqlx's `connect_lazy` requires a tokio
+        // context even though no network call is performed.
+        let worker = OutboxRetention::new(mock_pool());
+        assert_eq!(worker.retention_days, 0);
+        let configured = OutboxRetention::new(mock_pool())
+            .with_retention_days(30)
+            .with_interval(Duration::from_secs(3600));
+        assert_eq!(configured.retention_days, 30);
+        assert_eq!(configured.interval, Duration::from_secs(3600));
+    }
+
+    #[tokio::test]
+    async fn run_with_disabled_retention_returns_on_cancel() {
+        // With retention_days=0 the worker logs "disabled" and waits
+        // for the cancel token. Asserts the cancel path completes.
+        let cancel = CancellationToken::new();
+        let worker = OutboxRetention::new(mock_pool());
+        let cancel_c = cancel.clone();
+        let h = tokio::spawn(async move { worker.run(cancel_c).await });
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), h)
+            .await
+            .expect("disabled retention worker must shut down on cancel");
+    }
+
+    #[tokio::test]
+    async fn prune_once_is_noop_when_disabled() {
+        // Verifies prune_once short-circuits before touching the
+        // pool, so a worker constructed in a unit test with
+        // retention_days=0 cannot accidentally hit the database.
+        let worker = OutboxRetention::new(mock_pool());
+        let outcome = worker
+            .prune_once()
+            .await
+            .expect("disabled prune_once must succeed without DB access");
+        assert_eq!(outcome.pruned, 0);
+    }
+
+    #[test]
+    fn warn_helper_does_not_panic() {
+        warn_if_misconfigured(0, 0);
+        warn_if_misconfigured(30, 86_400);
+        warn_if_misconfigured(30, 5); // emits a warn!; no panic
+    }
+
+    /// Construct a `PgPool` that is never connected to anything. Used
+    /// by unit tests that only exercise the builder + the cancel-path
+    /// (which never executes SQL). Created lazily without a runtime
+    /// pool would normally panic; sqlx exposes a no-network alternative
+    /// via `PgPoolOptions::new().connect_lazy(...)` which we use.
+    fn mock_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://does-not-matter:5432/x")
+            .expect("connect_lazy cannot fail without a network call")
+    }
+}

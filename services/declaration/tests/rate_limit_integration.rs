@@ -174,6 +174,9 @@ fn test_config(
         // R-DECL-8: empty disables the gRPC server in this REST-only
         // test harness.
         grpc_bind_addr: String::new(),
+        // COMP-2: retention disabled in tests.
+        outbox_retention_days: 0,
+        outbox_retention_interval_seconds: 86_400,
     }
 }
 

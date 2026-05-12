@@ -196,6 +196,9 @@ fn test_config(rest_bind_addr: &str, database_url: &str, grpc_bind_addr: &str) -
         // because we want to share `AppState` across both transports
         // and the harness already manages its own task lifecycle.
         grpc_bind_addr: grpc_bind_addr.to_string(),
+        // COMP-2: retention disabled in tests.
+        outbox_retention_days: 0,
+        outbox_retention_interval_seconds: 86_400,
     }
 }
 

@@ -32,6 +32,12 @@ fail-close at the boundary.
   not the compile-time `query!` macro — see migration files and
   `R-DECL-7` follow-up for moving to `.sqlx/` cache).
 - Events: declarations are event-sourced. Today: `declaration.submitted.v1`.
+- **Audit immutability (COMP-2):** `declaration_events` is enforced
+  append-only by BEFORE UPDATE/DELETE/TRUNCATE triggers (migration
+  `0007_audit_log_immutability.sql`) + REVOKE on PUBLIC. The outbox
+  retention worker (`infrastructure/retention.rs`) prunes
+  `outbox` rows 30 days after `dispatched_at`; the event log and DLQ
+  are NEVER touched. See `docs/compliance/data-retention.md`.
 - Outbox: every event is written to `outbox` in the same transaction; a
   future outbox-relay worker publishes to Kafka.
 - gRPC contracts: `contracts/declaration.proto` (R-DECL-8 / #78).

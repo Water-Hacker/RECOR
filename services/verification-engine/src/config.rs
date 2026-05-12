@@ -88,6 +88,21 @@ pub struct Config {
     #[serde(default)]
     pub log_redaction: String,
 
+    /// COMP-2 — verification outbox retention worker: retention
+    /// window in days. Rows in `verification_outbox` whose
+    /// `dispatched_at` is older than this are pruned by the retention
+    /// worker. `0` DISABLES pruning entirely and is the safe default
+    /// for tests. The worker NEVER touches `verification_outbox_dlq`
+    /// (forensic surface) or `verification_cases` (append-only — see
+    /// migration 0003).
+    #[serde(default)]
+    pub outbox_retention_days: u64,
+
+    /// COMP-2 — verification outbox retention worker: interval
+    /// between prune cycles, in seconds. Default 86400 (daily).
+    #[serde(default = "default_outbox_retention_interval")]
+    pub outbox_retention_interval_seconds: u64,
+
     /// 64-hex-char (32-byte) BLAKE3 keyed-MAC key for redaction.
     /// REQUIRED in non-dev environments when redaction is enabled.
     /// Dev falls back to a random per-restart key with a startup warn.
@@ -149,3 +164,4 @@ fn default_secret() -> SecretString { SecretString::from(String::new()) }
 fn default_writeback_poll_interval() -> u64 { 5 }
 fn default_writeback_max_attempts() -> i32 { 12 }
 fn default_subject_claim() -> String { "sub".to_string() }
+fn default_outbox_retention_interval() -> u64 { 86_400 }
