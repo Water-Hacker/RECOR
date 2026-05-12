@@ -20,6 +20,9 @@ pub struct Config {
     pub environment: String,
     #[serde(default)]
     pub oidc_issuer_url: String,
+    /// OIDC audience claim — required whenever `oidc_issuer_url` is set.
+    #[serde(default)]
+    pub oidc_audience: String,
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
 
@@ -66,6 +69,9 @@ impl Config {
         if cfg.environment != "dev" && cfg.oidc_issuer_url.is_empty() {
             return Err(ConfigError::OidcRequiredOutsideDev);
         }
+        if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
+            return Err(ConfigError::OidcAudienceRequired);
+        }
         Ok(cfg)
     }
     pub fn is_dev(&self) -> bool { self.environment == "dev" }
@@ -79,6 +85,8 @@ pub enum ConfigError {
     Deserialise(#[source] config::ConfigError),
     #[error("OIDC_ISSUER_URL is required outside dev")]
     OidcRequiredOutsideDev,
+    #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
+    OidcAudienceRequired,
 }
 
 fn default_bind_addr() -> String { "0.0.0.0:8081".to_string() }

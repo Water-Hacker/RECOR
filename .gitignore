@@ -45,6 +45,12 @@ secrets/
 !secrets/*.enc.yaml
 !secrets/.gitkeep
 
+# Exception: test-only RSA keys for OIDC verification fixtures. These
+# are NEVER used to sign anything in production; they exist solely to
+# let unit/integration tests run without depending on an external OIDC
+# provider. Stable bytes → reproducible tests.
+!services/*/tests/fixtures/test_rsa_*.pem
+
 # Database
 *.sqlite
 *.db

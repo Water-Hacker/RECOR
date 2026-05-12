@@ -10,7 +10,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use recor_verification_engine::api::AppState;
+use recor_verification_engine::api::{AppState, OidcVerifier};
 use recor_verification_engine::application::{
     stages::{
         AdverseMediaStub, CrossSourceStub, IdentityAuthenticationStage, PatternDetectionStub,
@@ -65,11 +65,28 @@ async fn main() -> Result<()> {
     let submit = Arc::new(SubmitVerificationUseCase::new(orchestrator.clone(), repository.clone()));
     let get = Arc::new(GetVerificationUseCase::new(repository.clone()));
 
+    // OIDC verifier — discovered at startup. `None` in dev when
+    // OIDC_ISSUER_URL is unset; production refuses at config load.
+    let oidc = if cfg.oidc_issuer_url.is_empty() {
+        info!("OIDC verifier disabled (dev mode — OIDC_ISSUER_URL unset)");
+        None
+    } else {
+        let v = OidcVerifier::discover(
+            cfg.oidc_issuer_url.clone(),
+            cfg.oidc_audience.clone(),
+        )
+        .await
+        .context("OIDC discovery against configured issuer")?;
+        info!(issuer = %cfg.oidc_issuer_url, audience = %cfg.oidc_audience, "OIDC verifier ready");
+        Some(v)
+    };
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
         repository,
         is_dev: cfg.is_dev(),
+        oidc,
     };
 
     let router = recor_verification_engine::api::router(app_state, &cfg);

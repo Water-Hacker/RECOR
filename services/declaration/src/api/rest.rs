@@ -21,11 +21,12 @@ use tower_http::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::api::auth::{auth_middleware, Principal};
+use crate::api::auth::{auth_middleware, AuthConfig, Principal};
 use crate::api::dto::{
     GetDeclarationResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
 };
 use crate::api::internal::{handle_verification_outcome, InternalAppState};
+use crate::api::OidcVerifier;
 use crate::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
 };
@@ -43,17 +44,25 @@ pub struct AppState {
     pub base_url: String,
     pub is_dev: bool,
     pub idempotency_ttl_seconds: i64,
+    /// OIDC verifier. `None` is only acceptable in dev environments
+    /// (the config layer refuses to start otherwise). Bearer-token
+    /// requests with `oidc = None` are rejected at the middleware.
+    pub oidc: Option<Arc<OidcVerifier>>,
 }
 
 pub fn router(state: AppState, cfg: &Config) -> Router {
-    let is_dev = state.is_dev;
+    let auth_state = AuthConfig {
+        is_dev: state.is_dev,
+        oidc: state.oidc.clone(),
+    };
 
     let protected = Router::new()
         .route("/v1/declarations", post(submit_declaration))
         .route("/v1/declarations/{declaration_id}", get(get_declaration))
-        .route_layer(axum::middleware::from_fn(move |req, next| {
-            auth_middleware(is_dev, req, next)
-        }))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
         .with_state(state.clone());
 
     // Internal HMAC-authenticated webhook for the Verification Engine's

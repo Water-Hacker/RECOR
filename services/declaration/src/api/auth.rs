@@ -1,27 +1,34 @@
 //! Authentication. Two paths:
 //!
 //!   - Production: OIDC Bearer-token verification against the
-//!     configured issuer's JWKS (TODO: wire up; placeholder verifier
-//!     returns claims pulled from the token's payload without
-//!     signature verification when env=dev).
+//!     configured issuer's JWKS. Real signature + iss + aud + exp +
+//!     nbf checking via `crate::api::oidc::OidcVerifier`. The verifier
+//!     is constructed at startup; the middleware shares an `Arc<_>`.
 //!   - Dev: an HS256-equivalent static key shortcut is NOT used; we
 //!     accept a special `X-Recor-Dev-Principal` header that asserts
 //!     the principal name. This is gated by `Config::is_dev()` and
 //!     refused otherwise.
 //!
+//! D14 (fail-closed): bearer-token requests with no verifier configured
+//! are rejected with 401, not silently allowed through. The config
+//! layer refuses to start outside dev when `OIDC_ISSUER_URL` is empty,
+//! so a production deployment cannot land in the "no verifier" state.
+//!
 //! D17: every request that reaches the protected handler MUST have a
-//! verified principal in the request extensions. Handler signatures
-//! that take `Principal` will fail to compile if the auth layer is
-//! omitted.
+//! verified principal in the request extensions.
+
+use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::Response,
 };
+use tracing::warn;
 
+use crate::api::oidc::{OidcVerifier, VerificationError};
 use crate::error::ServiceError;
 
 #[derive(Debug, Clone)]
@@ -36,22 +43,34 @@ pub enum PrincipalSource {
     Bearer,
 }
 
+/// Shared state for the auth middleware. `None` for `oidc` means no
+/// verifier was configured at startup — bearer tokens are then rejected.
+/// Dev-header path still works if `is_dev == true`.
+#[derive(Clone)]
+pub struct AuthConfig {
+    pub is_dev: bool,
+    pub oidc: Option<Arc<OidcVerifier>>,
+}
+
 /// Axum middleware that resolves the request principal and inserts it
 /// into request extensions. Handlers extract it via the `RequirePrincipal`
 /// extractor.
 pub async fn auth_middleware(
-    is_dev: bool,
+    State(state): State<AuthConfig>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, ServiceError> {
-    let principal = resolve_principal(&req.headers(), is_dev)?;
+    let principal = resolve_principal(req.headers(), &state).await?;
     req.extensions_mut().insert(principal);
     Ok(next.run(req).await)
 }
 
-fn resolve_principal(headers: &HeaderMap, is_dev: bool) -> Result<Principal, ServiceError> {
+async fn resolve_principal(
+    headers: &HeaderMap,
+    state: &AuthConfig,
+) -> Result<Principal, ServiceError> {
     // Dev-only shortcut: X-Recor-Dev-Principal header.
-    if is_dev {
+    if state.is_dev {
         if let Some(value) = headers.get("x-recor-dev-principal") {
             let subject = value
                 .to_str()
@@ -70,10 +89,7 @@ fn resolve_principal(headers: &HeaderMap, is_dev: bool) -> Result<Principal, Ser
         }
     }
 
-    // Bearer token path. Verification is not yet wired (depends on the
-    // future OIDC adapter ticket). For now we extract the sub claim
-    // without verifying signature — refused outside dev by the
-    // structural is_dev() check in Config.
+    // Bearer token path.
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -83,34 +99,35 @@ fn resolve_principal(headers: &HeaderMap, is_dev: bool) -> Result<Principal, Ser
         return Err(ServiceError::AuthenticationRequired);
     };
 
-    // Minimal JWT parser: split, base64-decode the payload, pull `sub`.
-    // ONLY for the dev/integration-test path. Production OIDC ticket
-    // replaces this with full signature + issuer + audience verification.
-    let claims = peek_unverified_claims(token)
-        .ok_or_else(|| ServiceError::AuthenticationRequired)?;
-    let subject = claims.get("sub")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ServiceError::AuthenticationRequired)?
-        .to_string();
-    if subject.is_empty() {
+    let Some(verifier) = state.oidc.as_ref() else {
+        // Defensive: should not be reachable in production because
+        // Config refuses to start when OIDC_ISSUER_URL is unset and
+        // environment != "dev". Log loudly if we see it anyway.
+        warn!("bearer token received but no OIDC verifier configured");
+        return Err(ServiceError::AuthenticationRequired);
+    };
+
+    let claims = verifier.verify(token).await.map_err(|e| {
+        warn!(error = %e, "bearer token failed verification");
+        match e {
+            VerificationError::TokenInvalid(_)
+            | VerificationError::MalformedHeader
+            | VerificationError::MissingKid
+            | VerificationError::UnknownKid(_)
+            | VerificationError::UnsupportedAlgorithm(_)
+            | VerificationError::NoUsableKey => ServiceError::AuthenticationRequired,
+            VerificationError::DiscoveryFailed { .. }
+            | VerificationError::JwksFetchFailed { .. } => ServiceError::Internal,
+        }
+    })?;
+
+    if claims.sub.trim().is_empty() {
         return Err(ServiceError::AuthenticationRequired);
     }
     Ok(Principal {
-        subject,
+        subject: claims.sub,
         source: PrincipalSource::Bearer,
     })
-}
-
-/// Peek at a JWT's claims without verification. Returns None if the
-/// token does not look like a JWT.
-fn peek_unverified_claims(token: &str) -> Option<serde_json::Value> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let payload = URL_SAFE_NO_PAD.decode(parts[1].as_bytes()).ok()?;
-    serde_json::from_slice(&payload).ok()
 }
 
 // Suppress unused warnings during partial build.

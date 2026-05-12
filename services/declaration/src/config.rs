@@ -50,6 +50,12 @@ pub struct Config {
     #[serde(default)]
     pub oidc_issuer_url: String,
 
+    /// OIDC audience claim — must match the `aud` claim on every
+    /// accepted token. Required whenever `oidc_issuer_url` is set;
+    /// the config layer enforces this.
+    #[serde(default)]
+    pub oidc_audience: String,
+
     /// HTTP request timeout in seconds.
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
@@ -96,6 +102,9 @@ impl Config {
         if cfg.environment != "dev" && cfg.oidc_issuer_url.is_empty() {
             return Err(ConfigError::OidcRequiredOutsideDev);
         }
+        if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
+            return Err(ConfigError::OidcAudienceRequired);
+        }
         if !cfg.relay_webhook_url.is_empty() {
             use secrecy::ExposeSecret;
             if cfg.relay_hmac_secret.expose_secret().is_empty() {
@@ -122,6 +131,8 @@ pub enum ConfigError {
     Deserialise(#[source] config::ConfigError),
     #[error("OIDC_ISSUER_URL is required outside dev")]
     OidcRequiredOutsideDev,
+    #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
+    OidcAudienceRequired,
     #[error("RELAY_HMAC_SECRET is required when RELAY_WEBHOOK_URL is set")]
     RelaySecretRequired,
 }
