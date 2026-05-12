@@ -118,7 +118,7 @@ order; dependencies between tickets are called out per-ticket.
 - **Brief:**
   > Add a PII-redacting tracing layer to both services + the recor-auth-oidc crate. The layer intercepts span field values during recording and rewrites values matching known PII shapes (SPIFFE URIs, UUIDs in person_id/principal context, hex receipt hashes) into stable redacted forms (BLAKE3-keyed-MAC of the original; key from env LOG_REDACTION_KEY). Configurable via LOG_REDACTION={enabled, disabled-for-dev}. Default to enabled; integration-smoke uses disabled-for-dev so test assertions don't have to deal with redaction. Add unit tests using a custom Subscriber that records intercepted spans and asserts the field values are redacted. The redaction key is generated at startup from LOG_REDACTION_KEY env (REQUIRED in non-dev environments, generated random in dev with a warning).
 
-#### OPS-3 — Security headers on the portal ⚪
+#### OPS-3 — Security headers on the portal 🟡
 - **Why:** Today the portal nginx config serves the SPA without CSP, HSTS, X-Frame-Options, Permissions-Policy.
 - **Scope:**
   - Update `applications/declarant-portal/nginx.conf` to set:
