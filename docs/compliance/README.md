@@ -21,8 +21,8 @@ operations, and counsel each rely on.
 | Document | Purpose | Status |
 |---|---|---|
 | `gdpr-procedures.md` | Operational procedures for the six GDPR data-subject rights, mapped to the platform's endpoints and the OHADA AML/CFT carve-outs. | Draft, pending counsel sign-off (COMP-1). |
-| `data-classification.md` | Per-column inventory: Public / Internal / Confidential / PII / Sensitive-PII. | Not yet drafted (COMP-3). |
-| `data-retention.md` | Retention policy for every persisted store (event log, outbox, idempotency, projections, audit chain). | Not yet drafted (COMP-2). |
+| `data-classification.md` | Per-column inventory: Public / Internal / Confidential / PII / Sensitive-PII. | Draft, pending counsel sign-off (COMP-3). |
+| `data-retention.md` | Retention policy for every persisted store (event log, outbox, idempotency, projections, audit chain). | In force from Phase 0 (COMP-2 shipped). |
 | `regulatory-mapping.md` | Endpoint → legal-provision map under Cameroon law + OHADA + FATF Rec 24. | Not yet drafted (COMP-4). |
 
 ## How to use this directory
