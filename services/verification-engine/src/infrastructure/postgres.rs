@@ -1,7 +1,7 @@
 //! PostgreSQL adapter for VerificationCase persistence.
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -36,7 +36,9 @@ impl VerificationRepository for PostgresVerificationRepository {
         let authenticity_plausibility = case.fused_authenticity.plausibility_true();
         let risk_belief = case.fused_risk.belief_true();
 
-        sqlx::query(
+        let lane = case.lane.as_str();
+        let total_duration_ms = case.total_duration_ms as i64;
+        sqlx::query!(
             r#"
             INSERT INTO verification_cases (
                 case_id, declaration_id, entity_id, declarant_principal,
@@ -47,19 +49,19 @@ impl VerificationRepository for PostgresVerificationRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (case_id) DO NOTHING
             "#,
+            case.case_id.0,
+            case.declaration.declaration_id,
+            case.declaration.entity_id,
+            case.declaration.declarant_principal,
+            lane,
+            authenticity_belief,
+            authenticity_plausibility,
+            risk_belief,
+            payload,
+            case.created_at,
+            case.completed_at,
+            total_duration_ms,
         )
-        .bind(case.case_id.0)
-        .bind(case.declaration.declaration_id)
-        .bind(case.declaration.entity_id)
-        .bind(&case.declaration.declarant_principal)
-        .bind(case.lane.as_str())
-        .bind(authenticity_belief)
-        .bind(authenticity_plausibility)
-        .bind(risk_belief)
-        .bind(&payload)
-        .bind(case.created_at)
-        .bind(case.completed_at)
-        .bind(case.total_duration_ms as i64)
         .execute(&mut *tx)
         .await?;
 
@@ -82,7 +84,9 @@ impl VerificationRepository for PostgresVerificationRepository {
                 .expect("OffsetDateTime formats to RFC3339"),
         });
 
-        sqlx::query(
+        let event_id = Uuid::now_v7();
+        let partition_key = case.declaration.declaration_id.to_string();
+        sqlx::query!(
             r#"
             INSERT INTO verification_outbox (
                 event_id, event_type, event_version, aggregate_id, partition_key, payload
@@ -90,13 +94,13 @@ impl VerificationRepository for PostgresVerificationRepository {
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (event_id) DO NOTHING
             "#,
+            event_id,
+            "verification.completed.v1",
+            1_i32,
+            case.declaration.declaration_id,
+            partition_key,
+            writeback_payload,
         )
-        .bind(Uuid::now_v7())
-        .bind("verification.completed.v1")
-        .bind(1_i32)
-        .bind(case.declaration.declaration_id)
-        .bind(case.declaration.declaration_id.to_string())
-        .bind(&writeback_payload)
         .execute(&mut *tx)
         .await?;
 
@@ -109,18 +113,15 @@ impl VerificationRepository for PostgresVerificationRepository {
         &self,
         id: VerificationCaseId,
     ) -> Result<Option<VerificationCase>, RepositoryError> {
-        let row_opt = sqlx::query(
+        let row_opt = sqlx::query!(
             r#"SELECT case_payload FROM verification_cases WHERE case_id = $1"#,
+            id.0,
         )
-        .bind(id.0)
         .fetch_optional(&self.pool)
         .await?;
         match row_opt {
             None => Ok(None),
-            Some(row) => {
-                let payload: serde_json::Value = row.try_get("case_payload")?;
-                Ok(Some(serde_json::from_value(payload)?))
-            }
+            Some(row) => Ok(Some(serde_json::from_value(row.case_payload)?)),
         }
     }
 
@@ -129,15 +130,12 @@ impl VerificationRepository for PostgresVerificationRepository {
         &self,
         declaration_id: Uuid,
     ) -> Result<Option<VerificationCaseId>, RepositoryError> {
-        let row_opt = sqlx::query(
+        let row_opt = sqlx::query!(
             r#"SELECT case_id FROM verification_cases WHERE declaration_id = $1"#,
+            declaration_id,
         )
-        .bind(declaration_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row_opt.map(|r| {
-            let id: Uuid = r.get("case_id");
-            VerificationCaseId(id)
-        }))
+        Ok(row_opt.map(|r| VerificationCaseId(r.case_id)))
     }
 }

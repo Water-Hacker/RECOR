@@ -168,7 +168,7 @@ async fn healthz() -> impl IntoResponse {
 async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     // Cheap readiness: confirms the idempotency-store pool is alive,
     // which by transitivity means the database is reachable.
-    let probe = sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(state.idempotency.pool());
+    let probe = sqlx::query_scalar!(r#"SELECT 1 AS "probe!: i32""#).fetch_one(state.idempotency.pool());
     match probe.await {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ready"}))),
         Err(e) => {

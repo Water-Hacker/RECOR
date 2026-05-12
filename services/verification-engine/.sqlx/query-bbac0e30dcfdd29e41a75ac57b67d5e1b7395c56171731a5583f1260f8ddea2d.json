@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO mock_bunec_persons (person_id, canonical_full_name, nationality)\n               VALUES ($1, $2, $3) ON CONFLICT (person_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bbac0e30dcfdd29e41a75ac57b67d5e1b7395c56171731a5583f1260f8ddea2d"
+}

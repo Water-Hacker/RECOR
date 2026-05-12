@@ -20,9 +20,8 @@
 use std::time::Duration;
 
 use hmac::{Hmac, Mac};
-use serde_json::Value as JsonValue;
 use sha2::Sha256;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -101,7 +100,7 @@ impl OutboxRelay {
     /// rows failed (errors logged); Err only on a structural problem like
     /// a DB outage.
     async fn process_batch(&self) -> Result<(), sqlx::Error> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT id, event_id, event_type, event_version, aggregate_id, payload, dispatch_attempts
             FROM outbox
@@ -110,8 +109,8 @@ impl OutboxRelay {
             ORDER BY created_at ASC
             LIMIT 32
             "#,
+            self.max_attempts,
         )
-        .bind(self.max_attempts)
         .fetch_all(&self.pool)
         .await?;
 
@@ -121,13 +120,13 @@ impl OutboxRelay {
         debug!(batch_size = rows.len(), "relay batch");
 
         for row in rows {
-            let id: uuid::Uuid = row.get("id");
-            let event_id: uuid::Uuid = row.get("event_id");
-            let event_type: String = row.get("event_type");
-            let event_version: i32 = row.get("event_version");
-            let aggregate_id: uuid::Uuid = row.get("aggregate_id");
-            let payload: JsonValue = row.get("payload");
-            let prior_attempts: i32 = row.get("dispatch_attempts");
+            let id = row.id;
+            let event_id = row.event_id;
+            let event_type = row.event_type;
+            let event_version = row.event_version;
+            let aggregate_id = row.aggregate_id;
+            let payload = row.payload;
+            let prior_attempts = row.dispatch_attempts;
 
             let envelope = serde_json::json!({
                 "event_id": event_id,
@@ -152,13 +151,13 @@ impl OutboxRelay {
 
             match result {
                 Ok(resp) if resp.status().is_success() => {
-                    sqlx::query(
+                    sqlx::query!(
                         r#"UPDATE outbox
                            SET dispatched_at = NOW(),
                                dispatch_attempts = dispatch_attempts + 1
                            WHERE id = $1"#,
+                        id,
                     )
-                    .bind(id)
                     .execute(&self.pool)
                     .await?;
                     info!(
@@ -219,14 +218,14 @@ impl OutboxRelay {
     }
 
     async fn record_failure(&self, id: uuid::Uuid, message: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"UPDATE outbox
                SET dispatch_attempts = dispatch_attempts + 1,
                    last_error = $2
                WHERE id = $1"#,
+            id,
+            message,
         )
-        .bind(id)
-        .bind(message)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -243,7 +242,7 @@ impl OutboxRelay {
         last_error: &str,
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO outbox_dlq (
                 id, event_id, event_type, event_version,
@@ -259,14 +258,13 @@ impl OutboxRelay {
             FROM outbox
             WHERE id = $1
             "#,
+            id,
+            attempts,
+            last_error,
         )
-        .bind(id)
-        .bind(attempts)
-        .bind(last_error)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(r#"DELETE FROM outbox WHERE id = $1"#)
-            .bind(id)
+        sqlx::query!(r#"DELETE FROM outbox WHERE id = $1"#, id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
