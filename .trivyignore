@@ -1,0 +1,42 @@
+# RÉCOR Trivy ignore file
+# =======================
+#
+# Consumed by the Trivy scan in `.github/workflows/publish-images.yaml`
+# (ticket CI-2). Entries here suppress a specific HIGH or CRITICAL CVE
+# from breaking the image-publish job.
+#
+# Format (one entry per line):
+#
+#   CVE-YYYY-NNNN  # <ticket>: <one-line rationale>; expires <YYYY-MM-DD>
+#
+# A `CVE-YYYY-NNNN` line on its own matches any path inside the image;
+# pin to a specific dependency by appending `<package>` (see the Trivy
+# docs for the path syntax).
+#
+# Doctrines:
+#   D7 no workarounds — an entry here is an explicit acknowledgement
+#                       that a HIGH/CRITICAL vulnerability is being
+#                       *temporarily* suppressed. Every entry MUST
+#                       reference an open ticket that tracks the real
+#                       remediation, AND an expiry date no further
+#                       than 30 days out. Entries without both are
+#                       grounds for review rejection.
+#   D14 fail-closed   — empty by default. Adding an entry weakens the
+#                       gate; do so only with explicit reviewer
+#                       sign-off and the runbook entry below updated.
+#   D20 supply chain  — every override here is a public, version-
+#                       controlled record. No silent suppressions.
+#
+# Procedure for adding an entry:
+#   1. Open an issue describing the CVE, the affected dependency, the
+#      attempted upstream fix, and why the fix is not yet viable.
+#   2. Add a single line to this file with the ticket reference and an
+#      expiry date in the comment.
+#   3. Update docs/runbooks/supply-chain.md § "Active suppressions"
+#      with the same information in a structured table.
+#   4. Open a follow-up to remove the entry before the expiry date.
+#
+# See docs/runbooks/supply-chain.md for the full audit + override
+# workflow.
+#
+# Active suppressions: (none)
