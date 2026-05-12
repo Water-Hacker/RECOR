@@ -73,6 +73,7 @@ From `.github/workflows/codeowners-validate.yaml`:
 `observability-smoke` is intentionally **not** in this list yet — OBS-2 in
 `docs/PRODUCTION-TODO.md` adds it once the smoke is reliable. Adding a
 flaky check fails-closed on every PR for the wrong reason (D14 inverted).
+See § "Deferred promotions" below for the current status of the gate.
 
 Language-specific gates (rust, go, ts) are **not** in this list yet because no
 production code exists. They are added in the tickets that introduce the
@@ -181,6 +182,55 @@ Every change to this spec is a substantive governance change:
   repository move to the consortium GitHub organisation.
 - **Anthropic API key signing** is out of scope for this branch-protection
   spec; that is covered by the inference gateway and Vault (V5 P18, V5 P21).
+
+## Deferred promotions
+
+A status check is promoted to required only after demonstrating **10
+consecutive green runs** against `main` (or against PRs targeting `main`).
+The heuristic guards D14 (fail-closed) from being inverted by infrastructure
+flakes: a flaky required check fails the merge gate for the wrong reason and
+trains reviewers to dismiss it, which defeats the gate entirely.
+
+Checks observed but not yet promoted live here until the 10-in-a-row gate
+is met. Re-evaluation cadence: every operator who runs
+`tools/ci/apply-branch-protection.sh` checks this table first.
+
+To re-check a deferred candidate:
+
+```bash
+gh run list --workflow=<workflow-file>.yaml --limit 20 \
+    --json name,conclusion,createdAt,status
+```
+
+| Context (job `name:`)        | Workflow                                            | Runs observed | Green-in-a-row | Last evaluated | Status   |
+|------------------------------|-----------------------------------------------------|---------------|----------------|----------------|----------|
+| `docker-compose smoke`       | `.github/workflows/observability-smoke.yaml`        | 4             | 0 (all failed) | 2026-05-12     | Deferred |
+
+Promotion procedure once the gate is met:
+
+1. Move the row out of this table.
+2. Add the context string to `required_status_checks.contexts` in
+   `tools/ci/apply-branch-protection.sh` and to the "Required status checks"
+   list above.
+3. Bump the "Applied state" count and add the new context to the numbered
+   list.
+4. Ship as a small docs+script PR (per OBS-2 in `docs/PRODUCTION-TODO.md`).
+5. After merge, an admin runs `tools/ci/apply-branch-protection.sh` against
+   the live ruleset. The script is idempotent.
+
+### OBS-2 evaluation note (2026-05-12)
+
+`docs/PRODUCTION-TODO.md` OBS-2 prescribes promoting `observability-smoke`
+to a required check. At the time of evaluation the workflow had **4 runs,
+all `conclusion: failure`** (`gh run list --workflow=observability-smoke.yaml
+--limit 20`). The runs failed during the stack bring-up steps of the F-007
+introduction PR and its follow-up branches; the failures are infrastructure
+hiccups, not contract violations, but they are nonetheless not green.
+Promotion is therefore **deferred** pending 10 consecutive green runs. The
+required-contexts list in `tools/ci/apply-branch-protection.sh` is
+unchanged by the OBS-2 PR; only the deferred-promotion table (this section)
+and the script's header comment / OBS-2 status comment are updated. A
+follow-up PR promotes the check once the 10-green-run gate is met.
 
 ## Applied state as of 2026-05-12
 
