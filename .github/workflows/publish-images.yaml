@@ -1,0 +1,167 @@
+# Publish + cosign-sign container images on merge to main.
+#
+# Ticket: CI-1 (docs/PRODUCTION-TODO.md § CI / supply chain).
+#
+# Trigger:
+#   - push to main (the canonical publish path)
+#   - workflow_dispatch (manual rebuild — e.g. base-image CVE refresh
+#     without a code change)
+#
+# Outputs:
+#   ghcr.io/water-hacker/recor-declaration         :latest, :${sha}
+#   ghcr.io/water-hacker/recor-verification-engine :latest, :${sha}
+#   ghcr.io/water-hacker/recor-portal              :latest, :${sha}
+#
+# Each image is keyless-signed by cosign using the workflow's OIDC
+# identity. The certificate `Subject` is this workflow file's URL, so
+# on-call can verify provenance via
+# `cosign verify --certificate-identity-regexp 'https://github.com/Water-Hacker/RECOR/.github/workflows/publish-images.yaml@.*' ...`.
+# See docs/runbooks/image-verification.md.
+#
+# Doctrines:
+#   D14 fail-closed   — matrix is fail-fast; no continue-on-error
+#   D16 observability — build duration + image size are surfaced to the
+#                       workflow summary
+#   D18 no secrets    — only GITHUB_TOKEN (auto-provisioned). No new
+#                       repo/org secrets introduced by this workflow.
+#   D20 SLSA target   — cosign signs every image; certificate identity
+#                       is pinnable to this workflow file's URL
+#
+# Permissions:
+#   contents: read       — checkout
+#   packages: write      — push to ghcr.io
+#   id-token: write      — cosign keyless OIDC
+
+name: publish-images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: water-hacker
+
+jobs:
+  build-and-sign:
+    name: build + sign / ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # D14: any single image failure aborts the run. We do NOT want a
+      # half-published set landing at the registry.
+      fail-fast: true
+      matrix:
+        include:
+          - image: recor-declaration
+            dockerfile: services/declaration/Dockerfile
+            context: .
+          - image: recor-verification-engine
+            dockerfile: services/verification-engine/Dockerfile
+            context: .
+          - image: recor-portal
+            dockerfile: applications/declarant-portal/Dockerfile
+            context: applications/declarant-portal
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: record build start time
+        id: start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: build + push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          provenance: true
+          sbom: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+          # GitHub Actions cache backend; mode=max keeps intermediate
+          # layers so dep-graph changes are the only re-build trigger.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: cosign sign (keyless, OIDC-bound)
+        env:
+          # Tells cosign to use the workflow's ambient OIDC identity
+          # rather than launching a browser. The id-token: write
+          # permission above provides the token.
+          COSIGN_EXPERIMENTAL: '1'
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          echo "Signing ${IMAGE_REF}"
+          cosign sign --yes "${IMAGE_REF}"
+
+      - name: surface build duration + image size (D16)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          START_EPOCH: ${{ steps.start.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          end_epoch=$(date +%s)
+          duration=$(( end_epoch - START_EPOCH ))
+          # `docker manifest inspect` returns the manifest JSON; the sum
+          # of layer sizes is the compressed image size on the wire.
+          size_bytes=$(docker manifest inspect "${IMAGE}" 2>/dev/null \
+            | jq '[.layers[].size] | add' || echo 0)
+          size_mb=$(awk -v b="${size_bytes}" 'BEGIN { printf "%.2f", b/1048576 }')
+          {
+            echo "### ${{ matrix.image }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Tag (immutable) | \`${IMAGE}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Build duration | ${duration}s |"
+            echo "| Compressed size | ${size_mb} MiB |"
+            echo ""
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: verify signature (post-publish self-check)
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          # The workflow's own ref — matches what on-call will check.
+          IDENTITY_REGEX: https://github.com/Water-Hacker/RECOR/.github/workflows/publish-images.yaml@.*
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          echo "Verifying ${IMAGE_REF}"
+          cosign verify \
+            --certificate-identity-regexp "${IDENTITY_REGEX}" \
+            --certificate-oidc-issuer "${ISSUER}" \
+            "${IMAGE_REF}" \
+            > /dev/null
+          echo "Signature verified for ${IMAGE_REF}"
