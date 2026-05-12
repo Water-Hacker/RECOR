@@ -14,6 +14,7 @@ import {
   type SignedDeclarationRequest,
 } from '../../lib/crypto';
 import { submitDeclaration, type SubmitDeclarationResponse, ApiError } from '../../lib/api';
+import { VerificationStatus } from './VerificationStatus';
 
 interface DeclarationFormProps {
   apiBaseUrl: string;
@@ -130,7 +131,13 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
   }
 
   if (submitMutation.isSuccess) {
-    return <ReceiptDisplay receipt={submitMutation.data} />;
+    return (
+      <VerificationStatus
+        apiBaseUrl={apiBaseUrl}
+        declarantPrincipal={form.getValues('declarant_principal')}
+        receipt={submitMutation.data}
+      />
+    );
   }
 
   return (
@@ -394,52 +401,3 @@ function OwnerRow({
   );
 }
 
-function ReceiptDisplay({ receipt }: { receipt: SubmitDeclarationResponse }) {
-  return (
-    <div
-      role="status"
-      className="space-y-4 rounded-lg border-2 border-recor-success bg-emerald-50 p-6"
-    >
-      <h2 className="text-2xl font-semibold text-emerald-900">
-        Declaration submitted
-      </h2>
-      <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-        <Receipt label="Declaration ID" value={receipt.declaration_id} mono />
-        <Receipt label="State" value={receipt.state} />
-        <Receipt label="Receipt hash (BLAKE3)" value={receipt.receipt_hash_hex} mono />
-        <Receipt label="Submitted at" value={receipt.submitted_at} mono />
-      </dl>
-      <p className="text-sm text-emerald-800">
-        Keep your declaration ID and receipt hash. The receipt hash is a
-        cryptographic commitment to the content you submitted — RÉCOR cannot
-        alter what you declared without invalidating this hash.
-      </p>
-      <button
-        type="button"
-        onClick={() => window.location.reload()}
-        className="rounded-md border border-emerald-700 bg-white px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-100"
-      >
-        File another declaration
-      </button>
-    </div>
-  );
-}
-
-function Receipt({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div>
-      <dt className="font-medium text-emerald-900">{label}</dt>
-      <dd className={clsx('mt-1 text-emerald-800', mono && 'font-mono break-all')}>
-        {value}
-      </dd>
-    </div>
-  );
-}
