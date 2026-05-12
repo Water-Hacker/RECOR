@@ -291,3 +291,42 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
         run: cargo build --workspace --release
+
+  # ─── Declarant portal / generated OpenAPI client ─────────────────────────
+  # R-PORT-7: the committed TypeScript client at
+  # applications/declarant-portal/src/generated/openapi.ts must match
+  # what `pnpm openapi:gen` produces from the committed spec at
+  # docs/openapi/declaration.json. Without this check, the portal can
+  # drift silently from the service contract and a future spec change
+  # might compile against a stale wire shape — exactly the kind of
+  # signature-verification break D15 forbids. Fail-closed: there is no
+  # `--allow-drift` escape.
+  portal-openapi-client-drift:
+    name: "portal / openapi-client-drift"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: applications/declarant-portal
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install pnpm 9.12.3
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.3"
+          run_install: false
+      - name: cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: portal-pnpm-${{ runner.os }}-${{ hashFiles('applications/declarant-portal/pnpm-lock.yaml') }}
+          restore-keys: |
+            portal-pnpm-${{ runner.os }}-
+      - name: install portal dependencies
+        run: pnpm install --frozen-lockfile
+      - name: regenerate generated client + diff against the committed snapshot
+        working-directory: .
+        run: ./tools/ci/check-portal-openapi-client-drift.sh
