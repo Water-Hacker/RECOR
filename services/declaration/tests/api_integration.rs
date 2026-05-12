@@ -19,6 +19,7 @@ use sqlx::postgres::PgPoolOptions;
 use testcontainers::ContainerAsync;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers_modules::testcontainers::ImageExt;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -39,7 +40,11 @@ struct TestService {
 }
 
 async fn spawn_service() -> TestService {
+    // Match production (`postgres:17-alpine`). The default
+    // testcontainers Postgres is `11-alpine` where `gen_random_uuid`
+    // is not in core; pg 13+ ships it directly so we pin to 17.
     let postgres_container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("start postgres container");
@@ -142,6 +147,8 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         writeback_hmac_secret: SecretString::from(String::new()),
         writeback_hmac_secret_old: SecretString::from(String::new()),
         admin_principals: String::new(),
+        rate_limit_per_min: 0,
+        rate_limit_burst: 0,
     }
 }
 
@@ -161,22 +168,22 @@ fn build_request_body(
 ) -> Value {
     let nonce_hex = hex::encode(uuid::Uuid::new_v4().as_bytes());
 
-    // Canonical bytes match what the server canonicalises in
-    // api::rest::canonical_payload_bytes.
-    let canonical = json!({
-        "entity_id": entity_id,
-        "declarant_principal": principal,
-        "declarant_role": "self",
-        "kind": "incorporation",
-        "effective_from": "2026-01-01",
-        "beneficial_owners": [{
-            "person_id": person_id,
-            "ownership_basis_points": 10000,
-            "interest_kind": "equity",
-        }],
-        "nonce_hex": &nonce_hex,
-    });
-    let canonical_bytes = serde_json::to_vec(&canonical).unwrap();
+    // Canonical bytes must match the server's struct field order
+    // EXACTLY (entity_id, declarant_principal, declarant_role, kind,
+    // effective_from, beneficial_owners, nonce_hex). `serde_json::Value`
+    // (from `json!{}`) sorts keys alphabetically; serialising a struct
+    // preserves declaration order. Assemble by hand to stay byte-parity
+    // with `api::rest::canonical_payload_bytes`.
+    let canonical_string = format!(
+        "{{\"entity_id\":\"{entity_id}\",\
+\"declarant_principal\":\"{principal}\",\
+\"declarant_role\":\"self\",\
+\"kind\":\"incorporation\",\
+\"effective_from\":\"2026-01-01\",\
+\"beneficial_owners\":[{{\"person_id\":\"{person_id}\",\"ownership_basis_points\":10000,\"interest_kind\":\"equity\"}}],\
+\"nonce_hex\":\"{nonce_hex}\"}}"
+    );
+    let canonical_bytes = canonical_string.into_bytes();
     let (signature_hex, public_key_hex) = sign_payload(key, &canonical_bytes);
 
     json!({

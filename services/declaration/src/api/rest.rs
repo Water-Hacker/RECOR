@@ -28,6 +28,7 @@ use crate::api::dto::{
     SupersedeDeclarationResponse,
 };
 use crate::api::internal::{handle_verification_outcome, InternalAppState};
+use crate::api::rate_limit::{build_governor_config, governor_layer};
 use crate::api::OidcVerifier;
 use crate::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
@@ -62,12 +63,37 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         oidc: state.oidc.clone(),
     };
 
+    // Rate limiting (OPS-1). Built once at router construction and
+    // applied ONLY to the two state-changing submit POSTs. GET
+    // endpoints, /healthz, /readyz, and /v1/internal/* are deliberately
+    // exempt — see api::rate_limit module docs. `None` here means
+    // rate limiting is disabled (RATE_LIMIT_PER_MIN=0); the safe
+    // default for tests and local dev.
+    let governor_config = build_governor_config(cfg.rate_limit_per_min, cfg.rate_limit_burst);
+
+    // Build the submit MethodRouters once; if rate limiting is enabled,
+    // wrap each with the governor layer at the route level. Applying
+    // `route_layer(governor)` here (vs at the Router level) ensures
+    // the limiter is scoped to just these two POST methods — the GET
+    // on /v1/declarations/{declaration_id} stays exempt so the portal
+    // can poll verification status every ~3s without self-DoSing.
+    let submit_route = if let Some(cfg) = governor_config.clone() {
+        post(submit_declaration).route_layer(governor_layer(cfg))
+    } else {
+        post(submit_declaration)
+    };
+    let supersede_route = if let Some(cfg) = governor_config {
+        post(supersede_declaration).route_layer(governor_layer(cfg))
+    } else {
+        post(supersede_declaration)
+    };
+
     let protected = Router::new()
-        .route("/v1/declarations", post(submit_declaration))
+        .route("/v1/declarations", submit_route)
         .route("/v1/declarations/{declaration_id}", get(get_declaration))
         .route(
             "/v1/declarations/{declaration_id}/supersede",
-            post(supersede_declaration),
+            supersede_route,
         )
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),

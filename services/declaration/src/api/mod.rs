@@ -5,6 +5,7 @@ pub mod dlq;
 pub mod dto;
 pub mod internal;
 pub mod oidc;
+pub mod rate_limit;
 pub mod rest;
 
 pub use dlq::{DlqAdminState, list_dlq, replay_dlq};

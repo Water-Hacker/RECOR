@@ -74,6 +74,10 @@ hmac.workspace = true
 sha2.workspace = true
 reqwest.workspace = true
 
+# Rate limiting (OPS-1)
+tower_governor.workspace = true
+governor.workspace = true
+
 # Note: jsonwebtoken + lru are consumed transitively via recor-auth-oidc;
 # they're still declared here when needed by code outside the verifier.
 
@@ -86,3 +90,5 @@ testcontainers-modules.workspace = true
 serde_path_to_error = "0.1"
 ed25519-dalek.workspace = true
 jsonwebtoken.workspace = true
+# Used in rate_limit unit tests to read response bodies.
+http-body-util = "0.1"

@@ -83,6 +83,14 @@ hmac = "0.12"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# Rate limiting (OPS-1). Token-bucket via tower-governor; we key the
+# limiter on the authenticated Principal::subject — see
+# `services/declaration/src/api/rate_limit.rs`. We also pull in the
+# underlying `governor` crate directly so we can name middleware types
+# (e.g. `NoOpMiddleware`) on our wrapper.
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
+governor = "0.10"
+
 # OIDC: RS256/ES256/EdDSA JWT signature + claim verification, JWKS fetching.
 jsonwebtoken = "9"
 # LRU cache for verified tokens (R-AUTH-4).
