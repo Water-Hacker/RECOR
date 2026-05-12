@@ -52,6 +52,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/declarations/by-principal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Data-subject access (COMP-1). Returns every declaration RÉCOR holds where the authenticated principal is the declarant. The principal is sourced exclusively from the authenticated session (D17) — no path parameter, no body, no query string. Implements GDPR right-of-access and data-portability rights; see docs/compliance/gdpr-procedures.md. Each row carries its receipt_hash_hex so the declarant can re-verify the receipt offline (D15). */
+        get: operations["listDeclarationsByPrincipal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/declarations/{declaration_id}": {
         parameters: {
             query?: never;
@@ -358,6 +375,35 @@ export interface components {
          * @enum {string}
          */
         DeclarationState: "draft" | "submitted" | "in_verification" | "accepted" | "rejected" | "superseded";
+        /**
+         * @description Response body for `GET /v1/declarations/by-principal`. The
+         *     declarant receives every declaration where they appear as the
+         *     declarant_principal, plus the principal subject the registry
+         *     resolved them under. Implements the GDPR right-of-access and
+         *     data-portability rights (see `docs/compliance/gdpr-procedures.md`).
+         */
+        DeclarationsByPrincipalResponse: {
+            /**
+             * @description Total count of declarations returned. Provided as a convenience
+             *     for portal UIs that want to display "you have N records on file"
+             *     without iterating the array length.
+             */
+            count: number;
+            /**
+             * @description Every declaration in the registry where the authenticated
+             *     principal is the declarant. Each row carries its
+             *     `receipt_hash_hex` so the declarant can re-verify offline
+             *     (D15 cryptographic provenance).
+             */
+            declarations: components["schemas"]["GetDeclarationResponse"][];
+            /**
+             * @description Principal subject the registry resolved the caller under.
+             *     Sourced from the authenticated session, never from a request
+             *     parameter; echoed back so the declarant can confirm which
+             *     identity this view represents.
+             */
+            principal: string;
+        };
         DlqItem: {
             /** Format: uuid */
             aggregate_id: string;
@@ -794,6 +840,44 @@ export interface operations {
             };
             /** @description Rate-limited (OPS-1; token-bucket per principal) */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal failure */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listDeclarationsByPrincipal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every declaration the authenticated principal is the declarant on, most-recent first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeclarationsByPrincipalResponse"];
+                };
+            };
+            /** @description Missing/invalid bearer token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
