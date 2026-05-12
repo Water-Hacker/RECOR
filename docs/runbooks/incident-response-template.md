@@ -21,6 +21,48 @@ A page that resolves in < 5 minutes with no user impact is a
 **near-miss** and gets a near-miss note (see § "Near-miss notes" at
 the bottom), not a full post-mortem.
 
+### If the trigger is a pen-test finding
+
+If the incident was triggered by an external penetration-test
+finding (PEN-1, `docs/security/pen-test-prep.md` /
+`docs/security/pen-test-rules-of-engagement.md`), the post-mortem
+flow is the same as for any other incident, with these differences:
+
+- **Severity floor**: a Critical or High finding from the vendor
+  that the engineering team independently reproduces (per D17 and
+  RoE § 13) is at minimum a SEV-2 even if no user was affected,
+  because the gap existed in production code. Medium and Low
+  findings file as post-engagement tickets in `docs/PRODUCTION-TODO.md`
+  rather than incidents.
+- **Data integrity field**: defaults to `possibly-affected` for any
+  Critical / High finding until the engineering team's reproduction
+  confirms otherwise. Audit the affected paths even if the vendor
+  did not exfiltrate; the vendor's restraint is not the platform's
+  defence.
+- **External communications**: governed by the engagement's
+  disclosure protocol (RoE § 10). The 90-day embargo holds for
+  external comms; internal comms within the consortium follow the
+  normal channel. **Do not publish a public notice during the
+  embargo without security-team lead + Vendor concurrence.**
+- **Regulatory reporting obligation**: re-check. Some pen-test
+  findings may trigger ANIF / BEAC notification obligations that
+  the routine incident flow does not pattern-match against; the
+  security-team lead consults counsel.
+- **Action items**: every Critical / High finding closes with a
+  mitigation PR within the engagement's embargo window. The
+  post-mortem links the mitigation PR; the vendor re-test (RoE
+  § 11) verifies closure.
+- **Doctrine review**: add a row to the doctrine checklist below
+  for D14 (was the engagement explicitly forbidding a destructive
+  action that the platform fail-opened on?), D17 (was a trust
+  boundary improperly extended? — the answer is usually "yes" for
+  any S/T/E finding), and D24 (the standard is non-negotiable;
+  the finding by definition crossed it).
+
+See also: `docs/security/pen-test-prep.md` § "Engagement logistics"
+for the in-engagement escalation path (which routes through this
+runbook).
+
 ## Prerequisites
 
 - The incident has a unique ID. Format: `INC-YYYY-MMDD-NN` where NN is
