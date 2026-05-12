@@ -16,6 +16,21 @@
 //! `src/api/grpc.rs` via `tonic::include_proto!`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Point tonic-build (→ prost-build) at the vendored static protoc
+    // binary so we don't depend on the system having protobuf-compiler
+    // installed. CI runners (openapi-drift, sqlx-cache-check) and
+    // fresh dev machines compile the .proto without an apt-get step.
+    // Respect an operator override if PROTOC is already exported.
+    if std::env::var_os("PROTOC").is_none() {
+        let protoc = protoc_bin_vendored::protoc_bin_path()
+            .expect("protoc-bin-vendored: no protoc binary for this target");
+        // SAFETY: build scripts run single-threaded, so `set_var` here
+        // doesn't race other threads.
+        unsafe {
+            std::env::set_var("PROTOC", protoc);
+        }
+    }
+
     // The .proto lives at the repo root under contracts/. The path is
     // relative to this build.rs file: services/declaration/build.rs →
     // ../../contracts/declaration.proto.

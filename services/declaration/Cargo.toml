@@ -113,6 +113,11 @@ prost-types.workspace = true
 # the proto compile is hermetic, preserving R-DECL-7's offline-build
 # invariant.
 tonic-build.workspace = true
+# Static `protoc` binary so build.rs is fully self-contained — CI
+# runners (and the openapi-drift / sqlx-cache-check jobs) don't need
+# `apt-get install protobuf-compiler`. D19 (reproducible everything):
+# the proto compile is byte-deterministic across machines.
+protoc-bin-vendored = "3.0"
 
 [dev-dependencies]
 proptest.workspace = true
