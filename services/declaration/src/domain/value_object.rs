@@ -130,6 +130,50 @@ impl DeclarationKind {
     }
 }
 
+/// Lane decision returned by the Verification Engine for a declaration.
+/// Matches the verification engine's LaneDecision enum byte-for-byte over
+/// the wire (snake_case serialisation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationLane {
+    /// Auto-accept; verification confidence is high.
+    Green,
+    /// Hold for human review; verification is inconclusive.
+    Yellow,
+    /// Reject; verification found high risk or low authenticity.
+    Red,
+}
+
+impl VerificationLane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Green => "green",
+            Self::Yellow => "yellow",
+            Self::Red => "red",
+        }
+    }
+
+    /// The DeclarationState the aggregate transitions to upon receiving
+    /// this lane decision. Green → Accepted, Yellow → InVerification
+    /// (still pending analyst review), Red → Rejected.
+    pub fn to_declaration_state(self) -> DeclarationState {
+        match self {
+            Self::Green => DeclarationState::Accepted,
+            Self::Yellow => DeclarationState::InVerification,
+            Self::Red => DeclarationState::Rejected,
+        }
+    }
+
+    /// The verification_state projection column value.
+    pub fn as_verification_state_str(self) -> &'static str {
+        match self {
+            Self::Green => "accepted",
+            Self::Yellow => "in_verification",
+            Self::Red => "rejected",
+        }
+    }
+}
+
 /// Lifecycle state of a declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

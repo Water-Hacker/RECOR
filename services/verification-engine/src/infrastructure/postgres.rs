@@ -63,7 +63,25 @@ impl VerificationRepository for PostgresVerificationRepository {
         .execute(&mut *tx)
         .await?;
 
-        // Outbox row for future Kafka relay.
+        // Outbox row — slim writeback contract consumed by the Declaration
+        // service's POST /v1/internal/verification-outcomes endpoint.
+        // The full case stays in `verification_cases.case_payload`; the
+        // outbox event carries only what the Declaration aggregate needs
+        // to transition `verification_state`. Keeping the payload tight
+        // makes the cross-service contract explicit and stable.
+        let writeback_payload = serde_json::json!({
+            "case_id": case.case_id.0,
+            "declaration_id": case.declaration.declaration_id,
+            "lane": case.lane.as_str(),
+            "fused_authenticity_belief": authenticity_belief,
+            "fused_authenticity_plausibility": authenticity_plausibility,
+            "fused_risk_belief": risk_belief,
+            "completed_at": case
+                .completed_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("OffsetDateTime formats to RFC3339"),
+        });
+
         sqlx::query(
             r#"
             INSERT INTO verification_outbox (
@@ -76,9 +94,9 @@ impl VerificationRepository for PostgresVerificationRepository {
         .bind(Uuid::now_v7())
         .bind("verification.completed.v1")
         .bind(1_i32)
-        .bind(case.case_id.0)
-        .bind(case.case_id.0.to_string())
-        .bind(&payload)
+        .bind(case.declaration.declaration_id)
+        .bind(case.declaration.declaration_id.to_string())
+        .bind(&writeback_payload)
         .execute(&mut *tx)
         .await?;
 

@@ -17,6 +17,13 @@ out/
 .turbo/
 bazel-*
 
+# Docker-mounted cargo registry (created when building via the
+# rust:1.88-bookworm image; the host doesn't have rustup installed).
+.cargo-cache/
+
+# pnpm content-addressed store (the portal mounts this at build time).
+.pnpm-store/
+
 # Test outputs
 coverage/
 *.coverage

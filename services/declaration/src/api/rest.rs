@@ -25,7 +25,10 @@ use crate::api::auth::{auth_middleware, Principal};
 use crate::api::dto::{
     GetDeclarationResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
 };
-use crate::application::{GetDeclarationUseCase, SubmitDeclarationUseCase};
+use crate::api::internal::{handle_verification_outcome, InternalAppState};
+use crate::application::{
+    GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+};
 use crate::config::Config;
 use crate::domain::DeclarationId;
 use crate::error::ServiceError;
@@ -35,6 +38,7 @@ use crate::infrastructure::postgres::IdempotencyStore;
 pub struct AppState {
     pub submit_usecase: Arc<SubmitDeclarationUseCase>,
     pub get_usecase: Arc<GetDeclarationUseCase>,
+    pub record_verification_usecase: Arc<RecordVerificationOutcomeUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
     pub base_url: String,
     pub is_dev: bool,
@@ -52,12 +56,27 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         }))
         .with_state(state.clone());
 
+    // Internal HMAC-authenticated webhook for the Verification Engine's
+    // writeback relay. Not behind the user-auth middleware — uses its
+    // own signature verification at the handler.
+    use secrecy::ExposeSecret;
+    let internal_state = InternalAppState {
+        record_verification_usecase: state.record_verification_usecase.clone(),
+        hmac_secret: cfg.writeback_hmac_secret.expose_secret().to_string(),
+    };
+    let internal = Router::new()
+        .route(
+            "/v1/internal/verification-outcomes",
+            post(handle_verification_outcome),
+        )
+        .with_state(internal_state);
+
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state);
 
-    protected.merge(public).layer(
+    protected.merge(internal).merge(public).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),

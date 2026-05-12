@@ -16,14 +16,18 @@ use time::OffsetDateTime;
 use super::attestation::CryptographicAttestation;
 use super::value_object::{
     BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId,
+    VerificationLane,
 };
 
 /// The set of events the aggregate emits.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum DeclarationEvent {
     /// Declaration submitted; aggregate transitions from absent to Submitted.
     Submitted(DeclarationSubmittedV1),
+    /// Verification engine returned a lane decision. Aggregate
+    /// transitions to Accepted | InVerification | Rejected per lane.
+    Verified(DeclarationVerifiedV1),
 }
 
 impl DeclarationEvent {
@@ -32,6 +36,7 @@ impl DeclarationEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
             Self::Submitted(_) => "declaration.submitted.v1",
+            Self::Verified(_) => "declaration.verified.v1",
         }
     }
 
@@ -39,6 +44,7 @@ impl DeclarationEvent {
     pub fn declaration_id(&self) -> DeclarationId {
         match self {
             Self::Submitted(p) => p.declaration_id,
+            Self::Verified(p) => p.declaration_id,
         }
     }
 }
@@ -62,4 +68,38 @@ pub struct DeclarationSubmittedV1 {
     /// declarant can verify their copy of the submission against the
     /// hash.
     pub receipt_hash_hex: String,
+}
+
+/// Verification outcome event — emitted when the Verification Engine
+/// returns a lane decision through the writeback channel. The aggregate
+/// transitions state per the lane (green → Accepted, yellow →
+/// InVerification, red → Rejected).
+///
+/// The triplet (case_id, declaration_id) is unique: each declaration
+/// has exactly one verification case at a time. Replays of the same
+/// case_id MUST be idempotent at the use-case layer (no second event
+/// written, no projection drift).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeclarationVerifiedV1 {
+    pub declaration_id: DeclarationId,
+    /// The verification engine's case identifier. The Declaration
+    /// service persists this so consumers of the projection can join
+    /// back to the verification case detail.
+    pub verification_case_id: uuid::Uuid,
+    /// Lane decision produced by the verification engine's lane router.
+    pub lane: VerificationLane,
+    /// Fused authenticity belief (Dempster-Shafer, m({True})) — stored
+    /// for audit and downstream consumers. Range [0.0, 1.0].
+    pub fused_authenticity_belief: f64,
+    /// Fused authenticity plausibility (1 - m({False})). Range [0.0, 1.0].
+    pub fused_authenticity_plausibility: f64,
+    /// Fused risk belief (m({True}) of the risk frame). Range [0.0, 1.0].
+    pub fused_risk_belief: f64,
+    /// Time the verification engine completed the case. Reported by the
+    /// engine, NOT the wall clock at writeback receipt time.
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub completed_at: OffsetDateTime,
+    /// Time the declaration service recorded the outcome.
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub recorded_at: OffsetDateTime,
 }

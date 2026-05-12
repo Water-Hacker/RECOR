@@ -29,6 +29,29 @@ pub struct Config {
     /// internal endpoint (rejects every request with 503).
     #[serde(default = "default_secret")]
     pub inbound_hmac_secret: SecretString,
+
+    /// URL of the Declaration service's /v1/internal/verification-outcomes
+    /// endpoint. The outbox-relay POSTs verification.completed events
+    /// here. Empty disables the relay (rows accumulate undispatched).
+    #[serde(default)]
+    pub writeback_url: String,
+
+    /// HMAC-SHA256 secret shared with the Declaration service for
+    /// signing outbound writeback envelopes. Distinct from
+    /// `inbound_hmac_secret`: the Declaration service has its own
+    /// secret for the writeback channel.
+    #[serde(default = "default_secret")]
+    pub writeback_hmac_secret: SecretString,
+
+    /// Outbox-relay poll interval in seconds. Defaults to 5s.
+    #[serde(default = "default_writeback_poll_interval")]
+    pub writeback_poll_interval_seconds: u64,
+
+    /// Maximum number of dispatch attempts before a row is abandoned.
+    /// Defaults to 12. Each failure records `last_error` and bumps
+    /// `dispatch_attempts`; rows at or above this threshold are skipped.
+    #[serde(default = "default_writeback_max_attempts")]
+    pub writeback_max_attempts: i32,
 }
 
 impl Config {
@@ -65,3 +88,5 @@ fn default_service_name() -> String { "recor-verification-engine".to_string() }
 fn default_environment() -> String { "dev".to_string() }
 fn default_http_timeout() -> u64 { 30 }
 fn default_secret() -> SecretString { SecretString::from(String::new()) }
+fn default_writeback_poll_interval() -> u64 { 5 }
+fn default_writeback_max_attempts() -> i32 { 12 }

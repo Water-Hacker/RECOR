@@ -19,10 +19,10 @@ pub mod value_object;
 
 pub use aggregate::DeclarationAggregate;
 pub use attestation::CryptographicAttestation;
-pub use command::{Command, SubmitDeclaration};
+pub use command::{Command, RecordVerificationOutcome, SubmitDeclaration};
 pub use error::DomainError;
-pub use event::{DeclarationEvent, DeclarationSubmittedV1};
+pub use event::{DeclarationEvent, DeclarationSubmittedV1, DeclarationVerifiedV1};
 pub use value_object::{
     BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, DeclarationState,
-    EntityId, OwnershipBasisPoints, PersonId,
+    EntityId, OwnershipBasisPoints, PersonId, VerificationLane,
 };

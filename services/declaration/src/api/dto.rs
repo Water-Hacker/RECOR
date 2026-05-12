@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::application::{DeclarationProjection, SubmitReceipt};
 use crate::domain::{
-    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId, SubmitDeclaration,
+    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, EntityId,
+    RecordVerificationOutcome, SubmitDeclaration, VerificationLane,
 };
 use crate::domain::attestation::CryptographicAttestation;
 
@@ -91,6 +92,26 @@ pub struct GetDeclarationResponse {
     pub submitted_at: OffsetDateTime,
     pub receipt_hash_hex: String,
     pub correlation_id: Uuid,
+
+    /// Downstream verification engine outcome. Always present:
+    /// `not_verified` until the engine writes back, then transitions
+    /// to one of (`pending`, `in_verification`, `accepted`, `rejected`).
+    pub verification_state: String,
+    /// Lane decision the verification engine returned, if it has run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_lane: Option<VerificationLane>,
+    /// The verification case_id that produced the current verification
+    /// state. Consumers can join this against the verification engine's
+    /// case API to retrieve detailed evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_case_id: Option<Uuid>,
+    /// Time the verification engine completed the case.
+    #[serde(
+        with = "crate::domain::serde_helpers::iso_datetime_option",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub verified_at: Option<OffsetDateTime>,
 }
 
 impl From<DeclarationProjection> for GetDeclarationResponse {
@@ -108,6 +129,50 @@ impl From<DeclarationProjection> for GetDeclarationResponse {
             submitted_at: p.submitted_at,
             receipt_hash_hex: p.receipt_hash_hex,
             correlation_id: p.correlation_id,
+            verification_state: p.verification_state,
+            verification_lane: p.verification_lane,
+            verification_case_id: p.verification_case_id,
+            verified_at: p.verified_at,
         }
     }
+}
+
+/// Inbound envelope on POST /v1/internal/verification-outcomes.
+///
+/// Field names + types MUST match the verification engine's outbox
+/// payload exactly. See
+/// services/verification-engine/src/infrastructure/postgres.rs writeback
+/// payload construction.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VerificationOutcomeRequest {
+    pub case_id: Uuid,
+    pub declaration_id: DeclarationId,
+    pub lane: VerificationLane,
+    pub fused_authenticity_belief: f64,
+    pub fused_authenticity_plausibility: f64,
+    pub fused_risk_belief: f64,
+    #[serde(with = "time::serde::rfc3339")]
+    pub completed_at: OffsetDateTime,
+}
+
+impl VerificationOutcomeRequest {
+    pub fn into_command(self) -> RecordVerificationOutcome {
+        RecordVerificationOutcome {
+            declaration_id: self.declaration_id,
+            verification_case_id: self.case_id,
+            lane: self.lane,
+            fused_authenticity_belief: self.fused_authenticity_belief,
+            fused_authenticity_plausibility: self.fused_authenticity_plausibility,
+            fused_risk_belief: self.fused_risk_belief,
+            completed_at: self.completed_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationOutcomeResponse {
+    pub declaration_id: DeclarationId,
+    pub verification_case_id: Uuid,
+    pub lane: VerificationLane,
+    pub recorded_new_event: bool,
 }

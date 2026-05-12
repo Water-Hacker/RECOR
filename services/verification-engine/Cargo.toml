@@ -49,9 +49,13 @@ dotenvy = "0.15"
 base64 = "0.22"
 hex = "0.4"
 
-# Inbound webhook HMAC verification
+# Inbound webhook HMAC verification AND outbox-relay outbound HMAC signing
 hmac = "0.12"
 sha2 = "0.10"
+
+# Outbox relay HTTP client + cancellation token
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
 proptest = "1.5"

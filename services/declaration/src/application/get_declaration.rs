@@ -10,11 +10,12 @@ use time::OffsetDateTime;
 use crate::application::port::{DeclarationRepository, RepositoryError};
 use crate::domain::{
     BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, DeclarationState, EntityId,
+    VerificationLane,
 };
 use crate::domain::attestation::CryptographicAttestation;
 
 /// Projection shape returned to API consumers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DeclarationProjection {
     pub declaration_id: DeclarationId,
     pub entity_id: EntityId,
@@ -30,6 +31,20 @@ pub struct DeclarationProjection {
     pub submitted_at: OffsetDateTime,
     pub receipt_hash_hex: String,
     pub correlation_id: uuid::Uuid,
+
+    /// Downstream verification projection. Populated once the
+    /// Verification Engine writeback has recorded an outcome. Distinct
+    /// from `state` — which is the aggregate's full lifecycle — so the
+    /// projection captures both "what the aggregate became" and "what
+    /// the verification said". v1 keeps them aligned but the columns
+    /// stay independent so future amendment flows can decouple them.
+    pub verification_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_lane: Option<VerificationLane>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_case_id: Option<uuid::Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Error)]

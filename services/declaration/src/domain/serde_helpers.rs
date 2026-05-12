@@ -52,6 +52,42 @@ pub mod iso_datetime {
     }
 }
 
+/// ISO-8601 `Option<OffsetDateTime>` serde — emits the string form on
+/// `Some(_)`, `null` on `None`. Used for projection fields that are
+/// populated late (e.g. `verified_at` only after the verification engine
+/// has written back).
+pub mod iso_datetime_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use time::format_description::well_known::Iso8601;
+    use time::OffsetDateTime;
+
+    pub fn serialize<S>(opt: &Option<OffsetDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match opt {
+            Some(odt) => odt
+                .format(&Iso8601::DEFAULT)
+                .map_err(serde::ser::Error::custom)?
+                .serialize(serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = Option::deserialize(deserializer)?;
+        match opt {
+            None => Ok(None),
+            Some(s) => OffsetDateTime::parse(&s, &Iso8601::DEFAULT)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
