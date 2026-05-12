@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE entities\n        SET dissolved_at      = $2,\n            aggregate_version = $3,\n            updated_at        = NOW()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2ff32880b13e523ba15dda142f01a536a1bcaf0fe22e7e32746b60df141a775a"
+}
