@@ -1,0 +1,29 @@
+[package]
+name = "recor-vault-client"
+description = "HashiCorp Vault client for RÉCOR services: AppRole login, KV-v2 read, optional Config bridge that mutates env-loaded SecretString fields from Vault paths (OPS-4)"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_vault_client"
+path = "src/lib.rs"
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+secrecy.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util", "macros"] }
+# wiremock provides a HTTP stub server with declarative request
+# matchers — used in the unit tests to assert AppRole login flow,
+# KV-v2 read responses, and fail-closed semantics.
+wiremock = "0.6"
