@@ -1,0 +1,190 @@
+{
+  "$schema": "https://docs.claude.com/schemas/claude-code-settings.json",
+
+  "permissions": {
+    "defaultMode": "deny",
+
+    "allow": [
+      "Read(**)",
+      "Glob(**)",
+      "Grep(**)",
+      "Bash(just check)",
+      "Bash(just test)",
+      "Bash(just fmt)",
+      "Bash(just build)",
+      "Bash(just gen)",
+      "Bash(just bootstrap)",
+      "Bash(just docs-serve)",
+      "Bash(just migrate)",
+      "Bash(cargo nextest run *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo check *)",
+      "Bash(go test ./...)",
+      "Bash(go fmt ./...)",
+      "Bash(go vet ./...)",
+      "Bash(golangci-lint run)",
+      "Bash(pnpm vitest *)",
+      "Bash(pnpm tsc --noEmit)",
+      "Bash(pnpm eslint *)",
+      "Bash(pnpm prettier *)",
+      "Bash(buf lint)",
+      "Bash(buf generate)",
+      "Bash(opa eval *)",
+      "Bash(opa fmt *)",
+      "Bash(conftest verify *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(jq *)",
+      "Bash(yq *)",
+      "Edit(services/**/src/**)",
+      "Edit(services/**/tests/**)",
+      "Edit(services/**/migrations/**)",
+      "Edit(applications/**/src/**)",
+      "Edit(applications/**/tests/**)",
+      "Edit(libraries/**/src/**)",
+      "Edit(libraries/**/tests/**)",
+      "Edit(contracts/**)",
+      "Edit(docs/**)",
+      "Edit(.claude/agents/**)",
+      "Edit(.claude/skills/**)",
+      "Write(services/**/src/**)",
+      "Write(services/**/tests/**)",
+      "Write(applications/**/src/**)",
+      "Write(applications/**/tests/**)",
+      "Write(libraries/**/src/**)",
+      "Write(libraries/**/tests/**)",
+      "Write(docs/**)"
+    ],
+
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git rebase *)",
+      "Bash(git reset *)",
+      "Bash(git commit *)",
+      "Bash(git merge *)",
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(curl * | sh)",
+      "Bash(wget * | sh)",
+      "Bash(* | bash)",
+      "Bash(eval *)",
+      "Bash(kubectl apply *)",
+      "Bash(kubectl delete *)",
+      "Bash(kubectl exec *)",
+      "Bash(helm install *)",
+      "Bash(helm upgrade *)",
+      "Bash(helm uninstall *)",
+      "Bash(terraform apply *)",
+      "Bash(terraform destroy *)",
+      "Bash(argocd app sync *)",
+      "Bash(argocd app delete *)",
+      "Bash(docker push *)",
+      "Bash(cargo publish *)",
+      "Bash(pnpm publish *)",
+      "Bash(npm publish *)",
+      "WebFetch(http://*)",
+      "Edit(.claude/settings.json)",
+      "Edit(.github/workflows/**)",
+      "Edit(.pre-commit-config.yaml)",
+      "Edit(policies/access/**)",
+      "Edit(policies/access-encrypted-tier/**)",
+      "Edit(infrastructure/terraform/**)",
+      "Edit(infrastructure/argocd/**)",
+      "Edit(infrastructure/helm/**)",
+      "Edit(services/frost-coordinator/src/**)",
+      "Edit(services/inference-gateway/src/policy/**)",
+      "Edit(services/verification-engine/src/fusion/**)",
+      "Edit(services/verification-engine/src/lane_decision/**)",
+      "Edit(libraries/rust/recor-hsm/**)",
+      "Edit(libraries/rust/recor-frost/**)",
+      "Edit(libraries/rust/recor-zk/**)",
+      "Edit(libraries/rust/recor-prompts/src/registry.rs)",
+      "Edit(contracts/grpc/frost.proto)",
+      "Edit(contracts/grpc/inference.proto)",
+      "Edit(docs/architecture/**)",
+      "Edit(docs/companion/**)"
+    ],
+
+    "ask": [
+      "Edit(services/*/migrations/**)",
+      "Edit(libraries/rust/recor-prompts/prompts/**)",
+      "Edit(contracts/grpc/**)",
+      "Edit(contracts/openapi/**)",
+      "Edit(contracts/graphql/**)",
+      "Edit(contracts/avro/**)",
+      "Edit(policies/**)",
+      "Edit(.claude/agents/**)",
+      "Edit(.claude/skills/**)",
+      "Bash(cargo install *)",
+      "Bash(pnpm add *)",
+      "Bash(go get *)",
+      "WebFetch(*)"
+    ]
+  },
+
+  "env": {
+    "RECOR_PROJECT_ROOT": "/workspace",
+    "ANTHROPIC_API_AUDIT_TAG": "recor-claude-code",
+    "PROMPT_REGISTRY_PATH": "/workspace/libraries/rust/recor-prompts/prompts",
+    "POLICY_REGISTRY_PATH": "/workspace/policies"
+  },
+
+  "model": "claude-opus-4-7",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/workspace/.claude/hooks/pre-edit-doctrine-check.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/workspace/.claude/hooks/pre-bash-allowlist.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/workspace/.claude/hooks/post-edit-format.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/workspace/.claude/hooks/post-bash-audit.sh"
+          }
+        ]
+      }
+    ]
+  },
+
+  "subagents": {
+    "directory": "/workspace/.claude/agents"
+  },
+
+  "skills": {
+    "directory": "/workspace/.claude/skills"
+  }
+}
