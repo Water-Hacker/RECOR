@@ -28,6 +28,11 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$REPO_ROOT"
 
+# R-DECL-7: declaration crate's sqlx::query! macros need either a live
+# DATABASE_URL or the committed offline cache at services/declaration/.sqlx/.
+# This script is pure-build (no DB), so force offline mode.
+export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"
+
 SNAPSHOT="docs/openapi/declaration.json"
 
 if [[ ! -f "$SNAPSHOT" ]]; then

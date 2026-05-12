@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO declarations (\n                    declaration_id, entity_id, declarant_principal, declarant_role,\n                    declaration_kind, effective_from, beneficial_owners, attestation,\n                    state, aggregate_version, submitted_at, receipt_hash_hex, correlation_id,\n                    verification_state, supersedes_declaration_id\n                )\n                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)\n                ON CONFLICT (declaration_id) DO UPDATE SET\n                    state             = EXCLUDED.state,\n                    aggregate_version = EXCLUDED.aggregate_version,\n                    updated_at        = NOW()\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Int8",
+        "Timestamptz",
+        "Text",
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2573240f4ffc757c1bcac75611bb01d2bb8ec0e0fb58aaf5f13f49561c2e3fc3"
+}

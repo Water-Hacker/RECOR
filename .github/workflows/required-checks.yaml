@@ -166,7 +166,7 @@ jobs:
 
   # ─── API contract ─────────────────────────────────────────────────────────
   api-openapi-drift:
-    # DOC-1 (#70): the committed `docs/openapi/declaration.json` snapshot
+    # DOC-1 (#72): the committed `docs/openapi/declaration.json` snapshot
     # must match what `cargo run --bin dump-openapi` emits. Drift here
     # means a consumer regenerating its typed client from the snapshot
     # gets a different shape than the service actually serves — a
@@ -192,4 +192,102 @@ jobs:
           restore-keys: |
             openapi-drift-${{ runner.os }}-cargo-
       - name: regenerate spec + diff against the committed snapshot
+        env:
+          SQLX_OFFLINE: "true"
         run: ./tools/ci/check-openapi-drift.sh
+
+  # ─── Database / sqlx offline cache ────────────────────────────────────────
+  # R-DECL-7 (#71): every committed change that touches a sqlx query or a
+  # migration must regenerate `services/<svc>/.sqlx/`. This job stands
+  # up two scratch Postgres 17 databases (one per service), applies the
+  # service's migrations, and runs `cargo sqlx prepare --check` against
+  # the committed cache. If the cache is stale the job fails — branch
+  # protection then refuses to merge (Doctrine 14: fail-closed at the
+  # integration boundary). The regeneration procedure is documented at
+  # `docs/runbooks/sqlx-cache-regeneration.md`.
+  sqlx-cache-check:
+    name: "db / sqlx-cache-check"
+    runs-on: ubuntu-latest
+    services:
+      postgres-declaration:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      postgres-verification:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5436:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Rust toolchain (1.88.0)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+      - name: cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-sqlx-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-sqlx-
+      - name: install sqlx-cli
+        run: |
+          cargo install sqlx-cli --version 0.8.6 \
+            --no-default-features --features postgres,rustls --locked
+      - name: install psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: apply declaration migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          for f in services/declaration/migrations/*.sql; do
+            echo "applying $f"
+            psql -h 127.0.0.1 -p 5435 -U postgres -d postgres \
+                 -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: apply verification-engine migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          for f in services/verification-engine/migrations/*.sql; do
+            echo "applying $f"
+            psql -h 127.0.0.1 -p 5436 -U postgres -d postgres \
+                 -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: verify declaration .sqlx cache is fresh
+        working-directory: services/declaration
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5435/postgres
+        run: cargo sqlx prepare --check -- --lib --bin recor-declaration
+      - name: verify verification-engine .sqlx cache is fresh
+        working-directory: services/verification-engine
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5436/postgres
+        run: cargo sqlx prepare --check -- --lib --bin recor-verification-engine
+      - name: confirm SQLX_OFFLINE=true workspace build succeeds
+        env:
+          SQLX_OFFLINE: "true"
+        run: cargo build --workspace --release

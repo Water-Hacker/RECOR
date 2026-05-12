@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT canonical_full_name, nationality\n               FROM mock_bunec_persons WHERE person_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_full_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "nationality",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "83afaf19fa2443fe55b5232beaa7e472843d4eecadf89592c51128aa64ba149a"
+}

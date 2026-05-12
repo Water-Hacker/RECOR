@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, event_id, event_type, event_version,\n                   aggregate_id, partition_key, payload, created_at,\n                   dead_lettered_at, dispatch_attempts, last_error\n            FROM verification_outbox_dlq\n            ORDER BY dead_lettered_at DESC\n            LIMIT $1 OFFSET $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "aggregate_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "partition_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "dead_lettered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "dispatch_attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_error",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "af12dda40212f1745ffcb70183a9ea10f50c8bdd0fa827f9c9f6df02085e5c8a"
+}

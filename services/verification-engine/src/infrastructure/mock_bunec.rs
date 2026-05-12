@@ -6,7 +6,7 @@
 //! national identity registry (R-VER-1).
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -28,13 +28,13 @@ impl PostgresMockBunec {
         full_name: &str,
         nationality: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"INSERT INTO mock_bunec_persons (person_id, canonical_full_name, nationality)
                VALUES ($1, $2, $3) ON CONFLICT (person_id) DO NOTHING"#,
+            person_id,
+            full_name,
+            nationality,
         )
-        .bind(person_id)
-        .bind(full_name)
-        .bind(nationality)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -45,23 +45,19 @@ impl PostgresMockBunec {
 impl BunecAdapter for PostgresMockBunec {
     #[instrument(skip(self), fields(person_id = %person_id))]
     async fn lookup(&self, person_id: Uuid) -> Result<BunecLookup, BunecLookupError> {
-        let row_opt = sqlx::query(
+        let row_opt = sqlx::query!(
             r#"SELECT canonical_full_name, nationality
                FROM mock_bunec_persons WHERE person_id = $1"#,
+            person_id,
         )
-        .bind(person_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| BunecLookupError::Backend(e.to_string()))?;
         match row_opt {
             Some(row) => Ok(BunecLookup::Found {
                 person_id,
-                canonical_full_name: row
-                    .try_get::<String, _>("canonical_full_name")
-                    .map_err(|e| BunecLookupError::Backend(e.to_string()))?,
-                nationality: row
-                    .try_get::<String, _>("nationality")
-                    .map_err(|e| BunecLookupError::Backend(e.to_string()))?,
+                canonical_full_name: row.canonical_full_name,
+                nationality: row.nationality,
             }),
             None => Ok(BunecLookup::NotFound { person_id }),
         }

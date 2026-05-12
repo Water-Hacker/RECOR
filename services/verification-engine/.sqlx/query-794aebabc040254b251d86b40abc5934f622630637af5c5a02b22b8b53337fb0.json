@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO verification_outbox_dlq (\n                id, event_id, event_type, event_version,\n                aggregate_id, partition_key, payload, created_at,\n                dispatch_attempts, last_error\n            )\n            SELECT\n                id, event_id, event_type, event_version,\n                aggregate_id, partition_key, payload, created_at,\n                $2, $3\n            FROM verification_outbox\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "794aebabc040254b251d86b40abc5934f622630637af5c5a02b22b8b53337fb0"
+}
