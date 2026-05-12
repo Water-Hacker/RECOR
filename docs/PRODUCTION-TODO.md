@@ -538,7 +538,8 @@ is plug-and-play once the partner agreement closes.
 
 ### Audit immutability
 
-#### R-DECL-9 — Anchor receipts to Hyperledger Fabric 🔒
+#### R-DECL-9 — Anchor receipts to Hyperledger Fabric 🔒 (CODE LANDED; cluster ops pending)
+- **Status:** code skeleton shipped — `chaincode/audit-witness/`, `packages/fabric-bridge/`, `apps/worker-fabric-bridge/`, `apps/audit-verifier/`, ADR-0009, runbooks for bridge and verifier. Threat-model G1 marked closed pending cluster bring-up by infra team.
 - **Why:** D15 cryptographic-provenance commitment. Today the receipt hash is in the response but not anchored anywhere — a DB admin could rewrite history.
 - **Scope:**
   - Hyperledger Fabric cluster (3 orderers + 4 peers minimum for production)

@@ -1,0 +1,45 @@
+[package]
+name = "fabric-bridge"
+description = "RÉCOR Hyperledger Fabric gateway client wrapper. Commits declaration audit entries to the audit-witness chaincode with idempotent semantics, transient-error retry, and OBS-1-compatible per-attempt instrumentation."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "fabric_bridge"
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+async-trait.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+
+# Errors
+thiserror.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# HTTP transport. We use reqwest in this skeleton against a Fabric
+# Gateway "transaction" HTTP shim that the operator stands up alongside
+# the peer (a standard pattern when the workload language has no mature
+# Fabric SDK; the production deployment may swap to tonic + the Gateway
+# gRPC protos in a follow-up ticket once the SDK matures for Rust).
+reqwest.workspace = true
+
+# Crypto utilities (peer attestation hash)
+blake3.workspace = true
+hex.workspace = true
+
+# UUID type for transaction IDs
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "test-util"] }
+wiremock = "0.6"

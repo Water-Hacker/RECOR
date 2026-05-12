@@ -19,6 +19,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/audit-verifier",
+    "apps/worker-fabric-bridge",
+    "packages/fabric-bridge",
     "packages/recor-auth-oidc",
     "packages/recor-logging",
     "packages/recor-vault-client",
