@@ -1,0 +1,25 @@
+// Markdownlint config for RÉCOR.
+//
+// Most rules are kept. Disabled rules are the ones that fire on style
+// rather than correctness, or on patterns we deliberately use (HTML
+// inline, bare URLs in security contact contexts, etc.).
+//
+// Globs: the action reads its globs from `globs:` in the workflow. This
+// file only carries the rule config.
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD022": false,
+    "MD024": { "siblings_only": true },
+    "MD025": false,
+    "MD026": false,
+    "MD031": false,
+    "MD032": false,
+    "MD033": false,
+    "MD034": false,
+    "MD040": false,
+    "MD041": false,
+    "MD060": false
+  }
+}
