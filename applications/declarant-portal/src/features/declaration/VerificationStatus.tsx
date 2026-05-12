@@ -16,9 +16,17 @@
  * stays visible throughout — those are immutable commitments the
  * declarant can verify offline. Verification state is the live
  * dimension.
+ *
+ * i18n: every visible string flows through `t()` (R-PORT-1). The
+ * status-lane "badge" displays the raw lane/state token (`green`,
+ * `accepted`, …) deliberately — those tokens are protocol values and
+ * are NOT translated, so analysts and declarants can cite the same
+ * identifier across languages.
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import clsx from 'clsx';
 
 import {
@@ -40,6 +48,7 @@ export function VerificationStatus({
   declarantPrincipal,
   receipt,
 }: VerificationStatusProps) {
+  const { t } = useTranslation();
   const query = useQuery<GetDeclarationResponse>({
     queryKey: ['declaration', receipt.declaration_id],
     queryFn: () =>
@@ -76,45 +85,60 @@ export function VerificationStatus({
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 className={clsx('text-2xl font-semibold', statusHeadingCls(verificationState))}>
-            {statusHeading(verificationState, lane)}
+            {statusHeading(t, verificationState, lane)}
           </h2>
           <p className="mt-1 text-sm text-slate-700">
-            {statusDescription(verificationState, lane)}
+            {statusDescription(t, verificationState)}
           </p>
         </div>
         <StatusBadge state={verificationState} lane={lane} />
       </header>
 
       <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-        <Receipt label="Declaration ID" value={receipt.declaration_id} mono />
         <Receipt
-          label="Receipt hash (BLAKE3)"
+          label={t('verification.receiptFields.declarationId')}
+          value={receipt.declaration_id}
+          mono
+        />
+        <Receipt
+          label={t('verification.receiptFields.receiptHash')}
           value={receipt.receipt_hash_hex}
           mono
         />
-        <Receipt label="Submitted at" value={receipt.submitted_at} mono />
-        <Receipt label="Aggregate state" value={projection?.state ?? receipt.state} />
+        <Receipt
+          label={t('verification.receiptFields.submittedAt')}
+          value={receipt.submitted_at}
+          mono
+        />
+        <Receipt
+          label={t('verification.receiptFields.aggregateState')}
+          value={projection?.state ?? receipt.state}
+        />
 
         {projection?.verification_case_id ? (
           <Receipt
-            label="Verification case ID"
+            label={t('verification.receiptFields.verificationCaseId')}
             value={projection.verification_case_id}
             mono
           />
         ) : null}
         {projection?.verified_at ? (
-          <Receipt label="Verified at" value={projection.verified_at} mono />
+          <Receipt
+            label={t('verification.receiptFields.verifiedAt')}
+            value={projection.verified_at}
+            mono
+          />
         ) : null}
         {projection?.supersedes_declaration_id ? (
           <Receipt
-            label="Supersedes declaration"
+            label={t('verification.receiptFields.supersedesDeclaration')}
             value={projection.supersedes_declaration_id}
             mono
           />
         ) : null}
         {projection?.superseded_by_declaration_id ? (
           <Receipt
-            label="Superseded by declaration"
+            label={t('verification.receiptFields.supersededByDeclaration')}
             value={projection.superseded_by_declaration_id}
             mono
           />
@@ -122,9 +146,7 @@ export function VerificationStatus({
       </dl>
 
       <p className="text-sm text-slate-700">
-        Keep your declaration ID and receipt hash. The receipt hash is a
-        cryptographic commitment to the content you submitted — RÉCOR cannot
-        alter what you declared without invalidating this hash.
+        {t('verification.receiptKeepNotice')}
       </p>
 
       {!isTerminalVerificationState(verificationState) ? (
@@ -132,13 +154,15 @@ export function VerificationStatus({
           className="text-xs text-slate-500"
           data-testid="polling-indicator"
         >
-          Polling for verification updates…
+          {t('verification.pollingIndicator')}
         </p>
       ) : null}
 
       {query.isError ? (
         <p role="alert" className="text-sm text-red-800">
-          Could not refresh status: {(query.error as Error).message}
+          {t('verification.refreshFailed', {
+            message: (query.error as Error).message,
+          })}
         </p>
       ) : null}
 
@@ -147,7 +171,7 @@ export function VerificationStatus({
         onClick={() => window.location.reload()}
         className="rounded-md border border-slate-400 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100"
       >
-        File another declaration
+        {t('verification.fileAnotherButton')}
       </button>
     </div>
   );
@@ -174,29 +198,35 @@ function statusHeadingCls(state: string): string {
   return 'text-slate-900';
 }
 
-function statusHeading(state: string, lane: VerificationLane | undefined): string {
-  if (state === 'accepted') return 'Verification accepted';
-  if (state === 'rejected') return 'Verification rejected';
-  if (state === 'in_verification') return 'Under analyst review';
-  if (state === 'pending') return 'Awaiting verification';
-  if (lane === 'green') return 'Verification accepted';
-  if (lane === 'red') return 'Verification rejected';
-  if (lane === 'yellow') return 'Under analyst review';
-  return 'Declaration submitted';
+function statusHeading(
+  t: TFunction,
+  state: string,
+  lane: VerificationLane | undefined,
+): string {
+  if (state === 'accepted') return t('verification.headings.accepted');
+  if (state === 'rejected') return t('verification.headings.rejected');
+  if (state === 'in_verification') {
+    return t('verification.headings.in_verification');
+  }
+  if (state === 'pending') return t('verification.headings.pending');
+  if (lane === 'green') return t('verification.headings.accepted');
+  if (lane === 'red') return t('verification.headings.rejected');
+  if (lane === 'yellow') return t('verification.headings.in_verification');
+  return t('verification.headings.submitted');
 }
 
-function statusDescription(state: string, _lane: VerificationLane | undefined): string {
+function statusDescription(t: TFunction, state: string): string {
   switch (state) {
     case 'accepted':
-      return 'The verification engine accepted your declaration. It is now the authoritative record for this entity until a future submission supersedes it.';
+      return t('verification.descriptions.accepted');
     case 'rejected':
-      return 'The verification engine rejected your declaration. Review the case details with your declarant-experience team; you may resubmit with corrections or seek an analyst review.';
+      return t('verification.descriptions.rejected');
     case 'in_verification':
-      return 'Your declaration is queued for human analyst review. The engine could not auto-accept it from the available evidence. You will be notified once the analyst makes a decision.';
+      return t('verification.descriptions.in_verification');
     case 'pending':
-      return 'Your declaration has been received and is waiting for the verification engine to process it.';
+      return t('verification.descriptions.pending');
     default:
-      return 'Your declaration is being processed.';
+      return t('verification.descriptions.default');
   }
 }
 
@@ -206,6 +236,9 @@ interface StatusBadgeProps {
 }
 
 function StatusBadge({ state, lane }: StatusBadgeProps) {
+  // The badge intentionally shows the raw protocol token (`green`,
+  // `accepted`, …) and is NOT translated — it's a stable identifier
+  // analysts and declarants reference across languages.
   const display = lane ?? state;
   return (
     <span

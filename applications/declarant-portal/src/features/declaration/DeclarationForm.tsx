@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import clsx from 'clsx';
 
 import { type FormValues, formSchema } from './schema';
@@ -20,7 +22,24 @@ interface DeclarationFormProps {
   apiBaseUrl: string;
 }
 
+/**
+ * Resolve a Zod validation message into a localised string. The
+ * schema emits i18next keys (e.g. `'validation.uuid'`); anything that
+ * does not begin with `validation.` is treated as a raw fallback
+ * message (defensive: should not happen if schema and translations
+ * are in sync, but keeps a missing-key from rendering as the literal
+ * key in production — D14 fail-closed).
+ */
+function tValidationMessage(t: TFunction, message?: string): string | undefined {
+  if (!message) return undefined;
+  if (message.startsWith('validation.')) {
+    return t(message);
+  }
+  return message;
+}
+
 export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
+  const { t } = useTranslation();
   const [keys, setKeys] = useState<DeclarantKeys | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [keyGenError, setKeyGenError] = useState<string | null>(null);
@@ -105,12 +124,10 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
     return (
       <div role="alert" className="rounded-lg border-2 border-red-700 bg-red-50 p-6">
         <h2 className="text-xl font-semibold text-red-900">
-          Your browser does not support Ed25519 signing
+          {t('crypto.browserUnsupportedHeading')}
         </h2>
         <p className="mt-2 text-red-800">
-          RÉCOR requires browser-side cryptographic signing of beneficial-ownership
-          declarations. Please use a recent version of Chrome (113+), Firefox (130+),
-          or Safari (17.4+).
+          {t('crypto.browserUnsupportedBody')}
         </p>
       </div>
     );
@@ -121,10 +138,10 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
       <div className="text-slate-600">
         {keyGenError ? (
           <span role="alert" className="text-red-800">
-            Key generation failed: {keyGenError}
+            {t('crypto.keyGenFailed', { message: keyGenError })}
           </span>
         ) : (
-          'Preparing your signing key…'
+          t('crypto.preparingKey')
         )}
       </div>
     );
@@ -145,25 +162,28 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
       onSubmit={form.handleSubmit(onSubmit)}
       className="space-y-6"
       noValidate
-      aria-label="Beneficial ownership declaration form"
+      aria-label={t('form.ariaLabel')}
     >
       <Field
-        label="Entity ID (UUIDv4)"
-        error={form.formState.errors.entity_id?.message}
+        label={t('form.fields.entityId.label')}
+        error={tValidationMessage(t, form.formState.errors.entity_id?.message)}
       >
         <input
           type="text"
           inputMode="text"
           autoComplete="off"
           className={inputCls}
-          placeholder="018f0000-0000-4000-8000-000000000001"
+          placeholder={t('form.fields.entityId.placeholder')}
           {...form.register('entity_id')}
         />
       </Field>
 
       <Field
-        label="Your principal identifier"
-        error={form.formState.errors.declarant_principal?.message}
+        label={t('form.fields.declarantPrincipal.label')}
+        error={tValidationMessage(
+          t,
+          form.formState.errors.declarant_principal?.message,
+        )}
       >
         <input
           type="text"
@@ -175,27 +195,52 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Field
-          label="Role"
-          error={form.formState.errors.declarant_role?.message}
+          label={t('form.fields.declarantRole.label')}
+          error={tValidationMessage(
+            t,
+            form.formState.errors.declarant_role?.message,
+          )}
         >
           <select className={inputCls} {...form.register('declarant_role')}>
-            <option value="self">Self (you are the beneficial owner)</option>
-            <option value="authorised_agent">Authorised agent</option>
-            <option value="operator_assisted">Operator-assisted</option>
-          </select>
-        </Field>
-        <Field label="Kind" error={form.formState.errors.kind?.message}>
-          <select className={inputCls} {...form.register('kind')}>
-            <option value="incorporation">Incorporation</option>
-            <option value="annual_renewal">Annual renewal</option>
-            <option value="change_of_control">Change of control</option>
-            <option value="correction">Correction</option>
-            <option value="amendment">Amendment</option>
+            <option value="self">
+              {t('form.fields.declarantRole.options.self')}
+            </option>
+            <option value="authorised_agent">
+              {t('form.fields.declarantRole.options.authorised_agent')}
+            </option>
+            <option value="operator_assisted">
+              {t('form.fields.declarantRole.options.operator_assisted')}
+            </option>
           </select>
         </Field>
         <Field
-          label="Effective from"
-          error={form.formState.errors.effective_from?.message}
+          label={t('form.fields.kind.label')}
+          error={tValidationMessage(t, form.formState.errors.kind?.message)}
+        >
+          <select className={inputCls} {...form.register('kind')}>
+            <option value="incorporation">
+              {t('form.fields.kind.options.incorporation')}
+            </option>
+            <option value="annual_renewal">
+              {t('form.fields.kind.options.annual_renewal')}
+            </option>
+            <option value="change_of_control">
+              {t('form.fields.kind.options.change_of_control')}
+            </option>
+            <option value="correction">
+              {t('form.fields.kind.options.correction')}
+            </option>
+            <option value="amendment">
+              {t('form.fields.kind.options.amendment')}
+            </option>
+          </select>
+        </Field>
+        <Field
+          label={t('form.fields.effectiveFrom.label')}
+          error={tValidationMessage(
+            t,
+            form.formState.errors.effective_from?.message,
+          )}
         >
           <input
             type="date"
@@ -207,11 +252,10 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
 
       <fieldset className="space-y-4">
         <legend className="text-lg font-semibold text-slate-900">
-          Beneficial owners
+          {t('form.owners.legend')}
         </legend>
         <p className="text-sm text-slate-600">
-          List every natural person who ultimately controls the entity.
-          Ownership must total exactly 100% (10 000 basis points).
+          {t('form.owners.instructions')}
         </p>
 
         {fields.map((field, index) => (
@@ -240,17 +284,23 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
           }
           className="text-sm font-medium text-recor-deep underline hover:no-underline"
         >
-          + Add another beneficial owner
+          {t('form.owners.addButton')}
         </button>
 
         {form.formState.errors.beneficial_owners?.root && (
           <p role="alert" className="text-sm text-red-700">
-            {form.formState.errors.beneficial_owners.root.message}
+            {tValidationMessage(
+              t,
+              form.formState.errors.beneficial_owners.root.message,
+            )}
           </p>
         )}
         {form.formState.errors.beneficial_owners?.message && (
           <p role="alert" className="text-sm text-red-700">
-            {form.formState.errors.beneficial_owners.message}
+            {tValidationMessage(
+              t,
+              form.formState.errors.beneficial_owners.message,
+            )}
           </p>
         )}
       </fieldset>
@@ -260,7 +310,7 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
           role="alert"
           className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-900"
         >
-          <strong>Submission failed:</strong>{' '}
+          <strong>{t('form.errors.submissionFailedLabel')}</strong>{' '}
           {submitMutation.error instanceof ApiError
             ? `${submitMutation.error.kind} — ${submitMutation.error.message}`
             : submitMutation.error.message}
@@ -277,8 +327,8 @@ export function DeclarationForm({ apiBaseUrl }: DeclarationFormProps) {
         )}
       >
         {submitMutation.isPending
-          ? 'Signing and submitting…'
-          : 'Sign and submit declaration'}
+          ? t('form.submit.pending')
+          : t('form.submit.idle')}
       </button>
     </form>
   );
@@ -324,23 +374,24 @@ function OwnerRow({
   onRemove: () => void;
   removable: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="grid grid-cols-1 gap-3 rounded-md border border-slate-200 bg-white p-4 md:grid-cols-12">
       <div className="md:col-span-6">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-800">
-            Person ID (UUIDv4)
+            {t('form.owners.personId.label')}
           </span>
           <input
             type="text"
             autoComplete="off"
             className={inputCls}
-            placeholder="018f0000-0000-4000-8000-000000000abc"
+            placeholder={t('form.owners.personId.placeholder')}
             {...register(`beneficial_owners.${index}.person_id`)}
           />
           {error?.person_id?.message && (
             <span role="alert" className="mt-1 block text-sm text-red-700">
-              {error.person_id.message}
+              {tValidationMessage(t, error.person_id.message)}
             </span>
           )}
         </label>
@@ -348,7 +399,7 @@ function OwnerRow({
       <div className="md:col-span-3">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-800">
-            Basis points
+            {t('form.owners.basisPoints.label')}
           </span>
           <input
             type="number"
@@ -363,7 +414,7 @@ function OwnerRow({
           />
           {error?.ownership_basis_points?.message && (
             <span role="alert" className="mt-1 block text-sm text-red-700">
-              {error.ownership_basis_points.message}
+              {tValidationMessage(t, error.ownership_basis_points.message)}
             </span>
           )}
         </label>
@@ -371,17 +422,27 @@ function OwnerRow({
       <div className="md:col-span-2">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-800">
-            Interest kind
+            {t('form.owners.interestKind.label')}
           </span>
           <select
             className={inputCls}
             {...register(`beneficial_owners.${index}.interest_kind`)}
           >
-            <option value="equity">Equity</option>
-            <option value="voting">Voting</option>
-            <option value="family_proxy">Family proxy</option>
-            <option value="contractual">Contractual</option>
-            <option value="other">Other</option>
+            <option value="equity">
+              {t('form.owners.interestKind.options.equity')}
+            </option>
+            <option value="voting">
+              {t('form.owners.interestKind.options.voting')}
+            </option>
+            <option value="family_proxy">
+              {t('form.owners.interestKind.options.family_proxy')}
+            </option>
+            <option value="contractual">
+              {t('form.owners.interestKind.options.contractual')}
+            </option>
+            <option value="other">
+              {t('form.owners.interestKind.options.other')}
+            </option>
           </select>
         </label>
       </div>
@@ -390,14 +451,15 @@ function OwnerRow({
           <button
             type="button"
             onClick={onRemove}
-            aria-label={`Remove owner ${index + 1}`}
+            aria-label={t('form.owners.removeButtonAria', {
+              index: index + 1,
+            })}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
           >
-            Remove
+            {t('form.owners.removeButton')}
           </button>
         )}
       </div>
     </div>
   );
 }
-

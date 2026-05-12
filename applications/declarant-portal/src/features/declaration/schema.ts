@@ -1,3 +1,16 @@
+/**
+ * Zod schema for the declaration form (D17 zero-trust: validation runs
+ * client-side before signing; server re-validates the canonical
+ * payload independently).
+ *
+ * i18n note: messages here are i18next translation keys
+ * (e.g. `'validation.uuid'`), not user-visible strings. The form
+ * component resolves them via `t()` at render time so the error text
+ * follows the active locale (fr / en / pidgin). Keep the keys flat
+ * under the `validation.*` namespace so the translation review surface
+ * is obvious.
+ */
+
 import { z } from 'zod';
 
 // UUIDv4 format (lowercase, hyphenated). The Declaration service
@@ -8,12 +21,12 @@ const uuidRe =
 // 1..100% expressed as basis points (1..10000).
 const basisPoints = z
   .number()
-  .int('whole basis points only')
-  .min(1, 'percentage must be at least 0.01%')
-  .max(10_000, 'percentage cannot exceed 100%');
+  .int('validation.basisPointsInt')
+  .min(1, 'validation.basisPointsMin')
+  .max(10_000, 'validation.basisPointsMax');
 
 export const ownerSchema = z.object({
-  person_id: z.string().regex(uuidRe, 'expected UUIDv4'),
+  person_id: z.string().regex(uuidRe, 'validation.uuid'),
   ownership_basis_points: basisPoints,
   interest_kind: z.enum([
     'equity',
@@ -26,11 +39,11 @@ export const ownerSchema = z.object({
 
 export const formSchema = z
   .object({
-    entity_id: z.string().regex(uuidRe, 'expected UUIDv4'),
+    entity_id: z.string().regex(uuidRe, 'validation.uuid'),
     declarant_principal: z
       .string()
-      .min(3, 'principal too short')
-      .max(512, 'principal too long'),
+      .min(3, 'validation.principalTooShort')
+      .max(512, 'validation.principalTooLong'),
     declarant_role: z.enum([
       'self',
       'authorised_agent',
@@ -45,11 +58,11 @@ export const formSchema = z
     ]),
     effective_from: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.dateFormat'),
     beneficial_owners: z
       .array(ownerSchema)
-      .min(1, 'at least one beneficial owner required')
-      .max(64, 'more than 64 owners is unusual; contact support'),
+      .min(1, 'validation.ownersMin')
+      .max(64, 'validation.ownersMax'),
   })
   .refine(
     (data) => {
@@ -60,8 +73,7 @@ export const formSchema = z
       return sum === 10_000;
     },
     {
-      message:
-        'beneficial owners must collectively hold 100% (10_000 basis points)',
+      message: 'validation.ownersTotal',
       path: ['beneficial_owners'],
     },
   )
@@ -75,7 +87,7 @@ export const formSchema = z
       return true;
     },
     {
-      message: 'each beneficial owner person_id must appear only once',
+      message: 'validation.ownersUnique',
       path: ['beneficial_owners'],
     },
   )
@@ -85,7 +97,7 @@ export const formSchema = z
       return data.effective_from <= today;
     },
     {
-      message: 'effective_from cannot be in the future',
+      message: 'validation.effectiveFromFuture',
       path: ['effective_from'],
     },
   );

@@ -1,0 +1,135 @@
+{
+  "_translation_status": {
+    "locale": "fr",
+    "review": "Traduction de référence (langue légale). À faire valider par un juriste camerounais avant le lancement public — voir le workflow dans applications/declarant-portal/CLAUDE.md (Translation review workflow).",
+    "completeness": "complete-pending-legal-review"
+  },
+  "header": {
+    "title": "RÉCOR",
+    "tagline": "Registre de l'Effective Contrôle et Origine Réelle · Registre National des Bénéficiaires Effectifs du Cameroun",
+    "languageSelectorLabel": "Langue",
+    "languageSelectorAria": "Sélectionner votre langue préférée"
+  },
+  "intro": {
+    "heading": "Déposer une déclaration de bénéficiaire effectif",
+    "body": "Toute personne morale exerçant ses activités au Cameroun doit divulguer la personne physique qui en exerce le contrôle ultime. Votre soumission est signée cryptographiquement par votre navigateur ; la clé de signature est générée ici et ne quitte jamais votre appareil."
+  },
+  "footer": {
+    "version": "Portail Déclarant RÉCOR · v0.1.0",
+    "encryption": "Les soumissions sont chiffrées en transit. Le reçu cryptographique vous permet de vérifier ce que vous avez soumis, même des années plus tard."
+  },
+  "form": {
+    "ariaLabel": "Formulaire de déclaration de bénéficiaire effectif",
+    "fields": {
+      "entityId": {
+        "label": "Identifiant de l'entité (UUIDv4)",
+        "placeholder": "018f0000-0000-4000-8000-000000000001"
+      },
+      "declarantPrincipal": {
+        "label": "Votre identifiant de principal"
+      },
+      "declarantRole": {
+        "label": "Rôle",
+        "options": {
+          "self": "Soi-même (vous êtes le bénéficiaire effectif)",
+          "authorised_agent": "Mandataire autorisé",
+          "operator_assisted": "Assisté par un opérateur"
+        }
+      },
+      "kind": {
+        "label": "Type",
+        "options": {
+          "incorporation": "Immatriculation",
+          "annual_renewal": "Renouvellement annuel",
+          "change_of_control": "Changement de contrôle",
+          "correction": "Correction",
+          "amendment": "Modification"
+        }
+      },
+      "effectiveFrom": {
+        "label": "Date d'effet"
+      }
+    },
+    "owners": {
+      "legend": "Bénéficiaires effectifs",
+      "instructions": "Énumérer toute personne physique exerçant en dernier ressort le contrôle de l'entité. La détention doit totaliser exactement 100 % (10 000 points de base).",
+      "personId": {
+        "label": "Identifiant de la personne (UUIDv4)",
+        "placeholder": "018f0000-0000-4000-8000-000000000abc"
+      },
+      "basisPoints": {
+        "label": "Points de base"
+      },
+      "interestKind": {
+        "label": "Nature de l'intérêt",
+        "options": {
+          "equity": "Capital",
+          "voting": "Droits de vote",
+          "family_proxy": "Procuration familiale",
+          "contractual": "Contractuel",
+          "other": "Autre"
+        }
+      },
+      "addButton": "+ Ajouter un autre bénéficiaire effectif",
+      "removeButton": "Retirer",
+      "removeButtonAria": "Retirer le bénéficiaire {{index}}"
+    },
+    "submit": {
+      "idle": "Signer et soumettre la déclaration",
+      "pending": "Signature et envoi en cours…"
+    },
+    "errors": {
+      "submissionFailedLabel": "Échec de la soumission :"
+    }
+  },
+  "validation": {
+    "uuid": "format UUIDv4 attendu",
+    "basisPointsInt": "points de base entiers uniquement",
+    "basisPointsMin": "le pourcentage doit être d'au moins 0,01 %",
+    "basisPointsMax": "le pourcentage ne peut excéder 100 %",
+    "principalTooShort": "identifiant de principal trop court",
+    "principalTooLong": "identifiant de principal trop long",
+    "dateFormat": "format AAAA-MM-JJ attendu",
+    "ownersMin": "au moins un bénéficiaire effectif est requis",
+    "ownersMax": "plus de 64 bénéficiaires est inhabituel ; contactez le support",
+    "ownersTotal": "les bénéficiaires effectifs doivent collectivement détenir 100 % (10 000 points de base)",
+    "ownersUnique": "chaque identifiant de bénéficiaire effectif doit n'apparaître qu'une seule fois",
+    "effectiveFromFuture": "la date d'effet ne peut être postérieure à aujourd'hui"
+  },
+  "crypto": {
+    "browserUnsupportedHeading": "Votre navigateur ne prend pas en charge la signature Ed25519",
+    "browserUnsupportedBody": "RÉCOR requiert la signature cryptographique côté navigateur des déclarations de bénéficiaires effectifs. Veuillez utiliser une version récente de Chrome (113+), Firefox (130+) ou Safari (17.4+).",
+    "preparingKey": "Préparation de votre clé de signature…",
+    "keyGenFailed": "Échec de la génération de clé : {{message}}"
+  },
+  "verification": {
+    "headings": {
+      "accepted": "Vérification acceptée",
+      "rejected": "Vérification rejetée",
+      "in_verification": "En cours d'examen par un analyste",
+      "pending": "En attente de vérification",
+      "submitted": "Déclaration soumise"
+    },
+    "descriptions": {
+      "accepted": "Le moteur de vérification a accepté votre déclaration. Elle constitue désormais l'enregistrement faisant foi pour cette entité, jusqu'à ce qu'une soumission ultérieure la remplace.",
+      "rejected": "Le moteur de vérification a rejeté votre déclaration. Examinez les détails du dossier avec votre équipe d'expérience déclarant ; vous pouvez la soumettre à nouveau avec des corrections ou solliciter un examen par un analyste.",
+      "in_verification": "Votre déclaration est en file d'attente pour examen par un analyste humain. Le moteur n'a pu l'accepter automatiquement au vu des éléments disponibles. Vous serez notifié dès que l'analyste rendra sa décision.",
+      "pending": "Votre déclaration a été reçue et attend d'être traitée par le moteur de vérification.",
+      "default": "Votre déclaration est en cours de traitement."
+    },
+    "receiptFields": {
+      "declarationId": "Identifiant de la déclaration",
+      "receiptHash": "Empreinte du reçu (BLAKE3)",
+      "submittedAt": "Soumis le",
+      "aggregateState": "État agrégé",
+      "verificationCaseId": "Identifiant du dossier de vérification",
+      "verifiedAt": "Vérifié le",
+      "supersedesDeclaration": "Remplace la déclaration",
+      "supersededByDeclaration": "Remplacée par la déclaration"
+    },
+    "receiptKeepNotice": "Conservez votre identifiant de déclaration et l'empreinte du reçu. L'empreinte du reçu est un engagement cryptographique sur le contenu soumis — RÉCOR ne peut modifier ce que vous avez déclaré sans invalider cette empreinte.",
+    "pollingIndicator": "Interrogation des mises à jour de vérification…",
+    "refreshFailed": "Impossible d'actualiser le statut : {{message}}",
+    "fileAnotherButton": "Déposer une autre déclaration"
+  }
+}
