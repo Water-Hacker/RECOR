@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+recor-logging = { path = "../../packages/recor-logging" }
 
 # Async runtime
 tokio.workspace = true

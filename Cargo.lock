@@ -2152,6 +2152,7 @@ dependencies = [
  "opentelemetry_sdk",
  "proptest",
  "recor-auth-oidc",
+ "recor-logging",
  "reqwest",
  "rstest",
  "secrecy",
@@ -2176,6 +2177,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "recor-logging"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "secrecy",
+ "thiserror 2.0.18",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "recor-verification-engine"
 version = "0.1.0"
 dependencies = [
@@ -2183,6 +2197,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base64",
+ "blake3",
  "config",
  "dotenvy",
  "ed25519-dalek",
@@ -2195,6 +2210,7 @@ dependencies = [
  "opentelemetry_sdk",
  "proptest",
  "recor-auth-oidc",
+ "recor-logging",
  "reqwest",
  "rstest",
  "secrecy",
