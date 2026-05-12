@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-recor-deep: #082567;       /* deep blue, sovereign feel */
+  --color-recor-accent: #c8b067;     /* muted gold */
+  --color-recor-sand: #f4ede0;       /* light background */
+  --color-recor-success: #16a34a;
+  --color-recor-warning: #d97706;
+  --color-recor-danger: #b91c1c;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* Focus ring — visible on every keyboard-focusable element. */
+*:focus-visible {
+  outline: 3px solid var(--color-recor-accent);
+  outline-offset: 2px;
+}
