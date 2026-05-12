@@ -23,7 +23,7 @@ operations, and counsel each rely on.
 | `gdpr-procedures.md` | Operational procedures for the six GDPR data-subject rights, mapped to the platform's endpoints and the OHADA AML/CFT carve-outs. | Draft, pending counsel sign-off (COMP-1). |
 | `data-classification.md` | Per-column inventory: Public / Internal / Confidential / PII / Sensitive-PII. | Draft, pending counsel sign-off (COMP-3). |
 | `data-retention.md` | Retention policy for every persisted store (event log, outbox, idempotency, projections, audit chain). | In force from Phase 0 (COMP-2 shipped). |
-| `regulatory-mapping.md` | Endpoint → legal-provision map under Cameroon law + OHADA + FATF Rec 24. | Not yet drafted (COMP-4). |
+| `regulatory-mapping.md` | Endpoint → legal-provision map (REST + gRPC) AND invariant → legal-provision map under Cameroon law + OHADA + FATF Rec 24 + GDPR. | Draft, pending counsel sign-off (COMP-4). |
 | `dr-drill-template.md` | Quarterly DR-drill record template; on-call copies it each quarter to `dr-drill-YYYY-Qn.md`. | In force (COMP-5). |
 | `dr-drill-YYYY-Qn.md` | Per-quarter drill record produced by copying `dr-drill-template.md`. | Created quarterly; one file per quarter, never edited after sign-off. |
 
