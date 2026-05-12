@@ -166,6 +166,13 @@ mod tests {
             Ok(None)
         }
 
+        async fn find_by_principal(
+            &self,
+            _principal: &str,
+        ) -> Result<Vec<DeclarationProjection>, RepositoryError> {
+            Ok(Vec::new())
+        }
+
         async fn save_supersede(
             &self,
             _new_event: &DeclarationEvent,

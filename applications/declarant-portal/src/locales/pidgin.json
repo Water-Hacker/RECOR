@@ -132,5 +132,48 @@
     "pollingIndicator": "Polling for verification updates…",
     "refreshFailed": "Could not refresh status: {{message}}",
     "fileAnotherButton": "File another declaration"
+  },
+  "wizard": {
+    "progressAria": "Declaration form progress",
+    "currentStepAnnouncement": "current step",
+    "steps": {
+      "1": {
+        "title": "Entity",
+        "heading": "Identify the entity",
+        "description": "Provide the entity identifier, your declarant role, and the effective date of this declaration."
+      },
+      "2": {
+        "title": "Owners",
+        "heading": "Beneficial owners",
+        "description": "List every natural person who ultimately controls the entity; ownership must total exactly 100%."
+      },
+      "3": {
+        "title": "Review",
+        "heading": "Review your declaration",
+        "description": "Re-read each field. The cryptographic preview below shows the exact bytes that will be signed in the next step."
+      },
+      "4": {
+        "title": "Sign",
+        "heading": "Sign and submit",
+        "description": "Your browser signs the canonical bytes with your Ed25519 key, then submits the declaration to the RÉCOR service."
+      }
+    },
+    "nav": {
+      "back": "Back",
+      "forward": "Next",
+      "validating": "Validating…"
+    },
+    "review": {
+      "declarationIdLabel": "Declaration ID",
+      "ownershipTotal": "Total ownership: {{percent}}% (must be 100.00%)",
+      "canonicalBytesHeading": "Cryptographic preview",
+      "canonicalBytesExplanation": "These are the exact canonical bytes your browser is about to sign. Any difference from what is transmitted invalidates the signature — please confirm before continuing.",
+      "canonicalBytesLengthLabel": "Length (bytes)",
+      "canonicalBytesPrefixLabel": "Hex prefix (first {{bytes}} bytes)"
+    },
+    "sign": {
+      "publicKeyHeading": "Signing public key",
+      "publicKeyExplanation": "This public key travels with your declaration and lets RÉCOR verify the signature. The matching private key never leaves your browser's memory."
+    }
   }
 }

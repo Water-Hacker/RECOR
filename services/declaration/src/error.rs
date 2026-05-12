@@ -10,8 +10,8 @@ use thiserror::Error;
 use tracing::error;
 
 use crate::application::{
-    AmendError, CorrectError, GetError, RecordVerificationError, RepositoryError, SubmitError,
-    SupersedeError,
+    AmendError, CorrectError, GetError, ListByPrincipalError, RecordVerificationError,
+    RepositoryError, SubmitError, SupersedeError,
 };
 use crate::domain::DomainError;
 
@@ -90,6 +90,23 @@ impl From<CorrectError> for ServiceError {
             CorrectError::Domain(e) => Self::Domain(e),
             CorrectError::Repository(e) => Self::Repository(e),
             CorrectError::NotFound(id) => Self::NotFound(id.to_string()),
+        }
+    }
+}
+
+impl From<ListByPrincipalError> for ServiceError {
+    fn from(value: ListByPrincipalError) -> Self {
+        match value {
+            // An empty principal here can only mean the auth middleware
+            // misbehaved (production paths refuse empty subjects). Fail
+            // closed (D14): surface a 500 rather than continuing with
+            // a wildcard-equivalent argument that would have leaked
+            // other declarants' rows.
+            ListByPrincipalError::EmptyPrincipal => {
+                error!("list_by_principal received an empty principal — auth middleware bug");
+                Self::Internal
+            }
+            ListByPrincipalError::Repository(e) => Self::Repository(e),
         }
     }
 }

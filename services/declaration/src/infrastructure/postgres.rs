@@ -204,6 +204,76 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             corrected_at: row.corrected_at,
         }))
     }
+
+    #[instrument(skip(self, principal))]
+    async fn find_by_principal(
+        &self,
+        principal: &str,
+    ) -> Result<Vec<DeclarationProjection>, RepositoryError> {
+        // Strict match by declarant_principal. Returns every declaration
+        // submitted by this authenticated subject across the full
+        // history (including superseded rows — D15 says the audit chain
+        // is the source of truth; the declarant has the right to see
+        // their full record).
+        //
+        // Ordering: submitted_at DESC so the declarant sees their most
+        // recent activity first. `idx_declarations_state` does not cover
+        // this lookup; for v1 traffic volumes the table-scan cost is
+        // bounded by per-principal row count (typically O(10)). If
+        // sustained traffic grows we'll add `idx_declarations_principal`
+        // in a follow-up migration.
+        let rows = sqlx::query!(
+            r#"
+            SELECT declaration_id, entity_id, declarant_principal, declarant_role,
+                   declaration_kind, effective_from, beneficial_owners, attestation,
+                   state, aggregate_version, submitted_at, receipt_hash_hex,
+                   correlation_id, verification_state, verification_lane,
+                   verification_case_id, verified_at,
+                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at,
+                   metadata_notes, amended_at, corrected_at
+            FROM declarations
+            WHERE declarant_principal = $1
+            ORDER BY submitted_at DESC
+            "#,
+            principal,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let verification_lane = match row.verification_lane.as_deref() {
+                None => None,
+                Some(v) => Some(parse_lane(v)?),
+            };
+            out.push(DeclarationProjection {
+                declaration_id: DeclarationId(row.declaration_id),
+                entity_id: EntityId(row.entity_id),
+                declarant_principal: row.declarant_principal,
+                declarant_role: parse_declarant_role(&row.declarant_role)?,
+                kind: parse_kind(&row.declaration_kind)?,
+                effective_from: row.effective_from,
+                beneficial_owners: serde_json::from_value(row.beneficial_owners)?,
+                attestation: serde_json::from_value::<CryptographicAttestation>(row.attestation)?,
+                state: parse_state(&row.state)?,
+                version: u64::try_from(row.aggregate_version).unwrap_or(0),
+                submitted_at: row.submitted_at,
+                receipt_hash_hex: row.receipt_hash_hex,
+                correlation_id: row.correlation_id,
+                supersedes_declaration_id: row.supersedes_declaration_id.map(DeclarationId),
+                superseded_by_declaration_id: row.superseded_by_declaration_id.map(DeclarationId),
+                superseded_at: row.superseded_at,
+                verification_state: row.verification_state,
+                verification_lane,
+                verification_case_id: row.verification_case_id,
+                verified_at: row.verified_at,
+                metadata_notes: row.metadata_notes,
+                amended_at: row.amended_at,
+                corrected_at: row.corrected_at,
+            });
+        }
+        Ok(out)
+    }
 }
 
 fn parse_lane(s: &str) -> Result<VerificationLane, RepositoryError> {
