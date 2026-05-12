@@ -18,3 +18,10 @@ coverage/
 *.swo
 .idea/
 .vscode/
+
+# Playwright E2E (R-PORT-6): per-run artefacts. The HTML report is
+# regenerated on every run; test-results holds traces / screenshots
+# / videos for failed runs only. CI uploads them as a workflow
+# artefact on failure (.github/workflows/portal-e2e.yaml).
+playwright-report/
+test-results/

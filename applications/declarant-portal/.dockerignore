@@ -8,3 +8,11 @@ dist/
 Dockerfile
 .dockerignore
 docker-compose.yaml
+
+# Playwright E2E artefacts (R-PORT-6) — never shipped with the image.
+# The e2e specs themselves stay in the build context so the COPY tests
+# step picks them up consistently with the rest of the test sources;
+# Vite's bundle ignores them (no `import` from src/), and the
+# devDependency footprint is unchanged for the production runtime.
+playwright-report/
+test-results/
