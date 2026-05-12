@@ -28,6 +28,43 @@ use recor_verification_engine::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // OPS-4: Vault bridge — see services/declaration/src/main.rs for
+    // the rationale and the equivalent comment. When VAULT_ADDR is
+    // set, fetch the V-engine's secrets from Vault and inject them
+    // into env before Config::from_env() runs. When empty, env-only
+    // mode with a startup warn!.
+    let vault_paths: &[(&str, &[(&str, &str)])] = &[
+        (
+            "recor/verification-engine/database",
+            &[("DATABASE_URL", "DATABASE_URL")],
+        ),
+        (
+            "recor/verification-engine/inbound",
+            &[
+                ("INBOUND_HMAC_SECRET", "INBOUND_HMAC_SECRET"),
+                ("INBOUND_HMAC_SECRET_OLD", "INBOUND_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/verification-engine/writeback",
+            &[("WRITEBACK_HMAC_SECRET", "WRITEBACK_HMAC_SECRET")],
+        ),
+        (
+            "recor/verification-engine/oidc",
+            &[
+                ("OIDC_ISSUER_URL", "OIDC_ISSUER_URL"),
+                ("OIDC_AUDIENCE", "OIDC_AUDIENCE"),
+            ],
+        ),
+        (
+            "recor/verification-engine/observability",
+            &[("LOG_REDACTION_KEY", "LOG_REDACTION_KEY")],
+        ),
+    ];
+    recor_vault_client::populate_from_vault(vault_paths)
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault secret loading failed (D14 fail-closed): {e}"))?;
+
     let cfg = Config::from_env().context("loading configuration")?;
     let _guard = recor_verification_engine::observability::init(&cfg)
         .map_err(|e| anyhow::anyhow!("tracing init failed: {e}"))?;

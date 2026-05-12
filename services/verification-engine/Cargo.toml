@@ -19,6 +19,9 @@ path = "src/lib.rs"
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
 recor-logging = { path = "../../packages/recor-logging" }
+# OPS-4: Vault client. Optional at runtime; required when VAULT_ADDR
+# is set (D14 fail-closed).
+recor-vault-client = { path = "../../packages/recor-vault-client" }
 
 tokio.workspace = true
 tokio-util.workspace = true
