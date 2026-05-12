@@ -1,0 +1,51 @@
+# Grafana data sources — auto-provisioned at startup.
+# UIDs are stable identifiers used by dashboards; do not rename.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: recor-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: recor-tempo
+
+  - name: Tempo
+    uid: recor-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: recor-loki
+        tags: [{ key: service.name, value: service_name }]
+      tracesToMetrics:
+        datasourceUid: recor-prometheus
+        tags: [{ key: service.name }]
+      serviceMap:
+        datasourceUid: recor-prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: recor-loki
+
+  - name: Loki
+    uid: recor-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherRegex: 'trace_id=(\w+)'
+          url: '$${__value.raw}'
+          datasourceUid: recor-tempo

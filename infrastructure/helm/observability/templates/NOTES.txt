@@ -1,0 +1,42 @@
+{{- /*
+This chart's own templates/ directory is intentionally empty.
+
+All resources come from the four sub-charts declared in Chart.yaml:
+  - kube-prometheus-stack
+  - tempo-distributed
+  - loki-distributed
+  - opentelemetry-collector
+
+Helm renders this NOTES.txt after install. It's the operator-facing
+summary surfaced by `helm install` / `helm upgrade`.
+*/ -}}
+RÉCOR observability stack deployed.
+
+Components:
+  - Prometheus + Alertmanager + Grafana (via kube-prometheus-stack)
+  - Tempo (via tempo-distributed)
+  - Loki (via loki-distributed)
+  - OpenTelemetry Collector (via opentelemetry-collector)
+
+Next steps:
+
+  # Wait for all components to roll out
+  kubectl -n {{ .Release.Namespace }} rollout status statefulset \
+    -l app.kubernetes.io/instance={{ .Release.Name }} --timeout=10m
+
+  # Port-forward Grafana
+  kubectl -n {{ .Release.Namespace }} port-forward \
+    svc/{{ .Release.Name }}-grafana 3000:80
+
+Admin credentials are in the `recor-grafana-admin` secret
+(or `recor-grafana-admin-dev` in the dev overlay).
+
+Observability data flow:
+  service → OTel Collector (OTLP)
+    → Tempo            (traces)
+    → Prometheus       (metrics, via remote-write)
+    → Loki             (logs)
+  Grafana queries all three via provisioned data sources.
+
+Runbook: docs/runbooks/observability-dev-stack.md
+ADR:     docs/adr/0001-observability-stack-choice.md

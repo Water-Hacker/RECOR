@@ -1,0 +1,130 @@
+# Production overrides for the recor-observability chart.
+# Use when deploying to the Yaoundé or Douala operational cluster.
+#
+# Difference from base (values.yaml):
+#   - HA replicas across availability zones
+#   - PVC sizes matched to the platform's 30-day retention commitment
+#   - External Secrets for admin password and S3 credentials
+#   - Anti-affinity rules across nodes
+#   - Resource requests/limits sized against the steady-state load
+#     envelope documented in Architecture V5 P22
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      replicas: 2
+      retention: 30d
+      retentionSize: 100GiB
+      resources:
+        requests:
+          memory: 4Gi
+          cpu: 1
+        limits:
+          memory: 8Gi
+          cpu: 4
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: gp3-encrypted
+            resources:
+              requests:
+                storage: 200Gi
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: prometheus
+              topologyKey: topology.kubernetes.io/zone
+  grafana:
+    replicas: 2
+    admin:
+      existingSecret: recor-grafana-admin
+    persistence:
+      size: 50Gi
+      storageClassName: gp3-encrypted
+  alertmanager:
+    alertmanagerSpec:
+      replicas: 3
+      retention: 120h
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+
+tempo-distributed:
+  ingester:
+    replicas: 3
+    persistence:
+      size: 100Gi
+      storageClass: gp3-encrypted
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: 2
+  distributor:
+    replicas: 3
+  querier:
+    replicas: 3
+  queryFrontend:
+    replicas: 2
+  compactor:
+    replicas: 2
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: recor-tempo-traces-prod
+        endpoint: s3.eu-west-1.amazonaws.com
+        # access_key + secret_key injected via ExternalSecret named
+        # recor-tempo-s3-credentials in the observability namespace.
+
+loki-distributed:
+  ingester:
+    replicas: 3
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: gp3-encrypted
+  distributor:
+    replicas: 3
+  querier:
+    replicas: 3
+  queryFrontend:
+    replicas: 2
+  compactor:
+    replicas: 1
+  loki:
+    storage:
+      s3:
+        endpoint: s3.eu-west-1.amazonaws.com
+        bucketNames:
+          chunks: recor-loki-chunks-prod
+          ruler: recor-loki-ruler-prod
+          admin: recor-loki-admin-prod
+
+opentelemetry-collector:
+  replicaCount: 3
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: opentelemetry-collector
+            topologyKey: topology.kubernetes.io/zone

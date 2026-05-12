@@ -1,0 +1,45 @@
+apiVersion: v2
+name: recor-observability
+description: |
+  RÉCOR platform observability stack.
+
+  Composes upstream charts (kube-prometheus-stack, tempo-distributed,
+  loki-distributed, opentelemetry-collector) into the single deployable
+  unit referenced by Architecture V5 P22.
+
+  See docs/adr/0001-observability-stack-choice.md for the composition
+  rationale.
+
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - observability
+  - opentelemetry
+  - prometheus
+  - tempo
+  - loki
+  - grafana
+
+maintainers:
+  - name: SRE team
+    email: sre@recor.cm
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "65.5.1"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled
+  - name: tempo-distributed
+    version: "1.21.1"
+    repository: https://grafana.github.io/helm-charts
+    condition: tempo-distributed.enabled
+  - name: loki-distributed
+    version: "0.79.3"
+    repository: https://grafana.github.io/helm-charts
+    condition: loki-distributed.enabled
+  - name: opentelemetry-collector
+    version: "0.108.0"
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: opentelemetry-collector.enabled
