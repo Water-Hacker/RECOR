@@ -97,9 +97,11 @@ A successful verify means:
    (cosign verifies the log inclusion proof offline by default).
 
 It does **not** prove the image is free of vulnerabilities or that
-the underlying source commit was reviewed. CVE scanning + SBOM
-attestation arrive in CI-2; review enforcement arrives in branch
-protection (CI-3).
+the underlying source commit was reviewed. Vulnerability scanning
+(Trivy HIGH/CRITICAL gate) and SBOM attestations (SPDX + CycloneDX)
+ship in CI-2 — see `docs/runbooks/supply-chain.md` for the audit and
+override procedures. Review enforcement arrives in branch protection
+(CI-3).
 
 ## Failure modes
 
@@ -165,6 +167,7 @@ client (any 2.x).
 
 - Workflow: `.github/workflows/publish-images.yaml`
 - Ticket: `docs/PRODUCTION-TODO.md` § CI-1
-- Follow-up: CI-2 (vulnerability scan + SBOM attestation), CI-3
-  (branch protection wired to required checks)
+- Companion: `docs/runbooks/supply-chain.md` (CI-2) — SBOM audit,
+  Trivy override procedure, drift detection
+- Follow-up: CI-3 (branch protection wired to required checks)
 - Architecture: V5 P21 § Supply chain integrity (target SLSA Level 4)
