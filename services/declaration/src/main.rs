@@ -18,7 +18,7 @@ use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
 };
-use recor_declaration::infrastructure::{OutboxRelay, RelaySubscriber};
+use recor_declaration::infrastructure::{OutboxAdminStore, OutboxRelay, RelaySubscriber};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
         Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
+    let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
     let base_url = std::env::var("RECOR_BASE_URL").unwrap_or_else(|_| {
         format!("http://{}", cfg.bind_addr.trim_start_matches("0.0.0.0:"))
@@ -94,6 +95,7 @@ async fn main() -> Result<()> {
         record_verification_usecase: record_verification,
         supersede_usecase: supersede,
         idempotency,
+        outbox_admin,
         base_url,
         is_dev: cfg.is_dev(),
         idempotency_ttl_seconds: cfg.idempotency_ttl_seconds,
