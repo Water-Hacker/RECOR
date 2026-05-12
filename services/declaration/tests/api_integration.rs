@@ -149,6 +149,8 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         admin_principals: String::new(),
         rate_limit_per_min: 0,
         rate_limit_burst: 0,
+        log_redaction: String::new(),
+        log_redaction_key: SecretString::from(String::new()),
     }
 }
 
