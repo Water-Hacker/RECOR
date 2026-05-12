@@ -1,11 +1,11 @@
 [package]
 name = "recor-verification-engine"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
 description = "RÉCOR Verification Engine — 9-stage adversarial pipeline over declared beneficial ownership"
-license = "Apache-2.0"
-publish = false
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "recor-verification-engine"
@@ -16,63 +16,55 @@ name = "recor_verification_engine"
 path = "src/lib.rs"
 
 [dependencies]
-tokio = { version = "1.43", features = ["full"] }
+# Shared workspace crates.
+recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
 
-axum = { version = "0.8", features = ["macros", "tracing"] }
-tower = { version = "0.5", features = ["util", "timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "request-id", "timeout"] }
-http = "1.2"
+tokio.workspace = true
+tokio-util.workspace = true
 
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "time", "json", "macros", "migrate"] }
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+http.workspace = true
 
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+sqlx.workspace = true
 
-uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
-time = { version = "0.3", features = ["serde", "serde-well-known", "macros"] }
+serde.workspace = true
+serde_json.workspace = true
 
-thiserror = "2"
-anyhow = "1"
+uuid.workspace = true
+time.workspace = true
 
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
-tracing-opentelemetry = "0.28"
-opentelemetry = { version = "0.27", features = ["trace"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"] }
+thiserror.workspace = true
+anyhow.workspace = true
 
-config = { version = "0.15", default-features = false, features = ["toml"] }
-secrecy = { version = "0.10", features = ["serde"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
 
-async-trait = "0.1"
-dotenvy = "0.15"
-base64 = "0.22"
-hex = "0.4"
+config.workspace = true
+secrecy.workspace = true
+
+async-trait.workspace = true
+dotenvy.workspace = true
+base64.workspace = true
+hex.workspace = true
 
 # Inbound webhook HMAC verification AND outbox-relay outbound HMAC signing
-hmac = "0.12"
-sha2 = "0.10"
+hmac.workspace = true
+sha2.workspace = true
 
 # Outbox relay HTTP client + cancellation token
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-
-# OIDC: RS256/ES256/EdDSA JWT signature + claim verification, JWKS fetching.
-jsonwebtoken = "9"
-# LRU cache for verified tokens (R-AUTH-4). Bounded; entries expire at token.exp.
-lru = "0.12"
+reqwest.workspace = true
 
 [dev-dependencies]
-proptest = "1.5"
-rstest = "0.23"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
-ed25519-dalek = { version = "2.1", features = ["pkcs8", "rand_core"] }
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-strip = "debuginfo"
-panic = "abort"
+proptest.workspace = true
+rstest.workspace = true
+reqwest.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+ed25519-dalek.workspace = true
+jsonwebtoken.workspace = true

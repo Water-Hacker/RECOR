@@ -1,0 +1,11 @@
+# Workspace-wide Rust toolchain pin.
+#
+# All workspace members inherit this; per-service rust-toolchain.toml
+# files were removed after R-DECL-6 (monorepo workspace) so the
+# toolchain is declared once.
+
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
+targets = ["x86_64-unknown-linux-gnu"]
+profile = "default"

@@ -1,34 +1,47 @@
 # Multi-stage build for recor-declaration.
-# Stage 1 builds the release binary; stage 2 produces a minimal distroless
-# image with only the binary, the CA bundle, and the migrations.
+# Build context is the REPO ROOT (set in docker-compose) so the workspace
+# Cargo.toml and sibling shared crates are visible.
 
 # ── Stage 1: build ─────────────────────────────────────────────────────────
 FROM rust:1.88-bookworm AS builder
 
 WORKDIR /build
 
-# Cache dependencies separately from source for layer-aware rebuilds.
-# Copy manifests first, build a stub main, fetch + compile deps, then
-# replace the stub with real source.
+# Copy workspace root + every member manifest first, then build a stub
+# for each crate so cargo can fetch + compile all transitive deps with
+# only the manifests on disk. This caches the dep graph independently
+# from source changes.
 COPY Cargo.toml rust-toolchain.toml ./
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs && \
-    echo "" > src/lib.rs && \
-    cargo build --release --bin recor-declaration --quiet && \
-    rm -rf src
+COPY packages/recor-auth-oidc/Cargo.toml ./packages/recor-auth-oidc/
+COPY services/declaration/Cargo.toml ./services/declaration/
+COPY services/verification-engine/Cargo.toml ./services/verification-engine/
 
-COPY src ./src
-COPY migrations ./migrations
+RUN mkdir -p packages/recor-auth-oidc/src \
+             services/declaration/src \
+             services/verification-engine/src \
+    && echo "" > packages/recor-auth-oidc/src/lib.rs \
+    && echo "fn main() {}" > services/declaration/src/main.rs \
+    && echo "" > services/declaration/src/lib.rs \
+    && echo "fn main() {}" > services/verification-engine/src/main.rs \
+    && echo "" > services/verification-engine/src/lib.rs \
+    && cargo build --release --bin recor-declaration --quiet \
+    && rm -rf packages/recor-auth-oidc/src \
+              services/declaration/src \
+              services/verification-engine/src
 
-# Touch the actual sources so cargo doesn't reuse stub artefacts.
-RUN touch src/main.rs src/lib.rs
+# Now bring in the real source for the crates we actually need to build
+# the declaration binary: the workspace member + its shared deps.
+COPY packages/recor-auth-oidc ./packages/recor-auth-oidc
+COPY services/declaration/src ./services/declaration/src
+COPY services/declaration/migrations ./services/declaration/migrations
+
+# Touch so cargo doesn't reuse stub artefacts.
+RUN find packages services -name "*.rs" -exec touch {} +
 
 RUN cargo build --release --bin recor-declaration --quiet \
     && strip target/release/recor-declaration
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
-# Using debian:bookworm-slim (not distroless) so the image has /bin/sh for
-# observability and runbook debugging. Production deployment can swap to
-# gcr.io/distroless/cc-debian12 once the runbook flow is established.
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
@@ -41,12 +54,11 @@ RUN groupadd --system --gid 10001 recor \
 WORKDIR /app
 
 COPY --from=builder /build/target/release/recor-declaration /app/recor-declaration
-COPY --from=builder /build/migrations /app/migrations
+COPY --from=builder /build/services/declaration/migrations /app/migrations
 
 USER recor:recor
 
 EXPOSE 8080
 
-# Honour SIGTERM via tini so graceful-shutdown engages.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/app/recor-declaration"]
