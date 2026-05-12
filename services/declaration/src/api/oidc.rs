@@ -10,49 +10,69 @@
 //! key is matched by `kid`. Algorithm-confusion attacks (e.g. swapping
 //! RS256 for HS256) are refused because we never accept HMAC algorithms.
 //!
+//! Hardening (R-AUTH-2 / R-AUTH-3 / R-AUTH-4):
+//!   - **Subject-claim mapping** — the principal subject is extracted
+//!     from a configurable claim (default `sub`). Some issuers prefer
+//!     `preferred_username`, `email`, or a custom claim.
+//!   - **JWKS pre-warm** — `discover()` fetches the JWKS once at
+//!     startup so the first request doesn't pay a round-trip to the
+//!     issuer. Discovery failure refuses to start.
+//!   - **Verified-token LRU cache** — successful verifications are
+//!     memoised by raw token string; cache entries expire at the
+//!     token's `exp`. A token presented in a tight loop verifies once,
+//!     then hits the cache. Bounded size (default 1024); revocation
+//!     follows expiry semantics, not a separate signal.
+//!
 //! D14 (fail-closed): every error path returns `VerificationError`,
 //! which the auth middleware maps to 401. There is no fallback to an
-//! unverified path. The empty-issuer path (R-DECL-1's predecessor) is
-//! refused at config load when `environment != "dev"`.
+//! unverified path. The empty-issuer path is refused at config load
+//! when `environment != "dev"`.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use jsonwebtoken::{
     decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation,
 };
+use lru::LruCache;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use thiserror::Error;
-use tokio::sync::RwLock;
-use tracing::{debug, instrument, warn};
+use time::OffsetDateTime;
+use tokio::sync::{Mutex, RwLock};
+use tracing::{debug, info, instrument, warn};
 
-/// Subset of the JWT claims we read. Additional claims pass through
-/// untouched in the underlying validation; we only require what the
-/// principal-resolution path needs.
-#[derive(Debug, Clone, Deserialize)]
+/// Subset of the JWT claims we surface to the application layer.
+/// `sub` is the resolved principal subject — pulled from whichever
+/// claim the verifier was configured to read (default `"sub"`).
+#[derive(Debug, Clone)]
 pub struct Claims {
     pub sub: String,
     pub iss: String,
-    /// Single-audience tokens omit this in some providers (Keycloak v18+);
-    /// multi-audience tokens populate it. `Validation` enforces audience
-    /// before this struct is materialised.
-    #[serde(default)]
-    pub aud: serde_json::Value,
     pub exp: i64,
-    #[serde(default)]
-    pub nbf: Option<i64>,
-    #[serde(default)]
-    pub iat: Option<i64>,
+    /// The full JWT payload, available for handlers that need to read
+    /// custom claims (scopes, roles, tenant). Validation has already
+    /// passed; consumers can trust the contents.
+    pub raw: JsonValue,
 }
 
-/// OIDC verifier — holds the issuer config, JWKS cache, and HTTP client.
-/// `Arc<Self>` is shared across all request handlers via the auth state.
+/// Number of verified-token entries to keep in the LRU.
+const DEFAULT_TOKEN_CACHE_CAP: usize = 1024;
+
+/// OIDC verifier — holds the issuer config, JWKS cache, verified-token
+/// LRU, and HTTP client. `Arc<Self>` is shared across all request
+/// handlers via the auth state.
 pub struct OidcVerifier {
     issuer: String,
     audience: String,
     /// JWKS URL discovered from `.well-known/openid-configuration` at
     /// construction time, or set directly if the caller knows it.
     jwks_url: String,
+    /// Name of the claim that becomes the Principal's subject. Default
+    /// `"sub"`; production may want `"preferred_username"`, `"email"`,
+    /// or a custom claim.
+    subject_claim: String,
     /// Leeway in seconds for `exp`, `nbf`, and `iat` to absorb clock
     /// skew between issuer and verifier.
     leeway_seconds: u64,
@@ -60,6 +80,12 @@ pub struct OidcVerifier {
     cache_ttl: Duration,
     http: reqwest::Client,
     cache: RwLock<JwksCache>,
+    /// Verified-token cache. Key = raw token string; value = (Claims,
+    /// token's `exp` as unix seconds). A miss verifies the signature
+    /// and inserts; a hit on a still-valid entry returns immediately.
+    /// `Mutex` (not RwLock) because `lru::LruCache::get` mutates the
+    /// recency list.
+    token_cache: Mutex<LruCache<String, (Claims, i64)>>,
 }
 
 #[derive(Default)]
@@ -101,6 +127,12 @@ pub enum VerificationError {
 
     #[error("malformed token header")]
     MalformedHeader,
+
+    #[error("token missing required claim {0}")]
+    MissingClaim(&'static str),
+
+    #[error("subject claim {claim} not present or not a string in token")]
+    SubjectClaimAbsent { claim: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,34 +140,99 @@ struct DiscoveryDocument {
     jwks_uri: String,
 }
 
-impl OidcVerifier {
-    /// Construct a verifier by discovering the JWKS endpoint from the
-    /// issuer's OIDC discovery document. The issuer string MUST match
-    /// the `iss` claim on every token verified — that's the OIDC
-    /// integrity property.
-    pub async fn discover(
-        issuer: impl Into<String>,
-        audience: impl Into<String>,
-    ) -> Result<Arc<Self>, VerificationError> {
-        let issuer = issuer.into();
-        let audience = audience.into();
-        Self::discover_inner(issuer, audience).await
+/// Builder-style configuration for the verifier. Mostly used by tests
+/// and bespoke deployments; production paths use `discover()`.
+pub struct OidcVerifierBuilder {
+    issuer: String,
+    audience: String,
+    jwks_url: Option<String>,
+    subject_claim: String,
+    leeway_seconds: u64,
+    cache_ttl: Duration,
+    token_cache_capacity: NonZeroUsize,
+}
+
+impl OidcVerifierBuilder {
+    pub fn new(issuer: impl Into<String>, audience: impl Into<String>) -> Self {
+        Self {
+            issuer: issuer.into(),
+            audience: audience.into(),
+            jwks_url: None,
+            subject_claim: "sub".to_string(),
+            leeway_seconds: 30,
+            cache_ttl: Duration::from_secs(300),
+            token_cache_capacity: NonZeroUsize::new(DEFAULT_TOKEN_CACHE_CAP).unwrap(),
+        }
     }
 
-    #[instrument(skip_all, fields(issuer = %issuer, audience = %audience))]
-    async fn discover_inner(
-        issuer: String,
-        audience: String,
-    ) -> Result<Arc<Self>, VerificationError> {
-        let discovery_url = format!(
-            "{}/.well-known/openid-configuration",
-            issuer.trim_end_matches('/')
-        );
+    pub fn subject_claim(mut self, claim: impl Into<String>) -> Self {
+        self.subject_claim = claim.into();
+        self
+    }
+
+    pub fn jwks_url(mut self, url: impl Into<String>) -> Self {
+        self.jwks_url = Some(url.into());
+        self
+    }
+
+    pub fn token_cache_capacity(mut self, cap: NonZeroUsize) -> Self {
+        self.token_cache_capacity = cap;
+        self
+    }
+
+    fn build(self, jwks_url: String) -> Arc<OidcVerifier> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
             .expect("reqwest client builds");
-        let doc: DiscoveryDocument = http
+        Arc::new(OidcVerifier {
+            issuer: self.issuer,
+            audience: self.audience,
+            jwks_url,
+            subject_claim: self.subject_claim,
+            leeway_seconds: self.leeway_seconds,
+            cache_ttl: self.cache_ttl,
+            http,
+            cache: RwLock::new(JwksCache::default()),
+            token_cache: Mutex::new(LruCache::new(self.token_cache_capacity)),
+        })
+    }
+}
+
+impl OidcVerifier {
+    /// Construct a verifier by discovering the JWKS endpoint from the
+    /// issuer's OIDC discovery document. Pre-warms the JWKS cache so
+    /// the first verified request after startup doesn't pay the
+    /// issuer round-trip latency.
+    pub async fn discover(
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+    ) -> Result<Arc<Self>, VerificationError> {
+        let builder = OidcVerifierBuilder::new(issuer, audience);
+        Self::discover_with_builder(builder).await
+    }
+
+    /// Discover with a custom builder (e.g. for a custom subject-claim
+    /// or LRU capacity).
+    pub async fn discover_with_builder(
+        builder: OidcVerifierBuilder,
+    ) -> Result<Arc<Self>, VerificationError> {
+        Self::discover_inner(builder).await
+    }
+
+    #[instrument(skip_all, fields(issuer = %builder.issuer, audience = %builder.audience, subject_claim = %builder.subject_claim))]
+    async fn discover_inner(
+        builder: OidcVerifierBuilder,
+    ) -> Result<Arc<Self>, VerificationError> {
+        let discovery_url = format!(
+            "{}/.well-known/openid-configuration",
+            builder.issuer.trim_end_matches('/')
+        );
+        let probe = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("reqwest builds");
+        let doc: DiscoveryDocument = probe
             .get(&discovery_url)
             .send()
             .await
@@ -154,46 +251,65 @@ impl OidcVerifier {
                 url: discovery_url,
                 source: e,
             })?;
-        Ok(Arc::new(Self {
-            issuer,
-            audience,
-            jwks_url: doc.jwks_uri,
-            leeway_seconds: 30,
-            cache_ttl: Duration::from_secs(300),
-            http,
-            cache: RwLock::new(JwksCache::default()),
-        }))
+        let verifier = builder.build(doc.jwks_uri);
+        // Pre-warm the JWKS cache — fail startup if we can't reach the
+        // issuer at boot. Better to crash now than to 500 the first
+        // production request.
+        verifier.refresh_jwks().await?;
+        info!(
+            issuer = %verifier.issuer,
+            jwks_url = %verifier.jwks_url,
+            "OIDC verifier ready (JWKS pre-warmed)"
+        );
+        Ok(verifier)
     }
 
     /// Construct a verifier with an explicit JWKS URL — used in tests
     /// and in environments where the issuer does not expose an OIDC
-    /// discovery document. The caller is responsible for setting
-    /// `issuer` to the value the tokens will carry in their `iss`
-    /// claim.
+    /// discovery document. Does NOT pre-warm; tests typically seed the
+    /// cache directly.
     pub fn with_jwks_url(
         issuer: impl Into<String>,
         audience: impl Into<String>,
         jwks_url: impl Into<String>,
     ) -> Arc<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .expect("reqwest client builds");
-        Arc::new(Self {
-            issuer: issuer.into(),
-            audience: audience.into(),
-            jwks_url: jwks_url.into(),
-            leeway_seconds: 30,
-            cache_ttl: Duration::from_secs(300),
-            http,
-            cache: RwLock::new(JwksCache::default()),
-        })
+        OidcVerifierBuilder::new(issuer, audience).build(jwks_url.into())
     }
 
-    /// Verify a Bearer token's signature + standard claims, returning
-    /// the decoded claims on success.
-    #[instrument(skip_all)]
+    /// Verify a Bearer token's signature + standard claims. First
+    /// checks the verified-token LRU cache (R-AUTH-4); on miss, runs
+    /// the full signature + JWKS path and inserts into the cache.
     pub async fn verify(&self, token: &str) -> Result<Claims, VerificationError> {
+        // 1. LRU cache lookup. A hit on a still-valid token returns
+        //    immediately without touching the signature.
+        let now_unix = OffsetDateTime::now_utc().unix_timestamp();
+        {
+            let mut cache = self.token_cache.lock().await;
+            if let Some((claims, exp)) = cache.get(token) {
+                if *exp > now_unix.saturating_add(self.leeway_seconds as i64) {
+                    return Ok(claims.clone());
+                }
+                // Expired — evict eagerly so we re-verify and refill.
+                cache.pop(token);
+            }
+        }
+
+        // 2. Real verification: header → JWKS lookup → signature +
+        //    claim validation.
+        let claims = self.verify_uncached(token).await?;
+
+        // 3. Insert into LRU. Cache TTL is the token's own `exp` — no
+        //    additional clock; if the same token presents later, we
+        //    re-verify naturally.
+        let mut cache = self.token_cache.lock().await;
+        cache.put(token.to_string(), (claims.clone(), claims.exp));
+        Ok(claims)
+    }
+
+    /// Verification without the LRU shortcut — used internally and
+    /// exposed for tests that need to exercise the full path.
+    #[instrument(skip_all)]
+    pub async fn verify_uncached(&self, token: &str) -> Result<Claims, VerificationError> {
         let header = decode_header(token).map_err(|_| VerificationError::MalformedHeader)?;
         let alg = supported_alg(header.alg)?;
         let kid = header.kid.ok_or(VerificationError::MissingKid)?;
@@ -207,8 +323,34 @@ impl OidcVerifier {
         validation.validate_exp = true;
         validation.validate_nbf = true;
 
-        let data = decode::<Claims>(token, &key, &validation)?;
-        Ok(data.claims)
+        // Deserialise into a JSON Value so we can read any custom
+        // claim, then extract the standard ones we need.
+        let data = decode::<JsonValue>(token, &key, &validation)?;
+        let raw = data.claims;
+
+        let iss = raw
+            .get("iss")
+            .and_then(|v| v.as_str())
+            .ok_or(VerificationError::MissingClaim("iss"))?
+            .to_string();
+        let exp = raw
+            .get("exp")
+            .and_then(|v| v.as_i64())
+            .ok_or(VerificationError::MissingClaim("exp"))?;
+        let sub = raw
+            .get(&self.subject_claim)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| VerificationError::SubjectClaimAbsent {
+                claim: self.subject_claim.clone(),
+            })?
+            .to_string();
+        if sub.is_empty() {
+            return Err(VerificationError::SubjectClaimAbsent {
+                claim: self.subject_claim.clone(),
+            });
+        }
+
+        Ok(Claims { sub, iss, exp, raw })
     }
 
     /// Look up a key by `kid`. Fetches the JWKS on cache miss or expiry.
@@ -306,7 +448,6 @@ fn supported_alg(alg: Algorithm) -> Result<Algorithm, VerificationError> {
 mod tests {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
-    use time::OffsetDateTime;
 
     use super::*;
 
@@ -315,13 +456,6 @@ mod tests {
     const TEST_KID: &str = "test-key-1";
 
     fn rs256_keypair() -> (EncodingKey, jsonwebtoken::jwk::Jwk) {
-        // Static PKCS#8 RSA-2048 keypair generated once and pinned for
-        // deterministic tests. Generated with:
-        //   openssl genpkey -algorithm RSA -pkcs8 -out test_rsa.pem -outform PEM \
-        //                   -pkeyopt rsa_keygen_bits:2048
-        //   openssl rsa -in test_rsa.pem -pubout
-        //
-        // These keys are TEST-ONLY and have never been used elsewhere.
         const PEM: &str = include_str!("../../tests/fixtures/test_rsa_pkcs8.pem");
         let encoding =
             EncodingKey::from_rsa_pem(PEM.as_bytes()).expect("test RSA PEM is valid");
@@ -345,8 +479,10 @@ mod tests {
     }
 
     fn make_verifier(jwks: JwkSet) -> Arc<OidcVerifier> {
-        // Build a verifier with an empty URL but a pre-seeded cache so
-        // we exercise the verification path without an HTTP round-trip.
+        make_verifier_with_subject_claim(jwks, "sub")
+    }
+
+    fn make_verifier_with_subject_claim(jwks: JwkSet, claim: &str) -> Arc<OidcVerifier> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(1))
             .build()
@@ -355,6 +491,7 @@ mod tests {
             issuer: TEST_ISSUER.to_string(),
             audience: TEST_AUDIENCE.to_string(),
             jwks_url: "http://127.0.0.1:0/jwks-unreachable".to_string(),
+            subject_claim: claim.to_string(),
             leeway_seconds: 30,
             cache_ttl: Duration::from_secs(60),
             http,
@@ -362,6 +499,9 @@ mod tests {
                 jwks: Some(jwks),
                 fetched_at: Some(Instant::now()),
             }),
+            token_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_TOKEN_CACHE_CAP).unwrap(),
+            )),
         })
     }
 
@@ -385,6 +525,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn second_verification_hits_lru_cache() {
+        let (signing, jwk) = rs256_keypair();
+        let v = make_verifier(JwkSet { keys: vec![jwk] });
+        let token = sign(
+            json!({
+                "iss": TEST_ISSUER,
+                "aud": TEST_AUDIENCE,
+                "sub": "x",
+                "exp": now() + 300,
+            }),
+            &signing,
+        );
+        // First call: full verification + cache insert.
+        let first = v.verify(&token).await.unwrap();
+        // Second call: cache hit.
+        let second = v.verify(&token).await.unwrap();
+        assert_eq!(first.sub, second.sub);
+        // Cache should now contain the token.
+        let cache = v.token_cache.lock().await;
+        assert!(cache.contains(token.as_str()));
+    }
+
+    #[tokio::test]
+    async fn cache_evicts_expired_entry_on_lookup() {
+        let (signing, jwk) = rs256_keypair();
+        let v = make_verifier(JwkSet { keys: vec![jwk] });
+        let token = sign(
+            json!({
+                "iss": TEST_ISSUER,
+                "aud": TEST_AUDIENCE,
+                "sub": "x",
+                "exp": now() + 60,
+            }),
+            &signing,
+        );
+        // Populate the cache with a token whose exp is in the PAST so
+        // the cache.get path treats it as expired and evicts.
+        let stale = Claims {
+            sub: "x".to_string(),
+            iss: TEST_ISSUER.to_string(),
+            exp: now() - 1_000,
+            raw: serde_json::Value::Null,
+        };
+        v.token_cache
+            .lock()
+            .await
+            .put(token.clone(), (stale, now() - 1_000));
+        // verify() must NOT return the stale entry; it must re-verify
+        // and replace it.
+        let claims = v.verify(&token).await.unwrap();
+        assert!(claims.exp > now()); // got a fresh entry from re-verification
+    }
+
+    #[tokio::test]
+    async fn configurable_subject_claim_uses_custom_field() {
+        let (signing, jwk) = rs256_keypair();
+        let v = make_verifier_with_subject_claim(
+            JwkSet { keys: vec![jwk] },
+            "preferred_username",
+        );
+        let token = sign(
+            json!({
+                "iss": TEST_ISSUER,
+                "aud": TEST_AUDIENCE,
+                "sub": "internal-uuid-only",
+                "preferred_username": "alice@recor.cm",
+                "exp": now() + 300,
+            }),
+            &signing,
+        );
+        let claims = v.verify(&token).await.unwrap();
+        assert_eq!(claims.sub, "alice@recor.cm");
+    }
+
+    #[tokio::test]
+    async fn configurable_subject_claim_missing_field_rejects() {
+        let (signing, jwk) = rs256_keypair();
+        let v = make_verifier_with_subject_claim(
+            JwkSet { keys: vec![jwk] },
+            "preferred_username",
+        );
+        let token = sign(
+            json!({
+                "iss": TEST_ISSUER,
+                "aud": TEST_AUDIENCE,
+                "sub": "anything",
+                // preferred_username deliberately omitted
+                "exp": now() + 300,
+            }),
+            &signing,
+        );
+        let err = v.verify(&token).await.unwrap_err();
+        assert!(matches!(err, VerificationError::SubjectClaimAbsent { .. }));
+    }
+
+    #[tokio::test]
+    async fn raw_claims_carry_arbitrary_payload() {
+        let (signing, jwk) = rs256_keypair();
+        let v = make_verifier(JwkSet { keys: vec![jwk] });
+        let token = sign(
+            json!({
+                "iss": TEST_ISSUER,
+                "aud": TEST_AUDIENCE,
+                "sub": "x",
+                "exp": now() + 300,
+                "scope": "decl:write",
+                "tenant_id": "recor-cm-prod",
+            }),
+            &signing,
+        );
+        let claims = v.verify(&token).await.unwrap();
+        assert_eq!(claims.raw.get("scope").unwrap().as_str(), Some("decl:write"));
+        assert_eq!(
+            claims.raw.get("tenant_id").unwrap().as_str(),
+            Some("recor-cm-prod"),
+        );
+    }
+
+    #[tokio::test]
     async fn expired_token_rejects() {
         let (signing, jwk) = rs256_keypair();
         let v = make_verifier(JwkSet { keys: vec![jwk] });
@@ -393,7 +652,7 @@ mod tests {
                 "iss": TEST_ISSUER,
                 "aud": TEST_AUDIENCE,
                 "sub": "x",
-                "exp": now() - 3600, // 1 hour ago
+                "exp": now() - 3600,
             }),
             &signing,
         );
@@ -462,8 +721,6 @@ mod tests {
     #[tokio::test]
     async fn missing_kid_rejects() {
         let (signing, _) = rs256_keypair();
-        // Encode with no kid header — jsonwebtoken's default Header has
-        // no kid unless you set it.
         let header = Header::new(Algorithm::RS256);
         let token = encode(
             &header,

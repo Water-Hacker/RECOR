@@ -23,6 +23,10 @@ pub struct Config {
     /// OIDC audience claim — required whenever `oidc_issuer_url` is set.
     #[serde(default)]
     pub oidc_audience: String,
+    /// Name of the JWT claim that becomes the Principal's subject.
+    /// Defaults to `"sub"`. (R-AUTH-2)
+    #[serde(default = "default_subject_claim")]
+    pub oidc_subject_claim: String,
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
 
@@ -98,3 +102,4 @@ fn default_http_timeout() -> u64 { 30 }
 fn default_secret() -> SecretString { SecretString::from(String::new()) }
 fn default_writeback_poll_interval() -> u64 { 5 }
 fn default_writeback_max_attempts() -> i32 { 12 }
+fn default_subject_claim() -> String { "sub".to_string() }

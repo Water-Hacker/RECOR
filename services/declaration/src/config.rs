@@ -56,6 +56,13 @@ pub struct Config {
     #[serde(default)]
     pub oidc_audience: String,
 
+    /// Name of the JWT claim that becomes the Principal's subject.
+    /// Defaults to `"sub"`. Some issuers prefer `"preferred_username"`,
+    /// `"email"`, or a custom claim. The verifier refuses tokens that
+    /// lack this claim (R-AUTH-2).
+    #[serde(default = "default_subject_claim")]
+    pub oidc_subject_claim: String,
+
     /// HTTP request timeout in seconds.
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
@@ -171,4 +178,8 @@ fn default_relay_poll_interval() -> u64 {
 
 fn default_secret() -> SecretString {
     SecretString::from(String::new())
+}
+
+fn default_subject_claim() -> String {
+    "sub".to_string()
 }

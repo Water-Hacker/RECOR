@@ -78,7 +78,11 @@ async fn resolve_principal(
             | VerificationError::MissingKid
             | VerificationError::UnknownKid(_)
             | VerificationError::UnsupportedAlgorithm(_)
-            | VerificationError::NoUsableKey => ServiceError::AuthenticationRequired,
+            | VerificationError::NoUsableKey
+            | VerificationError::MissingClaim(_)
+            | VerificationError::SubjectClaimAbsent { .. } => {
+                ServiceError::AuthenticationRequired
+            }
             VerificationError::DiscoveryFailed { .. }
             | VerificationError::JwksFetchFailed { .. } => ServiceError::Internal,
         }

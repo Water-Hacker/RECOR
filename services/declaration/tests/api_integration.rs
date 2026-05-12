@@ -128,6 +128,7 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         environment: "dev".to_string(),
         oidc_issuer_url: String::new(),
         oidc_audience: String::new(),
+        oidc_subject_claim: "sub".to_string(),
         http_timeout_seconds: 10,
         relay_webhook_url: String::new(),
         relay_hmac_secret: SecretString::from(String::new()),

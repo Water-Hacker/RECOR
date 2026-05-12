@@ -1,12 +1,10 @@
 [package]
 name = "recor-declaration"
-# Edition 2024 (the Architecture V3 P8 commitment) requires Rust 1.85.0+,
-# but V3 P12 currently pins to 1.84.0 — an internal inconsistency in the
-# Companion. Edition 2021 is used here as the largest stable subset until
-# the toolchain pin is bumped to 1.85+. See R-LANG-1 follow-up.
+# Edition 2024 (the Architecture V3 P8 commitment). Requires Rust 1.85+;
+# we pin 1.88 in rust-toolchain.toml. Closes R-LANG-1.
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.84"
+edition = "2024"
+rust-version = "1.85"
 description = "RÉCOR Declaration service — beneficial-ownership declaration intake and lifecycle"
 license = "Apache-2.0"
 publish = false
@@ -77,6 +75,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 # OIDC: RS256/ES256/EdDSA JWT signature + claim verification, JWKS fetching.
 jsonwebtoken = "9"
+# LRU cache for verified tokens (R-AUTH-4). Bounded; entries expire at token.exp.
+lru = "0.12"
 
 [dev-dependencies]
 proptest = "1.5"

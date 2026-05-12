@@ -61,19 +61,28 @@ async fn main() -> Result<()> {
         format!("http://{}", cfg.bind_addr.trim_start_matches("0.0.0.0:"))
     });
 
-    // OIDC verifier — discovered at startup. `None` only in dev when
-    // OIDC_ISSUER_URL is unset; production refuses at config load.
+    // OIDC verifier — discovered at startup with JWKS pre-warm. `None`
+    // only in dev when OIDC_ISSUER_URL is unset; production refuses at
+    // config load.
     let oidc = if cfg.oidc_issuer_url.is_empty() {
         info!("OIDC verifier disabled (dev mode — OIDC_ISSUER_URL unset)");
         None
     } else {
-        let v = OidcVerifier::discover(
+        use recor_declaration::api::oidc::OidcVerifierBuilder;
+        let builder = OidcVerifierBuilder::new(
             cfg.oidc_issuer_url.clone(),
             cfg.oidc_audience.clone(),
         )
-        .await
-        .context("OIDC discovery against configured issuer")?;
-        info!(issuer = %cfg.oidc_issuer_url, audience = %cfg.oidc_audience, "OIDC verifier ready");
+        .subject_claim(cfg.oidc_subject_claim.clone());
+        let v = OidcVerifier::discover_with_builder(builder)
+            .await
+            .context("OIDC discovery against configured issuer")?;
+        info!(
+            issuer = %cfg.oidc_issuer_url,
+            audience = %cfg.oidc_audience,
+            subject_claim = %cfg.oidc_subject_claim,
+            "OIDC verifier ready (JWKS pre-warmed)"
+        );
         Some(v)
     };
 

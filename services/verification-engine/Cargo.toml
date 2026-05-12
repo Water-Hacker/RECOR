@@ -1,8 +1,8 @@
 [package]
 name = "recor-verification-engine"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.84"
+edition = "2024"
+rust-version = "1.85"
 description = "RÉCOR Verification Engine — 9-stage adversarial pipeline over declared beneficial ownership"
 license = "Apache-2.0"
 publish = false
@@ -59,6 +59,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 # OIDC: RS256/ES256/EdDSA JWT signature + claim verification, JWKS fetching.
 jsonwebtoken = "9"
+# LRU cache for verified tokens (R-AUTH-4). Bounded; entries expire at token.exp.
+lru = "0.12"
 
 [dev-dependencies]
 proptest = "1.5"
