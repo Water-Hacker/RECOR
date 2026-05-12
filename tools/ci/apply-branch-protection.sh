@@ -36,8 +36,27 @@ fi
 
 echo "Applying branch protection to ${REPO}@${BRANCH}..."
 
-# Required-check contexts must match the job names declared in
-# .github/workflows/required-checks.yaml exactly.
+# Required-check contexts must match the job names declared in the workflow
+# YAML files exactly (job `name:` field, not the key under `jobs:`).
+#
+# Sources:
+#   .github/workflows/required-checks.yaml   — 9 jobs
+#   .github/workflows/pr-hygiene.yaml        — 4 jobs
+#   .github/workflows/codeowners-validate.yaml — 1 job (validate CODEOWNERS)
+#
+# observability-smoke is intentionally NOT in this list yet — OBS-2 in
+# PRODUCTION-TODO.md adds it once the smoke is reliable.
+#
+# Review-count policy: 1 approving review on a single-maintainer personal
+# account today, raised to 2 (with CODEOWNERS multi-team enforcement) when
+# the repo moves to the consortium GitHub organisation. See
+# docs/security/branch-protection.md § "Open issues / acknowledged
+# transitional gaps".
+#
+# `required_signatures` is set via a separate endpoint
+# (PUT .../branches/main/protection/required_signatures); GitHub does NOT
+# accept it inside the main protection payload. The script applies it
+# after the main PUT.
 read -r -d '' PROTECTION <<'JSON' || true
 {
   "required_status_checks": {
@@ -51,21 +70,25 @@ read -r -d '' PROTECTION <<'JSON' || true
       "governance / codeowners-validate",
       "governance / pr-hygiene",
       "governance / no-dangling",
-      "claude-config-validate"
+      "claude-config-validate",
+      "pr template completeness",
+      "pr size (D10)",
+      "conventional commit title",
+      "D18 blocked-path / secrets paths",
+      "validate CODEOWNERS"
     ]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
-    "required_approving_review_count": 2,
-    "require_last_push_approval": true
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 1,
+    "require_last_push_approval": false
   },
   "restrictions": null,
   "required_linear_history": true,
   "allow_force_pushes": false,
   "allow_deletions": false,
-  "required_signatures": true,
   "lock_branch": false,
   "block_creations": false,
   "required_conversation_resolution": true
@@ -76,7 +99,16 @@ JSON
 echo "$PROTECTION" | gh api \
     --method PUT \
     --input - \
-    "repos/${REPO}/branches/${BRANCH}/protection"
+    "repos/${REPO}/branches/${BRANCH}/protection" >/dev/null
+
+# Signed-commits requirement uses a separate sub-resource.
+# Some plans (Free private repos) accept the call without effect; that's
+# documented in docs/security/branch-protection.md.
+gh api \
+    --method POST \
+    -H "Accept: application/vnd.github+json" \
+    "repos/${REPO}/branches/${BRANCH}/protection/required_signatures" \
+    >/dev/null 2>&1 || echo "note: required_signatures not enabled (account plan does not support it on private repos)"
 
 echo "Done. Verify with:"
 echo "  gh api repos/${REPO}/branches/${BRANCH}/protection | jq ."
