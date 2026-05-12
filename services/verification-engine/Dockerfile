@@ -16,23 +16,29 @@ ENV SQLX_OFFLINE=true
 
 COPY Cargo.toml rust-toolchain.toml ./
 COPY packages/recor-auth-oidc/Cargo.toml ./packages/recor-auth-oidc/
-COPY services/declaration/Cargo.toml ./services/declaration/
+COPY packages/recor-logging/Cargo.toml ./packages/recor-logging/
+COPY services/declaration/Cargo.toml services/declaration/build.rs ./services/declaration/
 COPY services/verification-engine/Cargo.toml ./services/verification-engine/
+COPY contracts ./contracts
 
 RUN mkdir -p packages/recor-auth-oidc/src \
+             packages/recor-logging/src \
              services/declaration/src \
              services/verification-engine/src \
     && echo "" > packages/recor-auth-oidc/src/lib.rs \
+    && echo "" > packages/recor-logging/src/lib.rs \
     && echo "fn main() {}" > services/declaration/src/main.rs \
     && echo "" > services/declaration/src/lib.rs \
     && echo "fn main() {}" > services/verification-engine/src/main.rs \
     && echo "" > services/verification-engine/src/lib.rs \
     && cargo build --release --bin recor-verification-engine --quiet \
     && rm -rf packages/recor-auth-oidc/src \
+              packages/recor-logging/src \
               services/declaration/src \
               services/verification-engine/src
 
 COPY packages/recor-auth-oidc ./packages/recor-auth-oidc
+COPY packages/recor-logging ./packages/recor-logging
 COPY services/verification-engine/src ./services/verification-engine/src
 COPY services/verification-engine/migrations ./services/verification-engine/migrations
 # Offline sqlx cache (committed alongside the source). SQLX_OFFLINE=true
