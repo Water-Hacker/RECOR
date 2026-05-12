@@ -1,0 +1,75 @@
+# Local development stack for recor-declaration.
+#
+# Brings up Postgres + the service. The service auto-runs migrations on
+# startup. Bind ports are 127.0.0.1 only (D17 — never exposed on LAN
+# even in dev).
+#
+# Bring up:    docker compose up -d --build
+# Tear down:   docker compose down -v
+# Logs:        docker compose logs -f recor-declaration
+# Smoke:       ./scripts/smoke.sh
+
+name: recor-declaration-dev
+
+networks:
+  declaration:
+    driver: bridge
+
+volumes:
+  pg-data:
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: recor-declaration-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recor
+      POSTGRES_PASSWORD: "${RECOR_DB_PASSWORD:?Set RECOR_DB_PASSWORD in .env or environment}"
+      POSTGRES_DB: declaration
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - declaration
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recor -d declaration"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  recor-declaration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: recor/declaration:dev
+    container_name: recor-declaration
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      BIND_ADDR: "0.0.0.0:8080"
+      DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres:5432/declaration"
+      DB_POOL_MAX_CONNECTIONS: "10"
+      IDEMPOTENCY_TTL_SECONDS: "86400"
+      OTLP_ENDPOINT: ""
+      LOG_FILTER: "info,recor_declaration=debug,sqlx=warn"
+      SERVICE_NAME: "recor-declaration"
+      ENVIRONMENT: "dev"
+      HTTP_TIMEOUT_SECONDS: "10"
+      RECOR_BASE_URL: "http://localhost:8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - declaration
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
