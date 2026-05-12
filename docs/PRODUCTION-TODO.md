@@ -596,6 +596,8 @@ is plug-and-play once the partner agreement closes.
 
 These can be picked up in any order; no external blockers.
 
+### Portal tickets
+
 #### R-PORT-1 — i18n (FR primary, EN secondary, Pidgin tertiary) ⚪
 - **Why:** Cameroon is officially bilingual French/English, with Pidgin widely spoken. English-only is unacceptable.
 - **Scope:**
@@ -676,6 +678,8 @@ These cannot be coded by an engineering agent alone — they need
 lawyer + compliance review. The engineering agent can prep the
 artifacts; legal signs off.
 
+### Compliance tickets
+
 #### COMP-1 — GDPR / OHADA data-subject rights ⚪
 - **Scope:** Documented procedures for: right-to-access (declarant can download all data RÉCOR holds on them), right-to-rectification (covered by R-DECL-3 Amend/Correct), right-to-erasure (with audit-log preservation — hard problem; usually requires legal carve-out for AML/CFT registries)
 - **Effort:** 2 weeks engineering + 2 weeks legal review
@@ -723,6 +727,8 @@ artifacts; legal signs off.
 ---
 
 ## Phase 5 — Pre-launch hardening
+
+### Pre-launch tickets
 
 #### PEN-1 — External penetration test 🔒
 - **Effort:** 2-3 weeks (vendor-led)
