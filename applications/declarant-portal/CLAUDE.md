@@ -302,7 +302,7 @@ offline.
 ### Stack
 
 - `vite-plugin-pwa` (Workbox under the hood) — generates `sw.js`
-  + a SPA-shell precache on every production build (`pnpm build`).
+  and a SPA-shell precache on every production build (`pnpm build`).
   `registerType: 'autoUpdate'` so new deployments silently update
   installed clients on next navigation; `devOptions.enabled: false`
   keeps the SW out of `pnpm dev` where HMR + SW caching clash.
