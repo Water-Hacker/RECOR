@@ -1,0 +1,135 @@
+{
+  "_translation_status": {
+    "locale": "en",
+    "review": "Engineering mirror of fr.json. Translations should be reviewed by a bilingual project liaison before public launch.",
+    "completeness": "complete"
+  },
+  "header": {
+    "title": "RÉCOR",
+    "tagline": "Registry of Effective Control and Real Origin · National Beneficial Ownership Registry of Cameroon",
+    "languageSelectorLabel": "Language",
+    "languageSelectorAria": "Select your preferred language"
+  },
+  "intro": {
+    "heading": "File a beneficial ownership declaration",
+    "body": "Every legal entity operating in Cameroon must disclose the natural person who ultimately controls it. Your submission is signed cryptographically by your browser; the signing key is generated here and never leaves your device."
+  },
+  "footer": {
+    "version": "RÉCOR Declarant Portal · v0.1.0",
+    "encryption": "Submissions are encrypted in transit. The cryptographic receipt allows you to verify what you submitted years later."
+  },
+  "form": {
+    "ariaLabel": "Beneficial ownership declaration form",
+    "fields": {
+      "entityId": {
+        "label": "Entity ID (UUIDv4)",
+        "placeholder": "018f0000-0000-4000-8000-000000000001"
+      },
+      "declarantPrincipal": {
+        "label": "Your principal identifier"
+      },
+      "declarantRole": {
+        "label": "Role",
+        "options": {
+          "self": "Self (you are the beneficial owner)",
+          "authorised_agent": "Authorised agent",
+          "operator_assisted": "Operator-assisted"
+        }
+      },
+      "kind": {
+        "label": "Kind",
+        "options": {
+          "incorporation": "Incorporation",
+          "annual_renewal": "Annual renewal",
+          "change_of_control": "Change of control",
+          "correction": "Correction",
+          "amendment": "Amendment"
+        }
+      },
+      "effectiveFrom": {
+        "label": "Effective from"
+      }
+    },
+    "owners": {
+      "legend": "Beneficial owners",
+      "instructions": "List every natural person who ultimately controls the entity. Ownership must total exactly 100% (10 000 basis points).",
+      "personId": {
+        "label": "Person ID (UUIDv4)",
+        "placeholder": "018f0000-0000-4000-8000-000000000abc"
+      },
+      "basisPoints": {
+        "label": "Basis points"
+      },
+      "interestKind": {
+        "label": "Interest kind",
+        "options": {
+          "equity": "Equity",
+          "voting": "Voting",
+          "family_proxy": "Family proxy",
+          "contractual": "Contractual",
+          "other": "Other"
+        }
+      },
+      "addButton": "+ Add another beneficial owner",
+      "removeButton": "Remove",
+      "removeButtonAria": "Remove owner {{index}}"
+    },
+    "submit": {
+      "idle": "Sign and submit declaration",
+      "pending": "Signing and submitting…"
+    },
+    "errors": {
+      "submissionFailedLabel": "Submission failed:"
+    }
+  },
+  "validation": {
+    "uuid": "expected UUIDv4",
+    "basisPointsInt": "whole basis points only",
+    "basisPointsMin": "percentage must be at least 0.01%",
+    "basisPointsMax": "percentage cannot exceed 100%",
+    "principalTooShort": "principal too short",
+    "principalTooLong": "principal too long",
+    "dateFormat": "expected YYYY-MM-DD",
+    "ownersMin": "at least one beneficial owner required",
+    "ownersMax": "more than 64 owners is unusual; contact support",
+    "ownersTotal": "beneficial owners must collectively hold 100% (10 000 basis points)",
+    "ownersUnique": "each beneficial owner person_id must appear only once",
+    "effectiveFromFuture": "effective_from cannot be in the future"
+  },
+  "crypto": {
+    "browserUnsupportedHeading": "Your browser does not support Ed25519 signing",
+    "browserUnsupportedBody": "RÉCOR requires browser-side cryptographic signing of beneficial-ownership declarations. Please use a recent version of Chrome (113+), Firefox (130+), or Safari (17.4+).",
+    "preparingKey": "Preparing your signing key…",
+    "keyGenFailed": "Key generation failed: {{message}}"
+  },
+  "verification": {
+    "headings": {
+      "accepted": "Verification accepted",
+      "rejected": "Verification rejected",
+      "in_verification": "Under analyst review",
+      "pending": "Awaiting verification",
+      "submitted": "Declaration submitted"
+    },
+    "descriptions": {
+      "accepted": "The verification engine accepted your declaration. It is now the authoritative record for this entity until a future submission supersedes it.",
+      "rejected": "The verification engine rejected your declaration. Review the case details with your declarant-experience team; you may resubmit with corrections or seek an analyst review.",
+      "in_verification": "Your declaration is queued for human analyst review. The engine could not auto-accept it from the available evidence. You will be notified once the analyst makes a decision.",
+      "pending": "Your declaration has been received and is waiting for the verification engine to process it.",
+      "default": "Your declaration is being processed."
+    },
+    "receiptFields": {
+      "declarationId": "Declaration ID",
+      "receiptHash": "Receipt hash (BLAKE3)",
+      "submittedAt": "Submitted at",
+      "aggregateState": "Aggregate state",
+      "verificationCaseId": "Verification case ID",
+      "verifiedAt": "Verified at",
+      "supersedesDeclaration": "Supersedes declaration",
+      "supersededByDeclaration": "Superseded by declaration"
+    },
+    "receiptKeepNotice": "Keep your declaration ID and receipt hash. The receipt hash is a cryptographic commitment to the content you submitted — RÉCOR cannot alter what you declared without invalidating this hash.",
+    "pollingIndicator": "Polling for verification updates…",
+    "refreshFailed": "Could not refresh status: {{message}}",
+    "fileAnotherButton": "File another declaration"
+  }
+}
