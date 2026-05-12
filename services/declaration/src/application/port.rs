@@ -36,6 +36,28 @@ pub trait DeclarationRepository: Send + Sync {
         id: DeclarationId,
     ) -> Result<Option<crate::application::DeclarationProjection>, RepositoryError>;
 
+    /// Load every current-state projection belonging to the given
+    /// principal. Used by the data-subject-access endpoint (COMP-1):
+    /// the authenticated declarant asks "show me everything RÉCOR
+    /// holds about me" and receives the list of declarations where
+    /// `declarant_principal == principal`.
+    ///
+    /// Ordering: most-recently submitted first — the order a declarant
+    /// expects to see their own history in. The match is strictly by
+    /// `declarant_principal`; future identity-linkage (mapping the
+    /// authenticated principal to one or more `person_id` values so
+    /// that beneficial-owner rows naming the principal are also
+    /// returned) is a separate ticket and depends on a person registry
+    /// that does not yet exist.
+    ///
+    /// Authorisation is the caller's job — by contract, the API layer
+    /// MUST source the `principal` argument from the authenticated
+    /// session (D17), never from request body or query string.
+    async fn find_by_principal(
+        &self,
+        principal: &str,
+    ) -> Result<Vec<crate::application::DeclarationProjection>, RepositoryError>;
+
     /// Atomic supersede: append the NEW declaration's Submitted event +
     /// upsert its projection + write its outbox row, AND append the OLD
     /// aggregate's Superseded event + update its projection + write its

@@ -47,6 +47,11 @@ fail-close at the boundary.
 - Public APIs: REST under `/v1/declarations` (see `src/api/rest.rs` and
   the dto module) + gRPC `recor.declaration.v1.DeclarationService`
   (see `src/api/grpc.rs`).
+- GDPR data-subject access: `GET /v1/declarations/by-principal`
+  returns every declaration submitted by the authenticated principal
+  (COMP-1). Principal sourced from auth, never from request; see
+  `docs/compliance/gdpr-procedures.md` for the full right-of-access /
+  rectification / erasure / portability procedures.
 
 ## SLOs
 

@@ -26,7 +26,8 @@ use uuid::Uuid;
 use recor_declaration::api::AppState;
 use recor_declaration::application::{
     AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
-    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
+    ListByPrincipalUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -71,6 +72,8 @@ async fn spawn_service() -> TestService {
     let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let amend = Arc::new(AmendDeclarationUseCase::new(repository.clone()));
     let correct = Arc::new(CorrectDeclarationUseCase::new(repository.clone()));
+    let list_by_principal =
+        Arc::new(ListByPrincipalUseCase::new(repository.clone()));
     let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool));
 
@@ -90,6 +93,7 @@ async fn spawn_service() -> TestService {
         supersede_usecase: supersede,
         amend_usecase: amend,
         correct_usecase: correct,
+        list_by_principal_usecase: list_by_principal,
         idempotency,
         outbox_admin,
         base_url: format!("http://{bind_addr}"),
@@ -350,6 +354,155 @@ async fn healthz_is_public() {
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::OK);
+}
+
+// COMP-1 — Data-subject access (GDPR right of access + portability).
+//
+// The end-to-end leakage refusal property: a declarant who submits as
+// principal A and then queries `/v1/declarations/by-principal` as A
+// sees only A's records, and a different declarant B sees only B's.
+// This is the property the entire compliance posture depends on —
+// breaking it would let any authenticated declarant enumerate the
+// platform's full register.
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn by_principal_endpoint_returns_only_callers_declarations() {
+    let svc = spawn_service().await;
+    let client = reqwest::Client::new();
+
+    // Two distinct declarants with their own keys.
+    let key_a = SigningKey::from_bytes(&[42u8; 32]);
+    let key_b = SigningKey::from_bytes(&[99u8; 32]);
+    let principal_a = "spiffe://recor.cm/comp-1-declarant-alpha";
+    let principal_b = "spiffe://recor.cm/comp-1-declarant-beta";
+
+    // Submit two declarations under A.
+    for _ in 0..2 {
+        let body = build_request_body(
+            principal_a,
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            &key_a,
+        );
+        let resp = client
+            .post(format!("{}/v1/declarations", svc.base_url))
+            .header("x-recor-dev-principal", principal_a)
+            .json(&body)
+            .send()
+            .await
+            .expect("post A");
+        assert_eq!(resp.status(), StatusCode::CREATED, "A submit must succeed");
+    }
+
+    // Submit one declaration under B.
+    let body_b = build_request_body(
+        principal_b,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        &key_b,
+    );
+    let resp = client
+        .post(format!("{}/v1/declarations", svc.base_url))
+        .header("x-recor-dev-principal", principal_b)
+        .json(&body_b)
+        .send()
+        .await
+        .expect("post B");
+    assert_eq!(resp.status(), StatusCode::CREATED, "B submit must succeed");
+
+    // A queries by-principal — must see exactly 2 rows, both A's.
+    let resp = client
+        .get(format!("{}/v1/declarations/by-principal", svc.base_url))
+        .header("x-recor-dev-principal", principal_a)
+        .send()
+        .await
+        .expect("get A by-principal");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("A body");
+    assert_eq!(payload["principal"], json!(principal_a));
+    assert_eq!(
+        payload["count"], json!(2),
+        "principal A must see exactly two of their own rows; full body: {payload}"
+    );
+    let declarations = payload["declarations"]
+        .as_array()
+        .expect("declarations array on A response");
+    assert_eq!(declarations.len(), 2);
+    for row in declarations {
+        assert_eq!(
+            row["declarant_principal"], json!(principal_a),
+            "every returned row must belong to the querying principal; leakage detected"
+        );
+        // D15: the receipt hash MUST be present so the declarant can
+        // re-verify each receipt offline.
+        let receipt = row["receipt_hash_hex"].as_str().unwrap_or_default();
+        assert_eq!(
+            receipt.len(),
+            64,
+            "receipt_hash_hex must be a 64-char hex string for offline re-verification"
+        );
+    }
+
+    // B queries by-principal — must see exactly 1 row.
+    let resp = client
+        .get(format!("{}/v1/declarations/by-principal", svc.base_url))
+        .header("x-recor-dev-principal", principal_b)
+        .send()
+        .await
+        .expect("get B by-principal");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("B body");
+    assert_eq!(payload["principal"], json!(principal_b));
+    assert_eq!(payload["count"], json!(1));
+    let declarations = payload["declarations"]
+        .as_array()
+        .expect("declarations array on B response");
+    assert_eq!(declarations.len(), 1);
+    assert_eq!(declarations[0]["declarant_principal"], json!(principal_b));
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn by_principal_endpoint_refuses_unauthenticated() {
+    // D14 fail-closed: the endpoint must refuse a request that arrives
+    // with no authentication. Otherwise an attacker could enumerate
+    // every declarant by guessing principals via the query string —
+    // but there IS no query string here, so the refusal must come from
+    // the auth gate.
+    let svc = spawn_service().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/v1/declarations/by-principal", svc.base_url))
+        .send()
+        .await
+        .expect("get without auth");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn by_principal_endpoint_returns_empty_for_first_time_caller() {
+    // A declarant who has never submitted has the right to know that
+    // no data is held — empty list, 200 OK, not 404.
+    let svc = spawn_service().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/v1/declarations/by-principal", svc.base_url))
+        .header("x-recor-dev-principal", "spiffe://recor.cm/never-submitted")
+        .send()
+        .await
+        .expect("get never-submitted");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("empty body");
+    assert_eq!(payload["count"], json!(0));
+    assert_eq!(
+        payload["declarations"].as_array().map(|a| a.len()),
+        Some(0),
+        "declarations array must be empty, not absent"
+    );
 }
 
 // Silence unused-import warnings during incremental compile.

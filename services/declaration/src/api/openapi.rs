@@ -60,9 +60,10 @@ use utoipa_scalar::{Scalar, Servable};
 use crate::api::dlq::{self, DlqItem, ListDlqResponse, ReplayDlqResponse};
 use crate::api::dto::{
     AmendDeclarationRequest, AmendDeclarationResponse, CorrectDeclarationRequest,
-    CorrectDeclarationResponse, ErrorBody, ErrorEnvelope, GetDeclarationResponse,
-    HealthzResponse, ReadyzResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
-    SupersedeDeclarationResponse, VerificationOutcomeRequest, VerificationOutcomeResponse,
+    CorrectDeclarationResponse, DeclarationsByPrincipalResponse, ErrorBody, ErrorEnvelope,
+    GetDeclarationResponse, HealthzResponse, ReadyzResponse, SubmitDeclarationRequest,
+    SubmitDeclarationResponse, SupersedeDeclarationResponse, VerificationOutcomeRequest,
+    VerificationOutcomeResponse,
 };
 use crate::api::internal;
 use crate::api::rest;
@@ -109,6 +110,7 @@ use crate::domain::{
         rest::readyz,
         rest::submit_declaration,
         rest::get_declaration,
+        rest::list_declarations_by_principal,
         rest::supersede_declaration,
         rest::amend_declaration,
         rest::correct_declaration,
@@ -122,6 +124,7 @@ use crate::domain::{
             SubmitDeclarationRequest,
             SubmitDeclarationResponse,
             GetDeclarationResponse,
+            DeclarationsByPrincipalResponse,
             SupersedeDeclarationResponse,
             AmendDeclarationRequest,
             AmendDeclarationResponse,
@@ -272,6 +275,7 @@ mod tests {
             "/healthz",
             "/readyz",
             "/v1/declarations",
+            "/v1/declarations/by-principal",
             "/v1/declarations/{declaration_id}",
             "/v1/declarations/{declaration_id}/supersede",
             "/v1/declarations/{declaration_id}/amend",
@@ -327,6 +331,7 @@ mod tests {
             "SubmitDeclarationRequest",
             "SubmitDeclarationResponse",
             "GetDeclarationResponse",
+            "DeclarationsByPrincipalResponse",
             "SupersedeDeclarationResponse",
             "AmendDeclarationRequest",
             "AmendDeclarationResponse",

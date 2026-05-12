@@ -25,15 +25,16 @@ use crate::api::auth::{auth_middleware, AuthConfig, Principal};
 use crate::api::dlq::DlqAdminState;
 use crate::api::dto::{
     AmendDeclarationRequest, AmendDeclarationResponse, CorrectDeclarationRequest,
-    CorrectDeclarationResponse, GetDeclarationResponse, SubmitDeclarationRequest,
-    SubmitDeclarationResponse, SupersedeDeclarationResponse,
+    CorrectDeclarationResponse, DeclarationsByPrincipalResponse, GetDeclarationResponse,
+    SubmitDeclarationRequest, SubmitDeclarationResponse, SupersedeDeclarationResponse,
 };
 use crate::api::internal::{handle_verification_outcome, InternalAppState};
 use crate::api::rate_limit::{build_governor_config, governor_layer};
 use crate::api::OidcVerifier;
 use crate::application::{
     AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
-    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
+    ListByPrincipalUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use crate::config::Config;
 use crate::domain::DeclarationId;
@@ -51,6 +52,9 @@ pub struct AppState {
     pub supersede_usecase: Arc<SupersedeDeclarationUseCase>,
     pub amend_usecase: Arc<AmendDeclarationUseCase>,
     pub correct_usecase: Arc<CorrectDeclarationUseCase>,
+    /// COMP-1: data-subject access. Returns every declaration where
+    /// the authenticated principal is the declarant.
+    pub list_by_principal_usecase: Arc<ListByPrincipalUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
     pub outbox_admin: Arc<OutboxAdminStore>,
     pub base_url: String,
@@ -110,6 +114,15 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
 
     let protected = Router::new()
         .route("/v1/declarations", submit_route)
+        // COMP-1: data-subject access. Static path is matched BEFORE
+        // the parameterised `/{declaration_id}` route so axum doesn't
+        // try to parse `by-principal` as a UUID. Read-only, principal
+        // sourced from auth (D17), exempt from the submit-path rate
+        // limit but subject to the standard auth gate.
+        .route(
+            "/v1/declarations/by-principal",
+            get(list_declarations_by_principal),
+        )
         .route("/v1/declarations/{declaration_id}", get(get_declaration))
         .route(
             "/v1/declarations/{declaration_id}/supersede",
@@ -794,4 +807,75 @@ pub(crate) async fn correct_declaration(
         "declaration corrected"
     );
     Ok((StatusCode::OK, Json(response)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/declarations/by-principal",
+    tag = "declarations",
+    operation_id = "listDeclarationsByPrincipal",
+    description = "Data-subject access (COMP-1). Returns every declaration RÉCOR holds where the authenticated principal is the declarant. The principal is sourced exclusively from the authenticated session (D17) — no path parameter, no body, no query string. Implements GDPR right-of-access and data-portability rights; see docs/compliance/gdpr-procedures.md. Each row carries its receipt_hash_hex so the declarant can re-verify the receipt offline (D15).",
+    responses(
+        (status = 200, description = "Every declaration the authenticated principal is the declarant on, most-recent first", body = DeclarationsByPrincipalResponse),
+        (status = 401, description = "Missing/invalid bearer token", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
+#[tracing::instrument(
+    skip_all,
+    fields(
+        principal = %principal.subject,
+        event_kind = "data_subject_access",
+    )
+)]
+pub(crate) async fn list_declarations_by_principal(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+) -> Result<Json<DeclarationsByPrincipalResponse>, ServiceError> {
+    // D17 (zero trust): `principal.subject` is the authenticated subject
+    // resolved by `auth_middleware` from either the OIDC Bearer token or
+    // the dev-only `X-Recor-Dev-Principal` header. There is no path
+    // parameter or body — the only datum that selects rows is the
+    // authenticated session.
+    //
+    // D15 (cryptographic provenance): each returned projection includes
+    // the receipt_hash_hex; the declarant can re-verify each receipt
+    // offline against the canonical bytes they signed.
+    //
+    // D14 (fail-closed): a repository error surfaces as 500; an empty
+    // principal (which would indicate an auth-middleware bug) becomes
+    // an internal error rather than dumping every declaration.
+    //
+    // Audit signal: the structured fields above stamp `event_kind =
+    // "data_subject_access"` on this span. OPS-2's RedactingLayer
+    // redacts the `principal` field; the event itself is the audit
+    // record that someone exercised their access right at this time.
+    let projections = state
+        .list_by_principal_usecase
+        .execute(&principal.subject)
+        .await?;
+
+    let declarations: Vec<GetDeclarationResponse> =
+        projections.into_iter().map(GetDeclarationResponse::from).collect();
+    let response = DeclarationsByPrincipalResponse {
+        principal: principal.subject.clone(),
+        count: declarations.len(),
+        declarations,
+    };
+
+    // Emit the audit signal as an event on the current span. The
+    // RedactingLayer (OPS-2) suppresses the principal value; the
+    // record of "a data_subject_access event happened at this time
+    // with N rows returned" remains in the chain.
+    info!(
+        event_kind = "data_subject_access",
+        result_count = response.count,
+        "data-subject access right exercised"
+    );
+
+    Ok(Json(response))
 }
