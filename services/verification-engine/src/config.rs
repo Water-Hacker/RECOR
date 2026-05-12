@@ -22,6 +22,13 @@ pub struct Config {
     pub oidc_issuer_url: String,
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
+
+    /// HMAC-SHA256 secret shared with the Declaration service's outbox
+    /// relay. Required for the /v1/internal/declaration-events endpoint
+    /// to verify inbound webhook signatures. Empty disables the
+    /// internal endpoint (rejects every request with 503).
+    #[serde(default = "default_secret")]
+    pub inbound_hmac_secret: SecretString,
 }
 
 impl Config {
@@ -57,3 +64,4 @@ fn default_log_filter() -> String { "info,recor_verification_engine=debug,sqlx=w
 fn default_service_name() -> String { "recor-verification-engine".to_string() }
 fn default_environment() -> String { "dev".to_string() }
 fn default_http_timeout() -> u64 { 30 }
+fn default_secret() -> SecretString { SecretString::from(String::new()) }

@@ -53,6 +53,19 @@ pub struct Config {
     /// HTTP request timeout in seconds.
     #[serde(default = "default_http_timeout")]
     pub http_timeout_seconds: u64,
+
+    /// Outbox relay: URL to POST declaration events to. Empty disables
+    /// the relay (events stay in outbox; a future ticket relays them).
+    #[serde(default)]
+    pub relay_webhook_url: String,
+
+    /// Outbox relay HMAC secret. REQUIRED when relay_webhook_url is non-empty.
+    #[serde(default = "default_secret")]
+    pub relay_hmac_secret: SecretString,
+
+    /// Outbox relay poll interval in seconds.
+    #[serde(default = "default_relay_poll_interval")]
+    pub relay_poll_interval_seconds: u64,
 }
 
 impl Config {
@@ -76,6 +89,12 @@ impl Config {
         if cfg.environment != "dev" && cfg.oidc_issuer_url.is_empty() {
             return Err(ConfigError::OidcRequiredOutsideDev);
         }
+        if !cfg.relay_webhook_url.is_empty() {
+            use secrecy::ExposeSecret;
+            if cfg.relay_hmac_secret.expose_secret().is_empty() {
+                return Err(ConfigError::RelaySecretRequired);
+            }
+        }
         Ok(cfg)
     }
 
@@ -96,6 +115,8 @@ pub enum ConfigError {
     Deserialise(#[source] config::ConfigError),
     #[error("OIDC_ISSUER_URL is required outside dev")]
     OidcRequiredOutsideDev,
+    #[error("RELAY_HMAC_SECRET is required when RELAY_WEBHOOK_URL is set")]
+    RelaySecretRequired,
 }
 
 fn default_bind_addr() -> String {
@@ -124,4 +145,12 @@ fn default_environment() -> String {
 
 fn default_http_timeout() -> u64 {
     10
+}
+
+fn default_relay_poll_interval() -> u64 {
+    5
+}
+
+fn default_secret() -> SecretString {
+    SecretString::from(String::new())
 }
