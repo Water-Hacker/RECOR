@@ -182,10 +182,135 @@ docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-verifi
     "SELECT event_type, dispatched_at IS NOT NULL AS dispatched, dispatch_attempts FROM verification_outbox WHERE aggregate_id = '$DECL_ID'"
 
 echo ""
-echo "✅ D ↔ V LOOP PHASE 1 + 2 SMOKE: PASS"
+echo "── PHASE 3: supersede guard refuses on rejected declarations (400) ──"
+NEW_DECL_ID=$(cat /proc/sys/kernel/random/uuid)
+NEW_NONCE_HEX=$(openssl rand -hex 16)
+NEW_CANONICAL=$(jq -c -n --arg eid "$ENT_ID" --arg p "$PRINCIPAL" --arg pid "$PER_ID" --arg n "$NEW_NONCE_HEX" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"annual_renewal", effective_from:"2026-04-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$NEW_CANONICAL" > "$KEYDIR/payload2"
+NEW_SIG_HEX=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/payload2" | xxd -p -c 128)
+NEW_REQ=$(jq -c -n --arg did "$NEW_DECL_ID" --arg eid "$ENT_ID" --arg pid "$PER_ID" --arg p "$PRINCIPAL" \
+                --arg s "$NEW_SIG_HEX" --arg pk "$PK_HEX" --arg n "$NEW_NONCE_HEX" \
+    '{declaration_id:$did, entity_id:$eid, declarant_role:"self", kind:"annual_renewal", effective_from:"2026-04-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+SUP_RESP=$(curl -sS -X POST "http://127.0.0.1:8080/v1/declarations/$DECL_ID/supersede" \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$NEW_REQ" -w "\n%{http_code}")
+SUP_HTTP=$(echo "$SUP_RESP" | tail -1)
+echo "Supersede POST against rejected declaration: HTTP $SUP_HTTP"
+[ "$SUP_HTTP" = "400" ] || {
+    echo "FAIL: expected HTTP 400 (supersede-from-invalid-state); got $SUP_HTTP"
+    echo "$SUP_RESP" | sed '$d' | jq '.'
+    exit 1
+}
+echo "  ✅ supersede guard correctly refused a rejected declaration"
+
+echo ""
+echo "── PHASE 3b: full supersede chain on an ACCEPTED declaration ──"
+# Seed mock BUNEC so this person passes identity verification.
+docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-verification \
+    psql -U recor -d verification -c \
+    "INSERT INTO mock_bunec_persons (person_id, canonical_full_name, nationality) VALUES ('$PER_ID', 'Test Declarant', 'CMR') ON CONFLICT (person_id) DO NOTHING" \
+    > /dev/null
+
+ACCEPTED_DECL_ID=$(cat /proc/sys/kernel/random/uuid)
+ACCEPTED_ENT_ID=$(cat /proc/sys/kernel/random/uuid)
+ACCEPTED_NONCE_HEX=$(openssl rand -hex 16)
+ACCEPTED_CANONICAL=$(jq -c -n --arg eid "$ACCEPTED_ENT_ID" --arg p "$PRINCIPAL" --arg pid "$PER_ID" --arg n "$ACCEPTED_NONCE_HEX" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$ACCEPTED_CANONICAL" > "$KEYDIR/payload3"
+ACCEPTED_SIG_HEX=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/payload3" | xxd -p -c 128)
+ACCEPTED_REQ=$(jq -c -n --arg did "$ACCEPTED_DECL_ID" --arg eid "$ACCEPTED_ENT_ID" --arg pid "$PER_ID" --arg p "$PRINCIPAL" \
+                --arg s "$ACCEPTED_SIG_HEX" --arg pk "$PK_HEX" --arg n "$ACCEPTED_NONCE_HEX" \
+    '{declaration_id:$did, entity_id:$eid, declarant_role:"self", kind:"incorporation", effective_from:"2026-01-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+curl -sS -X POST http://127.0.0.1:8080/v1/declarations \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$ACCEPTED_REQ" -w "\nHTTP %{http_code}\n" > /dev/null
+
+echo "  waiting for verification to land on a supersede-eligible state..."
+# With seeded BUNEC + real Stages 1-2 + stub Stages 3-7, fusion lands
+# at `yellow` (in_verification). Both `accepted` and `in_verification`
+# are valid starting states for supersede; we accept either.
+accepted_state=""
+for i in {1..30}; do
+    sleep 1
+    state=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+        psql -U recor -d declaration -tAc \
+        "SELECT verification_state FROM declarations WHERE declaration_id = '$ACCEPTED_DECL_ID'" \
+        2>/dev/null | tr -d '[:space:]')
+    if [ "$state" = "accepted" ] || [ "$state" = "in_verification" ]; then
+        accepted_state="$state"
+        echo "  ✅ declaration reached '$state' after ${i}s"
+        break
+    fi
+done
+[ -n "$accepted_state" ] || {
+    echo "FAIL: expected accepted/in_verification state for seeded-person declaration; got '$accepted_state'"
+    exit 1
+}
+
+SUCC_DECL_ID=$(cat /proc/sys/kernel/random/uuid)
+SUCC_NONCE_HEX=$(openssl rand -hex 16)
+SUCC_CANONICAL=$(jq -c -n --arg eid "$ACCEPTED_ENT_ID" --arg p "$PRINCIPAL" --arg pid "$PER_ID" --arg n "$SUCC_NONCE_HEX" \
+    '{entity_id:$eid, declarant_principal:$p, declarant_role:"self", kind:"annual_renewal", effective_from:"2026-04-01", beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}], nonce_hex:$n}')
+echo -n "$SUCC_CANONICAL" > "$KEYDIR/payload4"
+SUCC_SIG_HEX=$(openssl pkeyutl -sign -inkey "$KEYDIR/sk.pem" -rawin -in "$KEYDIR/payload4" | xxd -p -c 128)
+SUCC_REQ=$(jq -c -n --arg did "$SUCC_DECL_ID" --arg eid "$ACCEPTED_ENT_ID" --arg pid "$PER_ID" --arg p "$PRINCIPAL" \
+                --arg s "$SUCC_SIG_HEX" --arg pk "$PK_HEX" --arg n "$SUCC_NONCE_HEX" \
+    '{declaration_id:$did, entity_id:$eid, declarant_role:"self", kind:"annual_renewal", effective_from:"2026-04-01",
+      beneficial_owners:[{person_id:$pid, ownership_basis_points:10000, interest_kind:"equity"}],
+      attestation:{signed_by:$p, signature_algorithm:"ed25519", signature_hex:$s, public_key_hex:$pk, nonce_hex:$n}}')
+
+SUCC_RESP=$(curl -sS -X POST "http://127.0.0.1:8080/v1/declarations/$ACCEPTED_DECL_ID/supersede" \
+    -H "Content-Type: application/json" \
+    -H "X-Recor-Dev-Principal: $PRINCIPAL" \
+    -d "$SUCC_REQ" -w "\n%{http_code}")
+SUCC_HTTP=$(echo "$SUCC_RESP" | tail -1)
+SUCC_BODY=$(echo "$SUCC_RESP" | sed '$d')
+echo "Supersede POST against accepted declaration: HTTP $SUCC_HTTP"
+[ "$SUCC_HTTP" = "201" ] || { echo "FAIL: expected 201"; echo "$SUCC_BODY" | jq '.'; exit 1; }
+echo "$SUCC_BODY" | jq '{new_declaration_id, superseded_declaration_id, state}'
+
+echo ""
+echo "── verifying supersede chain in projections ──"
+docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -c \
+    "SELECT declaration_id, state, supersedes_declaration_id, superseded_by_declaration_id FROM declarations WHERE declaration_id IN ('$ACCEPTED_DECL_ID', '$SUCC_DECL_ID') ORDER BY submitted_at"
+
+old_state=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -tAc \
+    "SELECT state FROM declarations WHERE declaration_id = '$ACCEPTED_DECL_ID'" | tr -d '[:space:]')
+[ "$old_state" = "superseded" ] || {
+    echo "FAIL: old declaration's state is '$old_state' (expected 'superseded')"
+    exit 1
+}
+echo "  ✅ old declaration's state = superseded"
+
+new_supersedes=$(docker compose -f "$COMPOSE_FILE" exec -T -e PGPASSWORD="$DB_PW" postgres-declaration \
+    psql -U recor -d declaration -tAc \
+    "SELECT supersedes_declaration_id FROM declarations WHERE declaration_id = '$SUCC_DECL_ID'" | tr -d '[:space:]')
+[ "$new_supersedes" = "$ACCEPTED_DECL_ID" ] || {
+    echo "FAIL: new declaration's supersedes_declaration_id is '$new_supersedes' (expected '$ACCEPTED_DECL_ID')"
+    exit 1
+}
+echo "  ✅ new declaration's supersedes_declaration_id points at the old one"
+
+echo ""
+echo "✅ D ↔ V LOOP PHASE 1 + 2 + R-DECL-3 SUPERSEDE: PASS"
 echo "   • Declaration accepted with HTTP 201 + signed receipt"
 echo "   • Outbox relay fired D → V; verification ran the pipeline"
 echo "   • Verification case persisted with the same declaration_id"
 echo "   • Writeback relay fired V → D; declaration state = $verified_state"
 echo "   • Declaration projection surfaces verification metadata"
 echo "   • Both outbox rows marked dispatched"
+echo "   • Supersede correctly REFUSED a rejected declaration (HTTP 400)"
+echo "   • Supersede SUCCEEDED on an accepted declaration (HTTP 201)"
+echo "   • Old declaration transitioned to 'superseded'"
+echo "   • New declaration's supersedes_declaration_id points back"

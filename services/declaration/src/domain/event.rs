@@ -28,6 +28,12 @@ pub enum DeclarationEvent {
     /// Verification engine returned a lane decision. Aggregate
     /// transitions to Accepted | InVerification | Rejected per lane.
     Verified(DeclarationVerifiedV1),
+    /// This declaration was superseded by a successor declaration.
+    /// Emitted against THIS aggregate (the one being replaced); the
+    /// successor aggregate carries its own `DeclarationSubmittedV1`.
+    /// Both events are written in the same DB transaction by the
+    /// `SupersedeDeclaration` use case.
+    Superseded(DeclarationSupersededV1),
 }
 
 impl DeclarationEvent {
@@ -37,6 +43,7 @@ impl DeclarationEvent {
         match self {
             Self::Submitted(_) => "declaration.submitted.v1",
             Self::Verified(_) => "declaration.verified.v1",
+            Self::Superseded(_) => "declaration.superseded.v1",
         }
     }
 
@@ -45,6 +52,7 @@ impl DeclarationEvent {
         match self {
             Self::Submitted(p) => p.declaration_id,
             Self::Verified(p) => p.declaration_id,
+            Self::Superseded(p) => p.declaration_id,
         }
     }
 }
@@ -102,4 +110,29 @@ pub struct DeclarationVerifiedV1 {
     /// Time the declaration service recorded the outcome.
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
     pub recorded_at: OffsetDateTime,
+}
+
+/// Marks a declaration as superseded by a successor. The successor
+/// carries its own `DeclarationSubmittedV1` (referencing this id via
+/// the `supersedes_declaration_id` field on the submit command).
+///
+/// Aggregate invariants:
+///   - This aggregate must already exist (have at least one event).
+///   - This aggregate must not have been superseded before
+///     (idempotency anchor — supersede chains are strictly linear).
+///   - This aggregate's state must be `Accepted` or `InVerification`.
+///     Rejected and Draft declarations cannot be superseded — they
+///     should be re-submitted instead.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeclarationSupersededV1 {
+    /// The declaration being superseded (the OLD one).
+    pub declaration_id: DeclarationId,
+    /// The new declaration that replaces it.
+    pub superseded_by_declaration_id: DeclarationId,
+    /// Time the supersede event was recorded.
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub superseded_at: OffsetDateTime,
+    /// Correlation token for tracing the supersede transaction across
+    /// the two aggregates' event logs and the two outbox rows.
+    pub correlation_id: uuid::Uuid,
 }

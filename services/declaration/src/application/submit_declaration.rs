@@ -168,6 +168,17 @@ mod tests {
             // not exercised by these tests
             Ok(None)
         }
+
+        async fn save_supersede(
+            &self,
+            _new_event: &DeclarationEvent,
+            _new_expected_version: u64,
+            _old_id: DeclarationId,
+            _old_event: &DeclarationEvent,
+            _old_expected_version: u64,
+        ) -> Result<(), RepositoryError> {
+            unimplemented!("submit_declaration tests don't exercise the supersede path")
+        }
     }
 
     fn make_cmd(declaration_id: DeclarationId) -> SubmitDeclaration {

@@ -165,6 +165,17 @@ mod tests {
         ) -> Result<Option<DeclarationProjection>, RepositoryError> {
             Ok(None)
         }
+
+        async fn save_supersede(
+            &self,
+            _new_event: &DeclarationEvent,
+            _new_expected_version: u64,
+            _old_id: DeclarationId,
+            _old_event: &DeclarationEvent,
+            _old_expected_version: u64,
+        ) -> Result<(), RepositoryError> {
+            unimplemented!("record_verification_outcome tests don't exercise supersede")
+        }
     }
 
     fn submit_cmd(id: DeclarationId) -> SubmitDeclaration {

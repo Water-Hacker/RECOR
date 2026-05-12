@@ -12,6 +12,7 @@ use tracing::{error, info};
 use recor_declaration::api::{AppState, OidcVerifier};
 use recor_declaration::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
@@ -55,6 +56,7 @@ async fn main() -> Result<()> {
     let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
     let record_verification =
         Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
+    let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
 
     let base_url = std::env::var("RECOR_BASE_URL").unwrap_or_else(|_| {
@@ -90,6 +92,7 @@ async fn main() -> Result<()> {
         submit_usecase: submit,
         get_usecase: get,
         record_verification_usecase: record_verification,
+        supersede_usecase: supersede,
         idempotency,
         base_url,
         is_dev: cfg.is_dev(),

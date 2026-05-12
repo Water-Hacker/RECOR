@@ -24,11 +24,13 @@ use uuid::Uuid;
 use crate::api::auth::{auth_middleware, AuthConfig, Principal};
 use crate::api::dto::{
     GetDeclarationResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
+    SupersedeDeclarationResponse,
 };
 use crate::api::internal::{handle_verification_outcome, InternalAppState};
 use crate::api::OidcVerifier;
 use crate::application::{
     GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
+    SupersedeDeclarationUseCase,
 };
 use crate::config::Config;
 use crate::domain::DeclarationId;
@@ -40,6 +42,7 @@ pub struct AppState {
     pub submit_usecase: Arc<SubmitDeclarationUseCase>,
     pub get_usecase: Arc<GetDeclarationUseCase>,
     pub record_verification_usecase: Arc<RecordVerificationOutcomeUseCase>,
+    pub supersede_usecase: Arc<SupersedeDeclarationUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
     pub base_url: String,
     pub is_dev: bool,
@@ -59,6 +62,10 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let protected = Router::new()
         .route("/v1/declarations", post(submit_declaration))
         .route("/v1/declarations/{declaration_id}", get(get_declaration))
+        .route(
+            "/v1/declarations/{declaration_id}/supersede",
+            post(supersede_declaration),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state,
             auth_middleware,
@@ -289,4 +296,42 @@ fn blake3_hex(bytes: &[u8]) -> String {
     let mut h = Hasher::new();
     h.update(bytes);
     hex::encode(h.finalize().as_bytes())
+}
+
+#[tracing::instrument(
+    skip_all,
+    fields(
+        principal = %principal.subject,
+        superseded_declaration_id = %superseded_declaration_id,
+        new_entity_id = %req.entity_id,
+    )
+)]
+async fn supersede_declaration(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path(superseded_declaration_id): Path<Uuid>,
+    Json(req): Json<SubmitDeclarationRequest>,
+) -> Result<(StatusCode, Json<SupersedeDeclarationResponse>), ServiceError> {
+    // Same canonicalisation + attestation verification as submit — the
+    // NEW declaration is a fully-signed declaration in its own right.
+    let canonical_bytes = canonical_payload_bytes(&req, &principal.subject)?;
+    req.attestation
+        .verify_against(&canonical_bytes)
+        .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
+
+    let correlation_id = Uuid::now_v7();
+    let new_command = req.into_command(principal.subject.clone(), correlation_id);
+
+    let receipt = state
+        .supersede_usecase
+        .execute(DeclarationId(superseded_declaration_id), new_command)
+        .await?;
+
+    let response = SupersedeDeclarationResponse::from_receipt(receipt, &state.base_url);
+    info!(
+        new_declaration_id = %response.new_declaration_id,
+        superseded_declaration_id = %response.superseded_declaration_id,
+        "declaration superseded"
+    );
+    Ok((StatusCode::CREATED, Json(response)))
 }

@@ -45,6 +45,16 @@ pub struct DeclarationProjection {
     pub verification_case_id: Option<uuid::Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified_at: Option<OffsetDateTime>,
+
+    /// If this declaration replaced an earlier one, the earlier id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_declaration_id: Option<DeclarationId>,
+    /// If this declaration has been replaced, the successor's id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by_declaration_id: Option<DeclarationId>,
+    /// Time this declaration was superseded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Error)]

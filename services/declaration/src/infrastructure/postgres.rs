@@ -30,7 +30,9 @@ use crate::domain::value_object::{
     BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, DeclarationState,
     EntityId, VerificationLane,
 };
-use crate::domain::{DeclarationEvent, DeclarationSubmittedV1, DeclarationVerifiedV1};
+use crate::domain::{
+    DeclarationEvent, DeclarationSubmittedV1, DeclarationSupersededV1, DeclarationVerifiedV1,
+};
 
 pub struct PostgresDeclarationRepository {
     pool: PgPool,
@@ -98,6 +100,52 @@ impl DeclarationRepository for PostgresDeclarationRepository {
         Ok(())
     }
 
+    #[instrument(
+        skip(self, new_event, old_event),
+        fields(
+            new_declaration_id = %new_event.declaration_id(),
+            old_declaration_id = %old_id,
+            new_expected_version,
+            old_expected_version
+        )
+    )]
+    async fn save_supersede(
+        &self,
+        new_event: &DeclarationEvent,
+        new_expected_version: u64,
+        old_id: DeclarationId,
+        old_event: &DeclarationEvent,
+        old_expected_version: u64,
+    ) -> Result<(), RepositoryError> {
+        let mut tx = self.pool.begin().await?;
+        let new_version =
+            i64::try_from(new_expected_version.saturating_add(1)).unwrap_or(i64::MAX);
+        let old_version =
+            i64::try_from(old_expected_version.saturating_add(1)).unwrap_or(i64::MAX);
+
+        // Insert NEW declaration's Submitted event + projection + outbox.
+        insert_event(&mut tx, new_event, new_version).await?;
+        upsert_projection_with_supersedes(
+            &mut tx,
+            new_event,
+            new_version,
+            Some(old_id.0),
+        )
+        .await?;
+        write_outbox(&mut tx, new_event).await?;
+
+        // Insert OLD declaration's Superseded event + projection update +
+        // outbox. (Order is intentional: NEW first so its projection row
+        // exists before any reader could observe a stale OLD row that
+        // points at it.)
+        insert_event(&mut tx, old_event, old_version).await?;
+        upsert_projection(&mut tx, old_event, old_version).await?;
+        write_outbox(&mut tx, old_event).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     #[instrument(skip(self), fields(declaration_id = %id))]
     async fn load_projection(
         &self,
@@ -109,7 +157,8 @@ impl DeclarationRepository for PostgresDeclarationRepository {
                    declaration_kind, effective_from, beneficial_owners, attestation,
                    state, aggregate_version, submitted_at, receipt_hash_hex,
                    correlation_id, verification_state, verification_lane,
-                   verification_case_id, verified_at
+                   verification_case_id, verified_at,
+                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at
             FROM declarations
             WHERE declaration_id = $1
             "#,
@@ -139,6 +188,11 @@ impl DeclarationRepository for PostgresDeclarationRepository {
         let verification_lane: Option<String> = row.try_get("verification_lane")?;
         let verification_case_id: Option<uuid::Uuid> = row.try_get("verification_case_id")?;
         let verified_at: Option<time::OffsetDateTime> = row.try_get("verified_at")?;
+        let supersedes_declaration_id: Option<uuid::Uuid> =
+            row.try_get("supersedes_declaration_id")?;
+        let superseded_by_declaration_id: Option<uuid::Uuid> =
+            row.try_get("superseded_by_declaration_id")?;
+        let superseded_at: Option<time::OffsetDateTime> = row.try_get("superseded_at")?;
 
         let verification_lane = match verification_lane.as_deref() {
             None => None,
@@ -159,6 +213,9 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             submitted_at,
             receipt_hash_hex,
             correlation_id,
+            supersedes_declaration_id: supersedes_declaration_id.map(DeclarationId),
+            superseded_by_declaration_id: superseded_by_declaration_id.map(DeclarationId),
+            superseded_at,
             verification_state,
             verification_lane,
             verification_case_id,
@@ -229,6 +286,10 @@ fn decode_event(
             let v1: DeclarationVerifiedV1 = serde_json::from_value(payload)?;
             Ok(DeclarationEvent::Verified(v1))
         }
+        "declaration.superseded.v1" => {
+            let v1: DeclarationSupersededV1 = serde_json::from_value(payload)?;
+            Ok(DeclarationEvent::Superseded(v1))
+        }
         other => Err(RepositoryError::Backend(sqlx::Error::Decode(
             format!("unknown event_type: {other}").into(),
         ))),
@@ -249,6 +310,9 @@ async fn insert_event(
             // tracing context still flows via the request span. Stamp
             // the case_id so the event row carries its provenance.
             (p.declaration_id.0, p.verification_case_id, serde_json::to_value(p)?)
+        }
+        DeclarationEvent::Superseded(p) => {
+            (p.declaration_id.0, p.correlation_id, serde_json::to_value(p)?)
         }
     };
     let result = sqlx::query(
@@ -275,6 +339,57 @@ async fn insert_event(
             })
         }
         Err(e) => Err(RepositoryError::Backend(e)),
+    }
+}
+
+/// Wraps `upsert_projection` for the supersede path so the new
+/// declaration's row carries the `supersedes_declaration_id` pointer.
+/// For non-Submitted events the `supersedes` arg is ignored.
+async fn upsert_projection_with_supersedes(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &DeclarationEvent,
+    new_version: i64,
+    supersedes: Option<uuid::Uuid>,
+) -> Result<(), RepositoryError> {
+    match event {
+        DeclarationEvent::Submitted(p) => {
+            let owners = serde_json::to_value(&p.beneficial_owners)?;
+            let attestation = serde_json::to_value(&p.attestation)?;
+            sqlx::query(
+                r#"
+                INSERT INTO declarations (
+                    declaration_id, entity_id, declarant_principal, declarant_role,
+                    declaration_kind, effective_from, beneficial_owners, attestation,
+                    state, aggregate_version, submitted_at, receipt_hash_hex, correlation_id,
+                    verification_state, supersedes_declaration_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                ON CONFLICT (declaration_id) DO UPDATE SET
+                    state             = EXCLUDED.state,
+                    aggregate_version = EXCLUDED.aggregate_version,
+                    updated_at        = NOW()
+                "#,
+            )
+            .bind(p.declaration_id.0)
+            .bind(p.entity_id.0)
+            .bind(&p.declarant_principal)
+            .bind(p.declarant_role.as_str())
+            .bind(p.kind.as_str())
+            .bind(p.effective_from)
+            .bind(owners)
+            .bind(attestation)
+            .bind("submitted")
+            .bind(new_version)
+            .bind(p.submitted_at)
+            .bind(&p.receipt_hash_hex)
+            .bind(p.correlation_id)
+            .bind("pending")
+            .bind(supersedes)
+            .execute(&mut **tx)
+            .await?;
+            Ok(())
+        }
+        _ => upsert_projection(tx, event, new_version).await,
     }
 }
 
@@ -349,6 +464,25 @@ async fn upsert_projection(
             .execute(&mut **tx)
             .await?;
         }
+        DeclarationEvent::Superseded(p) => {
+            sqlx::query(
+                r#"
+                UPDATE declarations
+                SET state                        = 'superseded',
+                    aggregate_version            = $2,
+                    superseded_by_declaration_id = $3,
+                    superseded_at                = $4,
+                    updated_at                   = NOW()
+                WHERE declaration_id = $1
+                "#,
+            )
+            .bind(p.declaration_id.0)
+            .bind(new_version)
+            .bind(p.superseded_by_declaration_id.0)
+            .bind(p.superseded_at)
+            .execute(&mut **tx)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -360,6 +494,7 @@ async fn write_outbox(
     let (declaration_id, payload) = match event {
         DeclarationEvent::Submitted(p) => (p.declaration_id.0, serde_json::to_value(p)?),
         DeclarationEvent::Verified(p) => (p.declaration_id.0, serde_json::to_value(p)?),
+        DeclarationEvent::Superseded(p) => (p.declaration_id.0, serde_json::to_value(p)?),
     };
     let event_id = uuid::Uuid::now_v7();
     sqlx::query(
