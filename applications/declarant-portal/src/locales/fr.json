@@ -174,5 +174,12 @@
       "publicKeyHeading": "Clé publique de signature",
       "publicKeyExplanation": "Cette clé publique accompagne votre déclaration et permet à RÉCOR de vérifier la signature. La clé privée correspondante reste exclusivement dans la mémoire de votre navigateur."
     }
+  },
+  "drafts": {
+    "resumePrompt": "Reprendre votre brouillon enregistré ?",
+    "savedAt": "Enregistré le {{when}}. Les brouillons sont stockés uniquement sur cet appareil et expirent au bout de 24 heures.",
+    "resumeButton": "Reprendre",
+    "discardButton": "Abandonner",
+    "unavailableNotice": "Les brouillons hors ligne ne sont pas disponibles dans ce navigateur (IndexedDB est désactivé). Votre formulaire n'est pas enregistré — veuillez soumettre avant de quitter cette page."
   }
 }
