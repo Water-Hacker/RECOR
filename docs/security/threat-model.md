@@ -102,7 +102,7 @@ tickets):
 |---|---|---|---|
 | S | Forged declarant identity in request body | Principal comes from `auth_middleware` (OIDC sub or dev header), never from request body — D17 | `services/declaration/src/api/auth.rs:58` |
 | S | JWT alg-confusion (sign with HMAC, claim RS256) | HMAC algs (HS256/384/512) refused outright before signature check | `services/declaration/src/api/oidc.rs`, R-DECL-1 closed |
-| T | Tampered event log after write | Event log is append-only at the SQL level: BEFORE UPDATE/DELETE/TRUNCATE triggers RAISE EXCEPTION on every mutation attempt regardless of invoking role (COMP-2, migration `services/declaration/migrations/0007_audit_log_immutability.sql`); UPDATE/DELETE/TRUNCATE also REVOKEd from PUBLIC. | migrations + integration test `services/declaration/tests/audit_immutability.rs`; partial gap: no in-DB checksum chain (deferred to R-DECL-9 Fabric anchoring) |
+| T | Tampered event log after write | Event log is append-only at the SQL level: BEFORE UPDATE/DELETE/TRUNCATE triggers RAISE EXCEPTION on every mutation attempt regardless of invoking role (COMP-2, migration `services/declaration/migrations/0007_audit_log_immutability.sql`); UPDATE/DELETE/TRUNCATE also REVOKEd from PUBLIC. **Plus**: every event is anchored to the Hyperledger Fabric `recor-audit` channel via R-DECL-9; tampering on the projection is detectable post-hoc via `apps/audit-verifier/` re-derivation. | migrations + integration test `services/declaration/tests/audit_immutability.rs` + Fabric anchoring (G1 closed) |
 | T | Outbox row mutated between write and relay | Outbox + event + projection in single Postgres transaction (D13); relay is idempotent on `event_id` | `services/declaration/src/infrastructure/outbox.rs` |
 | R | Declarant later disputes that they signed | Ed25519 attestation persisted alongside the event; BLAKE3 receipt deterministic from canonical bytes | D15 |
 | I | PII leaked via tracing logs | OPS-2 (shipped): `recor-logging::RedactingLayer` masks SPIFFE paths, UUID PII fields, partial receipt hashes | `packages/recor-logging/src/lib.rs` |
@@ -175,7 +175,7 @@ tickets):
 
 | # | Gap | Closing ticket |
 |---|---|---|
-| G1 | No in-DB audit chain on the event log (today: append-only via triggers + grants — COMP-2 shipped — but no cryptographic chaining between rows) | R-DECL-9 (Fabric anchoring, Phase 2) |
+| G1 | **CLOSED** by R-DECL-9 (this ticket). Every declaration event is now asynchronously anchored to the Hyperledger Fabric `recor-audit` channel via the `worker-fabric-bridge` app (`apps/worker-fabric-bridge/`), and verification is exposed publicly via the `audit-verifier` app's `GET /v1/audit/verify/{declaration_id}`. The chaincode (`chaincode/audit-witness/`) is jointly endorsed by ARMP, ANIF, DGI, and CONAC; tampering on the projection is now detectable by re-derivation. See `docs/adr/0009-fabric-audit-anchoring.md`, `docs/runbooks/fabric-bridge.md`, and `docs/runbooks/audit-verification.md`. | R-DECL-9 (closed) |
 | G2 | D↔V replay window not bound to envelope timestamp | TBD — Phase 2 follow-up; tracked in `docs/PRODUCTION-TODO.md` R-LOOP-2 (Kafka migration carries the iat enforcement) |
 | G3 | Declaration body PII unencrypted at rest in the projection table | TBD — encryption-at-rest ticket to file; not in Phase 0 |
 | G4 | DBA-role statement audit | OBS-1 (Phase 2 — production observability) |
@@ -183,9 +183,10 @@ tickets):
 | G6 | Post-quantum agility plan not yet drafted | TBD — D21 ADR in Phase 2 |
 | G7 | Threat model independence (this doc is self-authored; no external security review) | PEN-1 (Phase 5 pre-launch penetration test + threat-model peer review) |
 
-Closing G1, G3, and G4 is a precondition for launch. G2, G5, G6, G7 are
-acknowledged accepted-risks for the v1 launch envelope and have
-named tickets owning the resolution path.
+G1 is now CLOSED (R-DECL-9 Fabric anchoring). Closing G3 and G4 remains
+a precondition for launch. G2, G5, G6, G7 are acknowledged
+accepted-risks for the v1 launch envelope and have named tickets
+owning the resolution path.
 
 ---
 
