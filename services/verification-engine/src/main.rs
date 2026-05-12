@@ -92,6 +92,11 @@ async fn main() -> Result<()> {
         Some(v)
     };
 
+    // OBS-1: build the per-service Prometheus registry once at startup.
+    let metrics = recor_verification_engine::metrics::Metrics::new()
+        .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
+    info!("prometheus metrics registry initialised");
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
@@ -99,6 +104,7 @@ async fn main() -> Result<()> {
         outbox_admin,
         is_dev: cfg.is_dev(),
         oidc,
+        metrics: metrics.clone(),
     };
 
     let router = recor_verification_engine::api::router(app_state, &cfg);

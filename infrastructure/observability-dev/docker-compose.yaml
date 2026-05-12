@@ -77,8 +77,17 @@ services:
       - --storage.tsdb.retention.size=1GB
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
+    # OBS-1: on Linux, host.docker.internal is not auto-resolved. The
+    # extra_hosts mapping below makes the alias point at the docker
+    # bridge gateway so Prometheus can scrape services running on the
+    # host. macOS / Windows users already have this mapping built in.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # OBS-1: alert rule definitions. Loaded by prometheus.yml's
+      # `rule_files:` directive.
+      - ./alert-rules.yaml:/etc/prometheus/alert-rules.yaml:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"

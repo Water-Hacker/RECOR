@@ -1,0 +1,262 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "OBS-1: outbox-relay health. Queue depth, delivery latency, DLQ accumulation, replay activity. Watch this dashboard when the RecorDlqOversized or RecorRelayLatencyHigh alert fires.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Undispatched outbox rows. A persistent non-zero value means the relay is behind; rising trend means the subscriber is slower than the producer.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "recor_outbox_undispatched",
+          "legendFormat": "Undispatched",
+          "refId": "A"
+        }
+      ],
+      "title": "Outbox undispatched (gauge)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Current DLQ size. Crosses red at 100 (matches the RecorDlqOversized alert threshold).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "recor_outbox_dlq_size",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "title": "DLQ size (gauge)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "DLQ replay activity. Success counts replays handled cleanly; failure counts not_found / backend errors.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "replays/s",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "sum by (result, job) (rate(recor_outbox_dlq_replays_total[5m]))",
+          "legendFormat": "{{job}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "DLQ replay rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "p50 / p95 / p99 of relay delivery latency per subscriber. The RecorRelayLatencyHigh alert fires when p99 exceeds 30s for 5m.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "seconds",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, subscriber) (rate(recor_relay_delivery_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{subscriber}} p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, subscriber) (rate(recor_relay_delivery_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{subscriber}} p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, subscriber) (rate(recor_relay_delivery_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{subscriber}} p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Relay delivery latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "Outbox undispatched rows over time. A flat horizon at zero is the desired steady state.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "rows",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 5,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "recor_outbox_undispatched",
+          "legendFormat": "undispatched",
+          "refId": "A"
+        }
+      ],
+      "title": "Outbox undispatched over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+      "description": "DLQ size over time across both services.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "rows",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 6,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "recor-prometheus" },
+          "expr": "recor_outbox_dlq_size",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "DLQ size over time",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["recor", "obs-1", "relay-health"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RÉCOR — Relay Health",
+  "uid": "recor-relay-health",
+  "version": 1,
+  "weekStart": ""
+}

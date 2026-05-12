@@ -1,0 +1,112 @@
+---
+# OBS-1 — Prometheus alert rules for the RÉCOR platform (dev profile).
+#
+# Loaded by prometheus.yml's `rule_files:` directive. Mounted into the
+# Prometheus container at /etc/prometheus/alert-rules.yaml via the
+# docker-compose volume.
+#
+# Rule selection: the three brief-mandated alerts plus a handful of
+# obvious operational follow-ons (high HTTP error rate, slow verification
+# engine). Each rule carries:
+#
+#   - severity:    page (24/7) | warn (business hours)
+#   - team:        owning team
+#   - runbook_url: link to the matching section of
+#                  docs/runbooks/observability-dashboards.md
+#
+# The rule names use the `Recor*` prefix so AlertManager routing can
+# match on this single namespace (the OBS-2 follow-up wires the routing).
+#
+# Thresholds are operator-tunable; see the runbook for the calibration
+# log. Changes must be reviewed by infrastructure-engineer + security-
+# engineer (the latter because mis-tuned alerts can mask incident
+# signal — D14 fail-closed).
+
+groups:
+  - name: recor-relay-health
+    interval: 30s
+    rules:
+      - alert: RecorDlqOversized
+        expr: recor_outbox_dlq_size > 100
+        for: 10m
+        labels:
+          severity: page
+          team: declaration-platform
+        annotations:
+          summary: "Outbox DLQ has > 100 rows for 10m"
+          description: |
+            recor_outbox_dlq_size has been above 100 for ten minutes.
+            Indicates either the relay subscriber is rejecting valid
+            events, or the relay credentials are expired, or there is a
+            schema-incompatibility on the consumer side. Inspect the
+            DLQ via the operator endpoint and replay rows once the
+            root cause is fixed.
+          runbook_url: "https://github.com/recor-cm/recor/blob/main/docs/runbooks/observability-dashboards.md#alert-recordlqoversized"
+
+      - alert: RecorRelayLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, subscriber) (rate(recor_relay_delivery_latency_seconds_bucket[5m]))
+          ) > 30
+        for: 5m
+        labels:
+          severity: warn
+          team: declaration-platform
+        annotations:
+          summary: "Outbox-relay p99 delivery latency > 30s"
+          description: |
+            The 99th-percentile relay delivery latency over the last
+            five minutes is above 30 seconds. The subscriber is slow,
+            partially down, or the network path is degraded. Verify the
+            subscriber is healthy, then check the Tempo trace history
+            for that event_type to localise the slow segment.
+          runbook_url: "https://github.com/recor-cm/recor/blob/main/docs/runbooks/observability-dashboards.md#alert-recorrelaylatencyhigh"
+
+  - name: recor-auth-health
+    interval: 30s
+    rules:
+      - alert: RecorOidcVerifierDown
+        expr: rate(recor_oidc_verify_total{result="unavailable"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: page
+          team: declaration-platform
+        annotations:
+          summary: "OIDC verifier is failing on the unavailable code path"
+          description: |
+            The OIDC verifier is returning the `unavailable` outcome
+            for at least 0.5 verifications per second over the past
+            five minutes. This corresponds to the
+            DiscoveryFailed / JwksFetchFailed branches in
+            packages/recor-auth-oidc — i.e. the issuer's discovery or
+            JWKS endpoint is unreachable. Every protected REST + gRPC
+            call is failing closed (D14). Recover the issuer or
+            failover to a backup before declarant traffic backs up.
+          runbook_url: "https://github.com/recor-cm/recor/blob/main/docs/runbooks/observability-dashboards.md#alert-recoroidcverifierdown"
+
+  - name: recor-platform-health
+    interval: 30s
+    rules:
+      # Operational follow-on alert. Not in the brief, but cheap to
+      # add and immediately useful: a sustained 5xx rate over the
+      # protected REST surface indicates a bug or a backend outage.
+      - alert: RecorHttp5xxRateHigh
+        expr: |
+          sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          sum by (service) (rate(http_requests_total[5m]))
+          > 0.05
+        for: 10m
+        labels:
+          severity: warn
+          team: declaration-platform
+        annotations:
+          summary: "5xx error ratio > 5% for 10m"
+          description: |
+            More than 5% of HTTP responses from a RÉCOR service are
+            5xx over the past 10 minutes. This is a strong signal of
+            an internal fault — database degraded, dependency timeout,
+            or a freshly-introduced bug. Inspect the per-endpoint
+            breakdown on the platform-health dashboard.
+          runbook_url: "https://github.com/recor-cm/recor/blob/main/docs/runbooks/observability-dashboards.md#alert-recorhttp5xxratehigh"

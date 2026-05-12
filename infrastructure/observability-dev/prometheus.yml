@@ -2,7 +2,8 @@
 #
 # Receives metrics from the OTel collector via remote-write
 # (--web.enable-remote-write-receiver in docker-compose command), plus
-# scrapes its own /metrics and the collector's internal /metrics endpoint.
+# scrapes its own /metrics, the collector's internal /metrics endpoint,
+# and (OBS-1) the Declaration + Verification Engine services' /metrics.
 
 global:
   scrape_interval: 15s
@@ -10,6 +11,15 @@ global:
   external_labels:
     cluster: dev
     environment: dev
+
+# OBS-1: alerting rules. Evaluated every `evaluation_interval` against
+# the recor_* metrics emitted by the services. Loaded by mount path;
+# the file lives next to this config in
+# infrastructure/observability-dev/alert-rules.yaml. The Prometheus
+# container in docker-compose.yaml is expected to mount
+# ./alert-rules.yaml read-only at /etc/prometheus/alert-rules.yaml.
+rule_files:
+  - /etc/prometheus/alert-rules.yaml
 
 scrape_configs:
   - job_name: prometheus
@@ -25,3 +35,30 @@ scrape_configs:
       - source_labels: [__name__]
         regex: otelcol_.*
         action: keep
+
+  # OBS-1: Declaration service /metrics endpoint. In the dev integration
+  # stack the service binds on host port 8080 (see
+  # docker-compose.integration.yaml); the observability-dev stack reaches
+  # the host via host.docker.internal. On Linux Docker, the daemon
+  # resolves this name automatically when the prometheus service is
+  # started with `--add-host=host.docker.internal:host-gateway` (see
+  # the dashboards runbook). On macOS/Windows the name is built in.
+  - job_name: recor-declaration
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          service: recor-declaration
+
+  # OBS-1: Verification Engine /metrics endpoint. Same network rationale
+  # as the declaration service.
+  - job_name: recor-verification-engine
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - host.docker.internal:8081
+        labels:
+          service: recor-verification-engine

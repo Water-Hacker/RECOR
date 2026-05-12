@@ -71,6 +71,16 @@ opentelemetry = { version = "0.27", features = ["trace"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"] }
 
+# OBS-1: Prometheus metrics. The `prometheus` crate provides a Registry +
+# Counter/Gauge/Histogram primitives that we expose at `/metrics` in
+# Prometheus text exposition format (Content-Type
+# `text/plain; version=0.0.4`). One Registry per service; metrics live in
+# `services/<name>/src/metrics.rs`. Default features are kept (`process` +
+# `pull` are not in this crate's default set; we only need the registry +
+# encoder which are always-on). D18: only bounded-enum label values are
+# permitted — see the metrics module docs for the policy.
+prometheus = "0.14"
+
 # Config + secrets
 config = { version = "0.15", default-features = false, features = ["toml"] }
 secrecy = { version = "0.10", features = ["serde"] }

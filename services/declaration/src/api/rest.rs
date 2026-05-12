@@ -40,6 +40,8 @@ use crate::domain::DeclarationId;
 use crate::error::ServiceError;
 use crate::infrastructure::postgres::IdempotencyStore;
 use crate::infrastructure::OutboxAdminStore;
+// OBS-1: Prometheus metrics.
+use crate::metrics::{metrics_handler, metrics_middleware, Metrics};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,12 +60,17 @@ pub struct AppState {
     /// (the config layer refuses to start otherwise). Bearer-token
     /// requests with `oidc = None` are rejected at the middleware.
     pub oidc: Option<Arc<OidcVerifier>>,
+    /// OBS-1: shared Prometheus metrics handle. Hydrated at startup
+    /// in `main.rs`; cloned cheaply via `Arc<_>` into every handler
+    /// + middleware site.
+    pub metrics: Arc<Metrics>,
 }
 
 pub fn router(state: AppState, cfg: &Config) -> Router {
     let auth_state = AuthConfig {
         is_dev: state.is_dev,
         oidc: state.oidc.clone(),
+        metrics: state.metrics.clone(),
     };
 
     // Rate limiting (OPS-1). Built once at router construction and
@@ -132,6 +139,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let dlq_admin_state = DlqAdminState {
         store: state.outbox_admin.clone(),
         admin_principals: Arc::new(admin_principals),
+        metrics: state.metrics.clone(),
     };
     let admin = Router::new()
         .route("/v1/internal/outbox-dlq", get(crate::api::dlq::list_dlq))
@@ -164,7 +172,7 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .with_state(state);
+        .with_state(state.clone());
 
     // DOC-1: the OpenAPI spec + Scalar UI. Public (no auth) — the spec
     // is a contract for consumers. Mounted as a sibling router so it
@@ -172,7 +180,35 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     // these routes do not change state; they describe the surface.
     let openapi = crate::api::openapi::openapi_routes();
 
-    protected.merge(admin).merge(internal).merge(public).merge(openapi).layer(
+    // OBS-1: GET /metrics — Prometheus exposition. Intentionally NOT
+    // documented in the OpenAPI spec (see `api::openapi`). No auth — the
+    // deployment expectation is in-cluster network only (D17 — see the
+    // runbook for the network policy). Mounted as its own sub-router so
+    // the metrics handler reads `State<Arc<Metrics>>` rather than the
+    // full AppState; this also keeps `/metrics` exempt from the
+    // request-timing middleware (we don't want scrape traffic to inflate
+    // the latency histogram).
+    let metrics_router: Router = Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(state.metrics.clone());
+
+    let app_routes = protected
+        .merge(admin)
+        .merge(internal)
+        .merge(public)
+        .merge(openapi);
+
+    // Apply the request-timing middleware ONLY to the app routes — not
+    // to /metrics. The middleware reads `State<Arc<Metrics>>`, so we use
+    // `from_fn_with_state` to bind that state alongside the existing
+    // typed AppState routes.
+    let metrics_state = state.metrics.clone();
+    let app_routes = app_routes.layer(axum::middleware::from_fn_with_state(
+        metrics_state,
+        metrics_middleware,
+    ));
+
+    app_routes.merge(metrics_router).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -195,9 +231,16 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         (status = 200, description = "Service process is alive", body = crate::api::dto::HealthzResponse),
     ),
 )]
-#[tracing::instrument(level = "info")]
-pub(crate) async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, Json(json!({"status": "ok"})))
+#[tracing::instrument(level = "info", skip(state))]
+pub(crate) async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let resp = (StatusCode::OK, Json(json!({"status": "ok"})));
+    state
+        .metrics
+        .health_check_duration_seconds
+        .with_label_values(&["healthz"])
+        .observe(start.elapsed().as_secs_f64());
+    resp
 }
 
 #[utoipa::path(
@@ -212,10 +255,11 @@ pub(crate) async fn healthz() -> impl IntoResponse {
 )]
 #[tracing::instrument(level = "info", skip(state))]
 pub(crate) async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    let start = std::time::Instant::now();
     // Cheap readiness: confirms the idempotency-store pool is alive,
     // which by transitivity means the database is reachable.
     let probe = sqlx::query_scalar!(r#"SELECT 1 AS "probe!: i32""#).fetch_one(state.idempotency.pool());
-    match probe.await {
+    let resp = match probe.await {
         Ok(_) => (StatusCode::OK, Json(json!({"status": "ready"}))),
         Err(e) => {
             warn!(error = %e, "readiness probe failed");
@@ -224,7 +268,13 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
                 Json(json!({"status": "not_ready", "reason": "database_unreachable"})),
             )
         }
-    }
+    };
+    state
+        .metrics
+        .health_check_duration_seconds
+        .with_label_values(&["readyz"])
+        .observe(start.elapsed().as_secs_f64());
+    resp
 }
 
 #[utoipa::path(
@@ -281,6 +331,9 @@ pub(crate) async fn submit_declaration(
     // stable declaration_id for the receipt body.
     let cmd = req.into_command(principal.subject.clone(), correlation_id);
     let declaration_id = cmd.declaration_id;
+    // Capture the declaration kind for the OBS-1 counter. Bounded enum
+    // — 5 possible values — so safe as a Prometheus label (D18).
+    let kind_label = cmd.kind.as_str();
 
     // 4. Idempotency check.
     let idem_key = headers
@@ -337,6 +390,16 @@ pub(crate) async fn submit_declaration(
             warn!(error = ?e, "idempotency record failed; submission succeeded but replay disabled");
         }
     }
+
+    // OBS-1: domain counter — only after successful persistence, so
+    // 4xx rejects do NOT inflate this counter. `kind` is a bounded
+    // 5-value enum (DeclarationKind::as_str), satisfying D18 label
+    // cardinality.
+    state
+        .metrics
+        .declarations_submitted_total
+        .with_label_values(&[kind_label])
+        .inc();
 
     info!(
         declaration_id = %declaration_id,
@@ -640,6 +703,16 @@ pub(crate) async fn amend_declaration(
     let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
     let receipt = state.amend_usecase.execute(cmd).await?;
     let response = AmendDeclarationResponse::from_receipt(receipt, &state.base_url);
+    // OBS-1: increment AFTER successful persistence. Label `result` is
+    // a bounded enum — `success` here, the error paths above already
+    // returned early. (Failure samples would inflate the counter
+    // incorrectly so we deliberately only emit on success; the HTTP
+    // counter still captures the non-2xx tally per-endpoint.)
+    state
+        .metrics
+        .declarations_amended_total
+        .with_label_values(&["success"])
+        .inc();
     info!(
         declaration_id = %response.declaration_id,
         aggregate_version = response.aggregate_version,
@@ -708,6 +781,13 @@ pub(crate) async fn correct_declaration(
     let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
     let receipt = state.correct_usecase.execute(cmd).await?;
     let response = CorrectDeclarationResponse::from_receipt(receipt, &state.base_url);
+    // OBS-1: domain counter — only on success. See the amend handler
+    // for the rationale on `result="success"` only.
+    state
+        .metrics
+        .declarations_corrected_total
+        .with_label_values(&["success"])
+        .inc();
     info!(
         declaration_id = %response.declaration_id,
         aggregate_version = response.aggregate_version,

@@ -12,4 +12,7 @@ pub mod config;
 pub mod domain;
 pub mod error;
 pub mod infrastructure;
+// OBS-1: Prometheus metrics. `pub` so integration tests can build a
+// router and inspect the registry directly.
+pub mod metrics;
 pub mod observability;

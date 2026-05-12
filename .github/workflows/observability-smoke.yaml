@@ -50,6 +50,14 @@ jobs:
 
       - name: validate compose file syntax
         working-directory: infrastructure/observability-dev
+        env:
+          # The compose file requires RECOR_GRAFANA_ADMIN_PASSWORD to
+          # interpolate the Grafana admin password; `docker compose
+          # config` evaluates the same expressions, so the variable
+          # must be set even when we're only parsing the file. Reuse
+          # the per-run GITHUB_TOKEN as a per-run-unique random
+          # string (it is not used for any auth in this step).
+          RECOR_GRAFANA_ADMIN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: docker compose config > /dev/null
 
       - name: smoke

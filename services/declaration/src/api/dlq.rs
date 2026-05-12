@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 use crate::api::auth::Principal;
 use crate::infrastructure::{DlqRow, OutboxAdminError, OutboxAdminStore};
+use crate::metrics::Metrics;
 
 #[derive(Clone)]
 pub struct DlqAdminState {
@@ -36,6 +37,9 @@ pub struct DlqAdminState {
     /// Allowed admin principal subjects (deduplicated). Empty
     /// disables the endpoints (returns 503).
     pub admin_principals: Arc<HashSet<String>>,
+    /// OBS-1: shared metrics handle. We record DLQ replay outcomes
+    /// + sample the DLQ size gauge on list_dlq.
+    pub metrics: Arc<Metrics>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -150,6 +154,9 @@ pub async fn list_dlq(
         return Err(err);
     }
     let total = state.store.count_dlq().await.map_err(backend_error)?;
+    // OBS-1: sample the DLQ size gauge whenever an operator lists it.
+    // The RecorDlqOversized alert (>100 for 10m) reads this gauge.
+    state.metrics.outbox_dlq_size.set(total);
     let rows = state
         .store
         .list_dlq(query.limit, query.offset)
@@ -195,18 +202,38 @@ pub async fn replay_dlq(
     }
     match state.store.replay_dlq(id).await {
         Ok(()) => {
+            // OBS-1: bounded enum label.
+            state
+                .metrics
+                .outbox_dlq_replays_total
+                .with_label_values(&["success"])
+                .inc();
             info!(%id, replayed_by = %principal.subject, "DLQ row replayed by admin");
             Ok((
                 StatusCode::OK,
                 Json(ReplayDlqResponse { id, replayed: true }),
             ))
         }
-        Err(OutboxAdminError::NotFound(_)) => Err(error_response(
-            StatusCode::NOT_FOUND,
-            "dlq_row_not_found",
-            &format!("no DLQ row with id {id}"),
-        )),
-        Err(e) => Err(backend_error(e)),
+        Err(OutboxAdminError::NotFound(_)) => {
+            state
+                .metrics
+                .outbox_dlq_replays_total
+                .with_label_values(&["failure"])
+                .inc();
+            Err(error_response(
+                StatusCode::NOT_FOUND,
+                "dlq_row_not_found",
+                &format!("no DLQ row with id {id}"),
+            ))
+        }
+        Err(e) => {
+            state
+                .metrics
+                .outbox_dlq_replays_total
+                .with_label_values(&["failure"])
+                .inc();
+            Err(backend_error(e))
+        }
     }
 }
 

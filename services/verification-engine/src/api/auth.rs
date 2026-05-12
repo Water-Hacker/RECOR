@@ -19,6 +19,7 @@ use tracing::warn;
 
 use crate::api::oidc::{OidcVerifier, VerificationError};
 use crate::error::ServiceError;
+use crate::metrics::Metrics;
 
 #[derive(Debug, Clone)]
 pub struct Principal {
@@ -29,6 +30,9 @@ pub struct Principal {
 pub struct AuthConfig {
     pub is_dev: bool,
     pub oidc: Option<Arc<OidcVerifier>>,
+    /// OBS-1: shared Prometheus registry for per-verify outcome
+    /// counter. See `crate::metrics`.
+    pub metrics: Arc<Metrics>,
 }
 
 pub async fn auth_middleware(
@@ -72,6 +76,16 @@ async fn resolve_principal(
 
     let claims = verifier.verify(token).await.map_err(|e| {
         warn!(error = %e, "bearer token failed verification");
+        let label = match &e {
+            VerificationError::DiscoveryFailed { .. }
+            | VerificationError::JwksFetchFailed { .. } => "unavailable",
+            _ => "invalid",
+        };
+        state
+            .metrics
+            .oidc_verify_total
+            .with_label_values(&[label])
+            .inc();
         match e {
             VerificationError::TokenInvalid(_)
             | VerificationError::MalformedHeader
@@ -89,7 +103,17 @@ async fn resolve_principal(
     })?;
 
     if claims.sub.trim().is_empty() {
+        state
+            .metrics
+            .oidc_verify_total
+            .with_label_values(&["invalid"])
+            .inc();
         return Err(ServiceError::AuthenticationRequired);
     }
+    state
+        .metrics
+        .oidc_verify_total
+        .with_label_values(&["success"])
+        .inc();
     Ok(Principal { subject: claims.sub })
 }

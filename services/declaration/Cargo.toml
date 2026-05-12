@@ -71,6 +71,10 @@ opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry-semantic-conventions = "0.27"
+# OBS-1: Prometheus metrics. Used by `crate::metrics` to build the
+# per-service Registry exposed at GET /metrics, plus the Tower middleware
+# that times every REST request.
+prometheus.workspace = true
 
 # Config
 config.workspace = true
