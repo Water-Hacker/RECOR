@@ -47,12 +47,27 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         }))
         .with_state(state.clone());
 
+    // Internal HMAC-authenticated webhook for the Declaration service's
+    // outbox relay. Not behind the user-auth middleware — uses its own
+    // signature verification at the handler.
+    use secrecy::ExposeSecret;
+    let internal_state = crate::api::internal::InternalAppState {
+        submit_usecase: state.submit_usecase.clone(),
+        hmac_secret: cfg.inbound_hmac_secret.expose_secret().to_string(),
+    };
+    let internal = Router::new()
+        .route(
+            "/v1/internal/declaration-events",
+            post(crate::api::internal::handle_declaration_event),
+        )
+        .with_state(internal_state);
+
     let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .with_state(state);
 
-    protected.merge(public).layer(
+    protected.merge(internal).merge(public).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),

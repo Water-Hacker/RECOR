@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use recor_declaration::api::AppState;
@@ -14,6 +15,7 @@ use recor_declaration::config::Config;
 use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
 };
+use recor_declaration::infrastructure::{OutboxRelay, RelaySubscriber};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,7 +51,7 @@ async fn main() -> Result<()> {
 
     let submit = Arc::new(SubmitDeclarationUseCase::new(repository.clone()));
     let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
-    let idempotency = Arc::new(IdempotencyStore::new(pool));
+    let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
 
     let base_url = std::env::var("RECOR_BASE_URL").unwrap_or_else(|_| {
         format!("http://{}", cfg.bind_addr.trim_start_matches("0.0.0.0:"))
@@ -72,12 +74,52 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding to {addr}"))?;
     info!(%addr, "listening");
 
-    let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
+    // Cancellation token shared with the relay so shutdown is coordinated.
+    let cancel = CancellationToken::new();
+
+    // Outbox relay — optional. Enabled when RELAY_WEBHOOK_URL is set.
+    // When disabled, outbox rows accumulate; a future ticket relays them.
+    let relay_handle = if !cfg.relay_webhook_url.is_empty() {
+        let subscriber = RelaySubscriber {
+            name: "verification-engine".to_string(),
+            webhook_url: cfg.relay_webhook_url.clone(),
+            hmac_secret: cfg.relay_hmac_secret.expose_secret().to_string(),
+        };
+        let relay = OutboxRelay::new(pool.clone(), subscriber)
+            .with_poll_interval(std::time::Duration::from_secs(
+                cfg.relay_poll_interval_seconds,
+            ));
+        let cancel_relay = cancel.clone();
+        info!(
+            webhook = %cfg.relay_webhook_url,
+            poll_interval_s = cfg.relay_poll_interval_seconds,
+            "outbox relay enabled"
+        );
+        Some(tokio::spawn(async move {
+            relay.run(cancel_relay).await;
+        }))
+    } else {
+        info!("outbox relay disabled (RELAY_WEBHOOK_URL not set)");
+        None
+    };
+
+    let cancel_serve = cancel.clone();
+    let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        cancel_serve.cancel();
+    });
 
     if let Err(e) = serve.await {
         error!(error = ?e, "server error");
+        cancel.cancel();
         return Err(anyhow::anyhow!(e));
     }
+
+    // Wait for the relay to finish.
+    if let Some(h) = relay_handle {
+        let _ = h.await;
+    }
+
     info!("recor-declaration stopped");
     Ok(())
 }

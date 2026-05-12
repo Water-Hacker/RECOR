@@ -54,6 +54,7 @@ pub struct DeclarationSubmittedV1 {
     pub effective_from: time::Date,
     pub beneficial_owners: Vec<BeneficialOwnerClaim>,
     pub attestation: CryptographicAttestation,
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
     pub submitted_at: OffsetDateTime,
     pub correlation_id: uuid::Uuid,
     /// BLAKE3 hash of the canonical content of this declaration. The
