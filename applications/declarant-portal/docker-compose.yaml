@@ -68,6 +68,13 @@ services:
     depends_on:
       declaration:
         condition: service_healthy
+    environment:
+      # CSP connect-src origin for the declaration service. In the
+      # dev compose, the browser talks directly to the host-mapped
+      # port (127.0.0.1:8080). In prod this is templated to the
+      # public API origin (e.g. https://api.recor.cm). See
+      # applications/declarant-portal/CLAUDE.md § security headers.
+      CSP_CONNECT_SRC: "http://127.0.0.1:8080 http://localhost:8080"
     ports:
       - "127.0.0.1:8082:8082"
     networks:
