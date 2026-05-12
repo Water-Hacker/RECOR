@@ -34,10 +34,19 @@ fail-close at the boundary.
 - Events: declarations are event-sourced. Today: `declaration.submitted.v1`.
 - Outbox: every event is written to `outbox` in the same transaction; a
   future outbox-relay worker publishes to Kafka.
-- gRPC contracts: none yet. REST is the v1 surface; gRPC is a follow-up
-  ticket (`R-DECL-8`).
+- gRPC contracts: `contracts/declaration.proto` (R-DECL-8 / #78).
+  tonic-based server bound on `GRPC_BIND_ADDR` (default empty →
+  disabled; production uses `0.0.0.0:9080`). Same OIDC verifier as
+  REST via a tonic interceptor, and the canonical-payload bytes are
+  byte-parity with REST so a single signature is valid under either
+  transport (D15). The gRPC surface is intentionally NOT in the
+  OpenAPI spec — different transport, different shape; the `.proto`
+  is the source of truth for gRPC types while REST DTOs remain
+  hand-written under utoipa. V-engine's gRPC surface is deferred to
+  `R-VER-GRPC` (TODO marker in `services/verification-engine/src/api/mod.rs`).
 - Public APIs: REST under `/v1/declarations` (see `src/api/rest.rs` and
-  the dto module).
+  the dto module) + gRPC `recor.declaration.v1.DeclarationService`
+  (see `src/api/grpc.rs`).
 
 ## SLOs
 

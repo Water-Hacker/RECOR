@@ -63,6 +63,11 @@ services:
     environment:
       RUST_BACKTRACE: "1"
       BIND_ADDR: "0.0.0.0:8080"
+      # R-DECL-8: gRPC surface alongside REST. Bound to 9080 so the
+      # two transports do not fight for the same port. Empty disables
+      # gRPC entirely; this compose stack opts in so the integration
+      # loop exercises both surfaces.
+      GRPC_BIND_ADDR: "0.0.0.0:9080"
       DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres-declaration:5432/declaration"
       DB_POOL_MAX_CONNECTIONS: "10"
       OTLP_ENDPOINT: ""
@@ -85,7 +90,13 @@ services:
       # Empty in steady state; set during a rotation window. See
       # docs/runbooks/hmac-secret-rotation.md.
       WRITEBACK_HMAC_SECRET_OLD: "${RECOR_V_TO_D_HMAC_OLD:-}"
-    ports: ["127.0.0.1:8080:8080"]
+    # R-DECL-8: expose the gRPC port alongside REST. Host-side bind
+    # is 9080 (matches the GRPC_BIND_ADDR above). The smoke scripts
+    # continue to use REST on 8080; gRPC is reachable for `grpcurl`
+    # and any future polyglot consumer of the .proto.
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9080:9080"
     networks: [loop]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]

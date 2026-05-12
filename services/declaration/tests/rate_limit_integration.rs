@@ -170,6 +170,9 @@ fn test_config(
         rate_limit_burst,
         log_redaction: String::new(),
         log_redaction_key: SecretString::from(String::new()),
+        // R-DECL-8: empty disables the gRPC server in this REST-only
+        // test harness.
+        grpc_bind_addr: String::new(),
     }
 }
 

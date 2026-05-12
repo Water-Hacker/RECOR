@@ -147,6 +147,19 @@ pub struct Config {
     /// regenerated each restart (with a startup `warn!`).
     #[serde(default = "default_secret")]
     pub log_redaction_key: SecretString,
+
+    /// Bind address for the gRPC server (R-DECL-8). Defaults to empty
+    /// so test harnesses and local dev that only exercise REST do not
+    /// need to bind a second port. Production sets
+    /// `GRPC_BIND_ADDR=0.0.0.0:9080`. Empty disables the gRPC server
+    /// entirely — the safe default for the existing test suite.
+    ///
+    /// The gRPC surface is defined in `contracts/declaration.proto`
+    /// and implemented at `src/api/grpc.rs`. Same OIDC verifier as
+    /// REST, wrapped in a tonic interceptor so D17 (zero trust) holds
+    /// uniformly across transports.
+    #[serde(default)]
+    pub grpc_bind_addr: String,
 }
 
 impl Config {

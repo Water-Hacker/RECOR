@@ -155,6 +155,9 @@ fn test_config(bind_addr: &str, database_url: &str) -> Config {
         rate_limit_burst: 0,
         log_redaction: String::new(),
         log_redaction_key: SecretString::from(String::new()),
+        // R-DECL-8: empty disables the gRPC server. The REST-only
+        // integration tests do not exercise the gRPC surface.
+        grpc_bind_addr: String::new(),
     }
 }
 
