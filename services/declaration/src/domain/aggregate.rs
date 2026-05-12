@@ -20,12 +20,17 @@ use blake3::Hasher;
 use serde::Serialize;
 use time::{Duration, OffsetDateTime};
 
-use super::command::{RecordVerificationOutcome, SubmitDeclaration};
+use super::command::{
+    AmendDeclaration, CorrectDeclaration, RecordVerificationOutcome, SubmitDeclaration,
+};
 use super::error::DomainError;
 use super::event::{
-    DeclarationEvent, DeclarationSubmittedV1, DeclarationSupersededV1, DeclarationVerifiedV1,
+    DeclarationAmendedV1, DeclarationCorrectedV1, DeclarationEvent, DeclarationSubmittedV1,
+    DeclarationSupersededV1, DeclarationVerifiedV1,
 };
-use super::value_object::{BeneficialOwnerClaim, DeclarationId, DeclarationState};
+use super::value_object::{
+    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarationId, DeclarationState,
+};
 
 /// In-memory representation of a Declaration aggregate, hydrated from
 /// its event stream.
@@ -45,12 +50,20 @@ pub struct DeclarationAggregate {
     /// chains are strictly linear).
     pub superseded_by: Option<DeclarationId>,
     /// The declarant principal recorded on the Submitted event. Used
-    /// by the use-case layer to authorise subsequent commands (today
-    /// only Supersede uses it; future Amend/Correct will too).
+    /// by the use-case layer to authorise subsequent commands (Supersede,
+    /// Amend, Correct).
     pub declarant_principal: Option<String>,
     /// The entity this declaration is about. Used to validate that
     /// superseding declarations target the same entity.
     pub entity_id: Option<super::value_object::EntityId>,
+    /// Current snapshot of the amendable fields. Populated from the
+    /// Submitted event and replaced by subsequent Amended events.
+    /// Used by `handle_amend` to populate the `before` snapshot.
+    pub amendment_state: Option<AmendmentSet>,
+    /// Current snapshot of the correctable fields. Always populated
+    /// (empty after Submitted; updated by Corrected events). Used by
+    /// `handle_correct` to populate the `before` snapshot.
+    pub correction_state: CorrectionSet,
 }
 
 impl DeclarationAggregate {
@@ -64,6 +77,8 @@ impl DeclarationAggregate {
             superseded_by: None,
             declarant_principal: None,
             entity_id: None,
+            amendment_state: None,
+            correction_state: CorrectionSet::default(),
         }
     }
 
@@ -83,6 +98,14 @@ impl DeclarationAggregate {
                 self.state = DeclarationState::Submitted;
                 self.declarant_principal = Some(p.declarant_principal.clone());
                 self.entity_id = Some(p.entity_id);
+                self.amendment_state = Some(AmendmentSet {
+                    beneficial_owners: p.beneficial_owners.clone(),
+                    effective_from: p.effective_from,
+                    declarant_role: p.declarant_role,
+                });
+                // Correction state starts empty; Corrected events
+                // overwrite it.
+                self.correction_state = CorrectionSet::default();
             }
             DeclarationEvent::Verified(p) => {
                 self.state = p.lane.to_declaration_state();
@@ -91,6 +114,18 @@ impl DeclarationAggregate {
             DeclarationEvent::Superseded(p) => {
                 self.state = DeclarationState::Superseded;
                 self.superseded_by = Some(p.superseded_by_declaration_id);
+            }
+            DeclarationEvent::Amended(p) => {
+                // The aggregate's lifecycle state is unchanged by an
+                // amendment (still Submitted or InVerification). The
+                // amendable-field snapshot is replaced wholesale by
+                // `after`.
+                self.amendment_state = Some(p.after.clone());
+            }
+            DeclarationEvent::Corrected(p) => {
+                // Corrections only touch metadata; the lifecycle state
+                // stays Submitted. Replace the snapshot wholesale.
+                self.correction_state = p.after.clone();
             }
         }
         self.version = self.version.saturating_add(1);
@@ -224,6 +259,152 @@ impl DeclarationAggregate {
         };
         Ok(DeclarationEvent::Superseded(payload))
     }
+
+    /// Validate an Amend command and produce a `DeclarationAmendedV1`
+    /// event. Does NOT mutate `self`; the caller persists then applies.
+    ///
+    /// Rules enforced here:
+    ///   - This aggregate must have a prior Submitted event (version > 0).
+    ///   - This aggregate must NOT be Superseded.
+    ///   - Current state must be `Submitted` or `InVerification`.
+    ///     Accepted → operators must use Supersede (more transparency);
+    ///     Rejected → re-submission.
+    ///   - The command's `declarant_principal` must match the principal
+    ///     stored on the aggregate (only the owner can amend).
+    ///   - The attestation's `signed_by` must match the command principal.
+    ///   - `amendments.beneficial_owners` must satisfy the same invariants
+    ///     as a fresh submission (non-empty, no duplicate person_id,
+    ///     sum to 10_000 basis points).
+    ///   - `amendments.effective_from` must be in the past 5 years and
+    ///     not after `submitted_at`.
+    pub fn handle_amend(
+        &self,
+        cmd: AmendDeclaration,
+    ) -> Result<DeclarationEvent, DomainError> {
+        if self.version == 0 {
+            return Err(DomainError::AmendBeforeSubmit(self.id.0));
+        }
+        if self.superseded_by.is_some() {
+            return Err(DomainError::AmendFromInvalidState {
+                declaration_id: self.id.0,
+                state: DeclarationState::Superseded.as_str(),
+            });
+        }
+        match self.state {
+            DeclarationState::Submitted | DeclarationState::InVerification => {}
+            _ => {
+                return Err(DomainError::AmendFromInvalidState {
+                    declaration_id: self.id.0,
+                    state: self.state.as_str(),
+                });
+            }
+        }
+
+        // Authorisation: only the original declarant can amend.
+        let expected_owner = self.declarant_principal.clone().ok_or_else(|| {
+            DomainError::AmendBeforeSubmit(self.id.0)
+        })?;
+        if expected_owner != cmd.declarant_principal {
+            return Err(DomainError::AmendNotOwner {
+                declaration_id: self.id.0,
+                expected: expected_owner,
+                actual: cmd.declarant_principal,
+            });
+        }
+        if cmd.attestation.signed_by != cmd.declarant_principal {
+            return Err(DomainError::AttestationPrincipalMismatch {
+                expected: cmd.declarant_principal,
+                actual: cmd.attestation.signed_by,
+            });
+        }
+
+        // Validate the amended payload against the same invariants as
+        // a fresh submission (owners non-empty, sum to 10_000, no
+        // duplicate person_id, effective_from in window).
+        validate_beneficial_owners(&cmd.amendments.beneficial_owners)?;
+        validate_effective_from(cmd.amendments.effective_from, cmd.submitted_at)?;
+
+        // The `before` snapshot is the aggregate's current amendable
+        // state; populated when the Submitted event was applied (and
+        // updated by any intervening Amended events).
+        let before = self.amendment_state.clone().ok_or_else(|| {
+            DomainError::AmendBeforeSubmit(self.id.0)
+        })?;
+
+        let payload = DeclarationAmendedV1 {
+            declaration_id: self.id,
+            before,
+            after: cmd.amendments,
+            attestation: cmd.attestation,
+            amended_at: OffsetDateTime::now_utc(),
+            correlation_id: cmd.correlation_id,
+        };
+        Ok(DeclarationEvent::Amended(payload))
+    }
+
+    /// Validate a Correct command and produce a `DeclarationCorrectedV1`
+    /// event. Stricter than amend — corrections are admissible only
+    /// from `Submitted` (pre-verification).
+    pub fn handle_correct(
+        &self,
+        cmd: CorrectDeclaration,
+    ) -> Result<DeclarationEvent, DomainError> {
+        if self.version == 0 {
+            return Err(DomainError::CorrectBeforeSubmit(self.id.0));
+        }
+        if self.superseded_by.is_some() {
+            return Err(DomainError::CorrectFromInvalidState {
+                declaration_id: self.id.0,
+                state: DeclarationState::Superseded.as_str(),
+            });
+        }
+        if self.state != DeclarationState::Submitted {
+            return Err(DomainError::CorrectFromInvalidState {
+                declaration_id: self.id.0,
+                state: self.state.as_str(),
+            });
+        }
+
+        let expected_owner = self.declarant_principal.clone().ok_or_else(|| {
+            DomainError::CorrectBeforeSubmit(self.id.0)
+        })?;
+        if expected_owner != cmd.declarant_principal {
+            return Err(DomainError::CorrectNotOwner {
+                declaration_id: self.id.0,
+                expected: expected_owner,
+                actual: cmd.declarant_principal,
+            });
+        }
+        if cmd.attestation.signed_by != cmd.declarant_principal {
+            return Err(DomainError::AttestationPrincipalMismatch {
+                expected: cmd.declarant_principal,
+                actual: cmd.attestation.signed_by,
+            });
+        }
+
+        let before = self.correction_state.clone();
+        // Normalise empty strings to None at the boundary so the
+        // event log carries canonical shape.
+        let after = normalise_correction_set(cmd.corrections);
+
+        let payload = DeclarationCorrectedV1 {
+            declaration_id: self.id,
+            before,
+            after,
+            attestation: cmd.attestation,
+            corrected_at: OffsetDateTime::now_utc(),
+            correlation_id: cmd.correlation_id,
+        };
+        Ok(DeclarationEvent::Corrected(payload))
+    }
+}
+
+fn normalise_correction_set(mut cs: CorrectionSet) -> CorrectionSet {
+    cs.metadata_notes = cs
+        .metadata_notes
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    cs
 }
 
 fn validate_belief(field: &'static str, value: f64) -> Result<(), DomainError> {
@@ -577,5 +758,322 @@ mod tests {
         cmd.fused_risk_belief = f64::NAN;
         let err = agg.handle_record_verification(cmd).unwrap_err();
         assert!(matches!(err, DomainError::FusedBeliefOutOfRange { .. }));
+    }
+
+    // ─── Amend ────────────────────────────────────────────────────────────
+
+    fn amend_cmd(
+        id: DeclarationId,
+        principal: &str,
+        amendments: AmendmentSet,
+    ) -> AmendDeclaration {
+        AmendDeclaration {
+            declaration_id: id,
+            declarant_principal: principal.to_string(),
+            amendments,
+            attestation: attestation_for(principal),
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id: Uuid::now_v7(),
+        }
+    }
+
+    fn default_amendments() -> AmendmentSet {
+        AmendmentSet {
+            beneficial_owners: vec![owner(6_000), owner(4_000)],
+            effective_from: date!(2026 - 02 - 01),
+            declarant_role: DeclarantRole::AuthorisedAgent,
+        }
+    }
+
+    #[test]
+    fn amend_from_submitted_emits_amended_event() {
+        let agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().expect("aggregate has principal");
+        let amendments = default_amendments();
+        let cmd = amend_cmd(agg.id, &principal, amendments.clone());
+        let event = agg.handle_amend(cmd).expect("amend allowed from Submitted");
+        let DeclarationEvent::Amended(payload) = event else {
+            panic!("expected Amended event, got {event:?}");
+        };
+        assert_eq!(payload.declaration_id, agg.id);
+        assert_eq!(payload.after, amendments);
+        // before snapshot is the aggregate's amendable-state snapshot
+        // populated when the Submitted event was applied.
+        let before_owners = &payload.before.beneficial_owners;
+        assert_eq!(before_owners.len(), 1);
+        assert_eq!(before_owners[0].ownership_basis_points.as_basis_points(), 10_000);
+    }
+
+    #[test]
+    fn amend_from_in_verification_emits_amended_event() {
+        let mut agg = submitted_aggregate();
+        let v_cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Yellow);
+        let v_event = agg.handle_record_verification(v_cmd).unwrap().unwrap();
+        agg.apply(&v_event);
+        assert_eq!(agg.state, DeclarationState::InVerification);
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = amend_cmd(agg.id, &principal, default_amendments());
+        assert!(matches!(agg.handle_amend(cmd), Ok(DeclarationEvent::Amended(_))));
+    }
+
+    #[test]
+    fn amend_from_accepted_refused_with_supersede_guidance() {
+        let mut agg = submitted_aggregate();
+        let v_cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let v_event = agg.handle_record_verification(v_cmd).unwrap().unwrap();
+        agg.apply(&v_event);
+        assert_eq!(agg.state, DeclarationState::Accepted);
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = amend_cmd(agg.id, &principal, default_amendments());
+        let err = agg.handle_amend(cmd).unwrap_err();
+        let msg = err.to_string();
+        // Message MUST mention Supersede so the API surfaces operator guidance.
+        assert!(matches!(err, DomainError::AmendFromInvalidState { .. }));
+        assert!(
+            msg.contains("Supersede"),
+            "AmendFromInvalidState message must mention Supersede; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn amend_from_rejected_refused() {
+        let mut agg = submitted_aggregate();
+        let v_cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Red);
+        let v_event = agg.handle_record_verification(v_cmd).unwrap().unwrap();
+        agg.apply(&v_event);
+        assert_eq!(agg.state, DeclarationState::Rejected);
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = amend_cmd(agg.id, &principal, default_amendments());
+        assert!(matches!(
+            agg.handle_amend(cmd).unwrap_err(),
+            DomainError::AmendFromInvalidState { .. }
+        ));
+    }
+
+    #[test]
+    fn amend_from_superseded_refused() {
+        let mut agg = submitted_aggregate();
+        let v_cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let v_event = agg.handle_record_verification(v_cmd).unwrap().unwrap();
+        agg.apply(&v_event);
+        let new_id = DeclarationId::new();
+        let sup_event = agg.handle_supersede(new_id, Uuid::now_v7()).unwrap();
+        agg.apply(&sup_event);
+        assert_eq!(agg.state, DeclarationState::Superseded);
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = amend_cmd(agg.id, &principal, default_amendments());
+        assert!(matches!(
+            agg.handle_amend(cmd).unwrap_err(),
+            DomainError::AmendFromInvalidState { .. }
+        ));
+    }
+
+    #[test]
+    fn amend_preserves_owner_sum_invariant() {
+        let agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        // Sum != 10_000 must be refused with the same error as Submit.
+        let bad_amendments = AmendmentSet {
+            beneficial_owners: vec![owner(5_000), owner(4_000)],
+            effective_from: date!(2026 - 02 - 01),
+            declarant_role: DeclarantRole::SelfDeclaration,
+        };
+        let cmd = amend_cmd(agg.id, &principal, bad_amendments);
+        assert_eq!(
+            agg.handle_amend(cmd).unwrap_err(),
+            DomainError::OwnershipSumInvariant { sum: 9_000 }
+        );
+    }
+
+    #[test]
+    fn amend_by_non_owner_refused() {
+        let agg = submitted_aggregate();
+        let cmd = amend_cmd(agg.id, "spiffe://recor.cm/some-other-principal", default_amendments());
+        assert!(matches!(
+            agg.handle_amend(cmd).unwrap_err(),
+            DomainError::AmendNotOwner { .. }
+        ));
+    }
+
+    #[test]
+    fn two_amendments_in_sequence_both_apply() {
+        let mut agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        let first = default_amendments();
+        let event1 = agg.handle_amend(amend_cmd(agg.id, &principal, first.clone())).unwrap();
+        agg.apply(&event1);
+        // The aggregate's amendment_state should now reflect first.
+        assert_eq!(agg.amendment_state.as_ref().unwrap(), &first);
+        // Second amendment uses a different roster.
+        let second = AmendmentSet {
+            beneficial_owners: vec![owner(7_000), owner(3_000)],
+            effective_from: date!(2026 - 03 - 01),
+            declarant_role: DeclarantRole::OperatorAssisted,
+        };
+        let event2 = agg.handle_amend(amend_cmd(agg.id, &principal, second.clone())).unwrap();
+        // before snapshot on the second event must equal the first
+        // amendment's `after` (proving the aggregate observed it).
+        let DeclarationEvent::Amended(payload2) = &event2 else { panic!(); };
+        assert_eq!(payload2.before, first);
+        assert_eq!(payload2.after, second);
+        agg.apply(&event2);
+        assert_eq!(agg.amendment_state.as_ref().unwrap(), &second);
+        // Version monotonic increment: Submitted + Amended×2 = version 3.
+        assert_eq!(agg.version, 3);
+    }
+
+    #[test]
+    fn replay_amend_event_reproduces_before_and_after() {
+        // The acceptance criterion: replaying the event log reproduces
+        // both before and after snapshots.
+        let mut agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        let event = agg
+            .handle_amend(amend_cmd(agg.id, &principal, default_amendments()))
+            .unwrap();
+        agg.apply(&event);
+
+        let DeclarationEvent::Amended(payload) = &event else { panic!(); };
+        // The Amended payload itself carries both snapshots.
+        assert_eq!(payload.after.beneficial_owners.len(), 2);
+        assert_eq!(payload.before.beneficial_owners.len(), 1);
+
+        // Now rehydrate a fresh aggregate by replaying a synthesised
+        // event stream (Submitted + the Amended event). The replayed
+        // aggregate's `amendment_state` must match what we observed
+        // after the original `apply` call.
+        let snapshot_after_apply = agg.amendment_state.clone().unwrap();
+        let mut replayed = DeclarationAggregate::fresh(agg.id);
+        replayed.apply(&DeclarationEvent::Submitted(DeclarationSubmittedV1 {
+            declaration_id: agg.id,
+            entity_id: agg.entity_id.unwrap(),
+            declarant_principal: principal.clone(),
+            declarant_role: DeclarantRole::SelfDeclaration,
+            kind: DeclarationKind::Incorporation,
+            effective_from: date!(2026 - 01 - 01),
+            beneficial_owners: vec![owner(10_000)],
+            attestation: attestation_for(&principal),
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id: Uuid::now_v7(),
+            receipt_hash_hex: "0".repeat(64),
+        }));
+        replayed.apply(&event);
+        assert_eq!(replayed.amendment_state.unwrap(), snapshot_after_apply);
+    }
+
+    // ─── Correct ──────────────────────────────────────────────────────────
+
+    fn correct_cmd(
+        id: DeclarationId,
+        principal: &str,
+        corrections: CorrectionSet,
+    ) -> CorrectDeclaration {
+        CorrectDeclaration {
+            declaration_id: id,
+            declarant_principal: principal.to_string(),
+            corrections,
+            attestation: attestation_for(principal),
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id: Uuid::now_v7(),
+        }
+    }
+
+    #[test]
+    fn correct_from_submitted_emits_corrected_event() {
+        let agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        let corrections = CorrectionSet {
+            metadata_notes: Some("Operator typo in supporting docs ref".into()),
+        };
+        let event = agg.handle_correct(correct_cmd(agg.id, &principal, corrections.clone())).unwrap();
+        let DeclarationEvent::Corrected(payload) = event else {
+            panic!("expected Corrected event");
+        };
+        assert_eq!(payload.declaration_id, agg.id);
+        assert_eq!(payload.after, corrections);
+        assert!(payload.before.metadata_notes.is_none());
+    }
+
+    #[test]
+    fn correct_from_in_verification_refused_directs_to_amend() {
+        let mut agg = submitted_aggregate();
+        let v_cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Yellow);
+        let v_event = agg.handle_record_verification(v_cmd).unwrap().unwrap();
+        agg.apply(&v_event);
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = correct_cmd(
+            agg.id,
+            &principal,
+            CorrectionSet { metadata_notes: Some("x".into()) },
+        );
+        let err = agg.handle_correct(cmd).unwrap_err();
+        assert!(matches!(err, DomainError::CorrectFromInvalidState { .. }));
+        // The error message must direct the operator to Amend or Supersede.
+        assert!(
+            err.to_string().contains("Amend") && err.to_string().contains("Supersede"),
+            "CorrectFromInvalidState message must mention both Amend and Supersede; got: {err}"
+        );
+    }
+
+    #[test]
+    fn correct_metadata_notes_roundtrip_through_apply() {
+        // Acceptance criterion: correct metadata_notes round-trips
+        // through GET (here we exercise the aggregate's apply path
+        // which the projection mirrors).
+        let mut agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        let corrections = CorrectionSet {
+            metadata_notes: Some("Note for the operator".into()),
+        };
+        let event = agg.handle_correct(correct_cmd(agg.id, &principal, corrections.clone())).unwrap();
+        agg.apply(&event);
+        assert_eq!(agg.correction_state, corrections);
+        // Replay path: build a fresh aggregate from the synthesised
+        // event stream and confirm the same correction_state.
+        let DeclarationEvent::Corrected(payload) = &event else { panic!(); };
+        let mut replayed = DeclarationAggregate::fresh(agg.id);
+        replayed.apply(&DeclarationEvent::Submitted(DeclarationSubmittedV1 {
+            declaration_id: agg.id,
+            entity_id: agg.entity_id.unwrap(),
+            declarant_principal: principal.clone(),
+            declarant_role: DeclarantRole::SelfDeclaration,
+            kind: DeclarationKind::Incorporation,
+            effective_from: date!(2026 - 01 - 01),
+            beneficial_owners: vec![owner(10_000)],
+            attestation: attestation_for(&principal),
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id: Uuid::now_v7(),
+            receipt_hash_hex: "0".repeat(64),
+        }));
+        replayed.apply(&event);
+        assert_eq!(replayed.correction_state, payload.after);
+    }
+
+    #[test]
+    fn correct_by_non_owner_refused() {
+        let agg = submitted_aggregate();
+        let cmd = correct_cmd(
+            agg.id,
+            "spiffe://recor.cm/different",
+            CorrectionSet { metadata_notes: Some("note".into()) },
+        );
+        assert!(matches!(
+            agg.handle_correct(cmd).unwrap_err(),
+            DomainError::CorrectNotOwner { .. }
+        ));
+    }
+
+    #[test]
+    fn correct_normalises_empty_string_to_none() {
+        let agg = submitted_aggregate();
+        let principal = agg.declarant_principal.clone().unwrap();
+        let cmd = correct_cmd(
+            agg.id,
+            &principal,
+            CorrectionSet { metadata_notes: Some("   ".into()) },
+        );
+        let event = agg.handle_correct(cmd).unwrap();
+        let DeclarationEvent::Corrected(payload) = event else { panic!(); };
+        assert!(payload.after.metadata_notes.is_none());
     }
 }

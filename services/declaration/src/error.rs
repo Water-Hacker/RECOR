@@ -10,7 +10,8 @@ use thiserror::Error;
 use tracing::error;
 
 use crate::application::{
-    GetError, RecordVerificationError, RepositoryError, SubmitError, SupersedeError,
+    AmendError, CorrectError, GetError, RecordVerificationError, RepositoryError, SubmitError,
+    SupersedeError,
 };
 use crate::domain::DomainError;
 
@@ -73,6 +74,26 @@ impl From<SupersedeError> for ServiceError {
     }
 }
 
+impl From<AmendError> for ServiceError {
+    fn from(value: AmendError) -> Self {
+        match value {
+            AmendError::Domain(e) => Self::Domain(e),
+            AmendError::Repository(e) => Self::Repository(e),
+            AmendError::NotFound(id) => Self::NotFound(id.to_string()),
+        }
+    }
+}
+
+impl From<CorrectError> for ServiceError {
+    fn from(value: CorrectError) -> Self {
+        match value {
+            CorrectError::Domain(e) => Self::Domain(e),
+            CorrectError::Repository(e) => Self::Repository(e),
+            CorrectError::NotFound(id) => Self::NotFound(id.to_string()),
+        }
+    }
+}
+
 impl IntoResponse for ServiceError {
     fn into_response(self) -> Response {
         let (status, kind, message) = match &self {
@@ -81,20 +102,32 @@ impl IntoResponse for ServiceError {
                     DomainError::AlreadySubmitted(_) => "conflict",
                     DomainError::VerificationCaseMismatch { .. } => "conflict",
                     DomainError::AlreadySuperseded(_) => "conflict",
+                    DomainError::AmendFromInvalidState { .. } => "conflict",
+                    DomainError::CorrectFromInvalidState { .. } => "conflict",
                     DomainError::AttestationPrincipalMismatch { .. } => "forbidden",
                     DomainError::SupersedeNotOwner { .. } => "forbidden",
+                    DomainError::AmendNotOwner { .. } => "forbidden",
+                    DomainError::CorrectNotOwner { .. } => "forbidden",
                     DomainError::VerificationOutcomeBeforeSubmit(_) => "not_found",
                     DomainError::SupersedeBeforeSubmit(_) => "not_found",
+                    DomainError::AmendBeforeSubmit(_) => "not_found",
+                    DomainError::CorrectBeforeSubmit(_) => "not_found",
                     _ => "bad_request",
                 };
                 let status = match e {
                     DomainError::AlreadySubmitted(_) => StatusCode::CONFLICT,
                     DomainError::VerificationCaseMismatch { .. } => StatusCode::CONFLICT,
                     DomainError::AlreadySuperseded(_) => StatusCode::CONFLICT,
+                    DomainError::AmendFromInvalidState { .. } => StatusCode::CONFLICT,
+                    DomainError::CorrectFromInvalidState { .. } => StatusCode::CONFLICT,
                     DomainError::AttestationPrincipalMismatch { .. } => StatusCode::FORBIDDEN,
                     DomainError::SupersedeNotOwner { .. } => StatusCode::FORBIDDEN,
+                    DomainError::AmendNotOwner { .. } => StatusCode::FORBIDDEN,
+                    DomainError::CorrectNotOwner { .. } => StatusCode::FORBIDDEN,
                     DomainError::VerificationOutcomeBeforeSubmit(_) => StatusCode::NOT_FOUND,
                     DomainError::SupersedeBeforeSubmit(_) => StatusCode::NOT_FOUND,
+                    DomainError::AmendBeforeSubmit(_) => StatusCode::NOT_FOUND,
+                    DomainError::CorrectBeforeSubmit(_) => StatusCode::NOT_FOUND,
                     _ => StatusCode::BAD_REQUEST,
                 };
                 (status, kind, e.to_string())

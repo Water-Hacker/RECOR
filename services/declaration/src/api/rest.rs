@@ -24,15 +24,16 @@ use uuid::Uuid;
 use crate::api::auth::{auth_middleware, AuthConfig, Principal};
 use crate::api::dlq::DlqAdminState;
 use crate::api::dto::{
-    GetDeclarationResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
-    SupersedeDeclarationResponse,
+    AmendDeclarationRequest, AmendDeclarationResponse, CorrectDeclarationRequest,
+    CorrectDeclarationResponse, GetDeclarationResponse, SubmitDeclarationRequest,
+    SubmitDeclarationResponse, SupersedeDeclarationResponse,
 };
 use crate::api::internal::{handle_verification_outcome, InternalAppState};
 use crate::api::rate_limit::{build_governor_config, governor_layer};
 use crate::api::OidcVerifier;
 use crate::application::{
-    GetDeclarationUseCase, RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase,
-    SupersedeDeclarationUseCase,
+    AmendDeclarationUseCase, CorrectDeclarationUseCase, GetDeclarationUseCase,
+    RecordVerificationOutcomeUseCase, SubmitDeclarationUseCase, SupersedeDeclarationUseCase,
 };
 use crate::config::Config;
 use crate::domain::DeclarationId;
@@ -46,6 +47,8 @@ pub struct AppState {
     pub get_usecase: Arc<GetDeclarationUseCase>,
     pub record_verification_usecase: Arc<RecordVerificationOutcomeUseCase>,
     pub supersede_usecase: Arc<SupersedeDeclarationUseCase>,
+    pub amend_usecase: Arc<AmendDeclarationUseCase>,
+    pub correct_usecase: Arc<CorrectDeclarationUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
     pub outbox_admin: Arc<OutboxAdminStore>,
     pub base_url: String,
@@ -82,10 +85,20 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     } else {
         post(submit_declaration)
     };
-    let supersede_route = if let Some(cfg) = governor_config {
+    let supersede_route = if let Some(cfg) = governor_config.clone() {
         post(supersede_declaration).route_layer(governor_layer(cfg))
     } else {
         post(supersede_declaration)
+    };
+    let amend_route = if let Some(cfg) = governor_config.clone() {
+        post(amend_declaration).route_layer(governor_layer(cfg))
+    } else {
+        post(amend_declaration)
+    };
+    let correct_route = if let Some(cfg) = governor_config {
+        post(correct_declaration).route_layer(governor_layer(cfg))
+    } else {
+        post(correct_declaration)
     };
 
     let protected = Router::new()
@@ -94,6 +107,14 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         .route(
             "/v1/declarations/{declaration_id}/supersede",
             supersede_route,
+        )
+        .route(
+            "/v1/declarations/{declaration_id}/amend",
+            amend_route,
+        )
+        .route(
+            "/v1/declarations/{declaration_id}/correct",
+            correct_route,
         )
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
@@ -482,4 +503,215 @@ pub(crate) async fn supersede_declaration(
         "declaration superseded"
     );
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Canonical bytes for an amendment. Same JCS-style construction as
+/// `canonical_payload_bytes` for submit, but parameterised on the
+/// amendment-side fields and the resolved `entity_id`. The entity_id
+/// is fixed at submit time (Amend cannot change it); the declarant's
+/// canonical bytes therefore include the original `entity_id`.
+fn canonical_amend_bytes(
+    req: &AmendDeclarationRequest,
+    declarant_principal: &str,
+    entity_id: &crate::domain::EntityId,
+) -> Result<Vec<u8>, ServiceError> {
+    use serde::Serialize;
+    #[derive(Serialize)]
+    struct Canonical<'a> {
+        entity_id: &'a crate::domain::EntityId,
+        declarant_principal: &'a str,
+        declarant_role: &'static str,
+        kind: &'static str,
+        #[serde(with = "crate::domain::serde_helpers::iso_date")]
+        effective_from: time::Date,
+        beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        nonce_hex: &'a str,
+    }
+    let canonical = Canonical {
+        entity_id,
+        declarant_principal,
+        declarant_role: req.declarant_role.as_str(),
+        kind: "amendment",
+        effective_from: req.effective_from,
+        beneficial_owners: &req.beneficial_owners,
+        nonce_hex: &req.attestation.nonce_hex,
+    };
+    serde_json::to_vec(&canonical)
+        .map_err(|_| ServiceError::BadRequest("could not canonicalise amend request".into()))
+}
+
+/// Canonical bytes for a correction. The canonical declaration body
+/// is unchanged by a correction, so the attestation covers the
+/// correction metadata bytes — `metadata_notes` + nonce + principal.
+/// This protects against a stolen attestation being reused against a
+/// different correction.
+fn canonical_correction_bytes(
+    req: &CorrectDeclarationRequest,
+    declarant_principal: &str,
+    declaration_id: &DeclarationId,
+) -> Result<Vec<u8>, ServiceError> {
+    use serde::Serialize;
+    #[derive(Serialize)]
+    struct Canonical<'a> {
+        declaration_id: &'a DeclarationId,
+        declarant_principal: &'a str,
+        kind: &'static str,
+        metadata_notes: Option<&'a str>,
+        nonce_hex: &'a str,
+    }
+    let canonical = Canonical {
+        declaration_id,
+        declarant_principal,
+        kind: "correction",
+        metadata_notes: req.metadata_notes.as_deref(),
+        nonce_hex: &req.attestation.nonce_hex,
+    };
+    serde_json::to_vec(&canonical)
+        .map_err(|_| ServiceError::BadRequest("could not canonicalise correction request".into()))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/declarations/{declaration_id}/amend",
+    tag = "declarations",
+    operation_id = "amendDeclaration",
+    params(
+        ("declaration_id" = String, Path, format = "uuid",
+            description = "Identifier of the declaration to amend in place"),
+    ),
+    request_body = AmendDeclarationRequest,
+    responses(
+        (status = 200, description = "Amendment applied; the declaration row was re-projected", body = AmendDeclarationResponse),
+        (status = 400, description = "Malformed request body or invariant violation", body = crate::api::dto::ErrorEnvelope),
+        (status = 401, description = "Missing/invalid bearer token or bad attestation", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Caller is not the owner of the declaration", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "Declaration not found", body = crate::api::dto::ErrorEnvelope),
+        (status = 409, description = "State-machine refusal — declaration is Accepted/Rejected/Superseded (use Supersede or re-submit)", body = crate::api::dto::ErrorEnvelope),
+        (status = 429, description = "Rate-limited (OPS-1)", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
+#[tracing::instrument(
+    skip_all,
+    fields(
+        principal = %principal.subject,
+        declaration_id = %declaration_id,
+    )
+)]
+pub(crate) async fn amend_declaration(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path(declaration_id): Path<Uuid>,
+    Json(req): Json<AmendDeclarationRequest>,
+) -> Result<(StatusCode, Json<AmendDeclarationResponse>), ServiceError> {
+    // 1. Resolve the aggregate's entity_id from the projection so the
+    //    canonical-bytes computation matches what the declarant signed.
+    //    Owner-check is enforced by the aggregate (`handle_amend`); we
+    //    still need entity_id from the projection to canonicalise.
+    let declaration_id = DeclarationId(declaration_id);
+    let projection = state
+        .get_usecase
+        .execute(declaration_id)
+        .await
+        .map_err(ServiceError::from)?;
+
+    // Belt-and-braces: surface a 403 on cross-principal amend at the
+    // API layer too. The aggregate would refuse with AmendNotOwner;
+    // the early 403 avoids leaking the projection metadata to a non-owner.
+    if projection.declarant_principal != principal.subject {
+        return Err(ServiceError::AuthorizationDenied(
+            "declaration is owned by a different principal",
+        ));
+    }
+
+    // 2. Verify the attestation over the AMENDED canonical bytes.
+    let canonical_bytes =
+        canonical_amend_bytes(&req, &principal.subject, &projection.entity_id)?;
+    req.attestation
+        .verify_against(&canonical_bytes)
+        .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
+
+    // 3. Build the command and execute.
+    let correlation_id = Uuid::now_v7();
+    let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
+    let receipt = state.amend_usecase.execute(cmd).await?;
+    let response = AmendDeclarationResponse::from_receipt(receipt, &state.base_url);
+    info!(
+        declaration_id = %response.declaration_id,
+        aggregate_version = response.aggregate_version,
+        "declaration amended"
+    );
+    Ok((StatusCode::OK, Json(response)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/declarations/{declaration_id}/correct",
+    tag = "declarations",
+    operation_id = "correctDeclaration",
+    params(
+        ("declaration_id" = String, Path, format = "uuid",
+            description = "Identifier of the declaration to correct (pre-verification only)"),
+    ),
+    request_body = CorrectDeclarationRequest,
+    responses(
+        (status = 200, description = "Correction applied; metadata updated", body = CorrectDeclarationResponse),
+        (status = 400, description = "Malformed request body", body = crate::api::dto::ErrorEnvelope),
+        (status = 401, description = "Missing/invalid bearer token or bad attestation", body = crate::api::dto::ErrorEnvelope),
+        (status = 403, description = "Caller is not the owner of the declaration", body = crate::api::dto::ErrorEnvelope),
+        (status = 404, description = "Declaration not found", body = crate::api::dto::ErrorEnvelope),
+        (status = 409, description = "State-machine refusal — corrections are admitted only in `submitted` (use amend or supersede)", body = crate::api::dto::ErrorEnvelope),
+        (status = 429, description = "Rate-limited (OPS-1)", body = crate::api::dto::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::dto::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
+#[tracing::instrument(
+    skip_all,
+    fields(
+        principal = %principal.subject,
+        declaration_id = %declaration_id,
+    )
+)]
+pub(crate) async fn correct_declaration(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path(declaration_id): Path<Uuid>,
+    Json(req): Json<CorrectDeclarationRequest>,
+) -> Result<(StatusCode, Json<CorrectDeclarationResponse>), ServiceError> {
+    let declaration_id = DeclarationId(declaration_id);
+    let projection = state
+        .get_usecase
+        .execute(declaration_id)
+        .await
+        .map_err(ServiceError::from)?;
+    if projection.declarant_principal != principal.subject {
+        return Err(ServiceError::AuthorizationDenied(
+            "declaration is owned by a different principal",
+        ));
+    }
+
+    let canonical_bytes =
+        canonical_correction_bytes(&req, &principal.subject, &declaration_id)?;
+    req.attestation
+        .verify_against(&canonical_bytes)
+        .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
+
+    let correlation_id = Uuid::now_v7();
+    let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
+    let receipt = state.correct_usecase.execute(cmd).await?;
+    let response = CorrectDeclarationResponse::from_receipt(receipt, &state.base_url);
+    info!(
+        declaration_id = %response.declaration_id,
+        aggregate_version = response.aggregate_version,
+        "declaration corrected"
+    );
+    Ok((StatusCode::OK, Json(response)))
 }

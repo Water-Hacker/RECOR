@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT declaration_id, entity_id, declarant_principal, declarant_role,\n                   declaration_kind, effective_from, beneficial_owners, attestation,\n                   state, aggregate_version, submitted_at, receipt_hash_hex,\n                   correlation_id, verification_state, verification_lane,\n                   verification_case_id, verified_at,\n                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at\n            FROM declarations\n            WHERE declaration_id = $1\n            ",
+  "query": "\n            SELECT declaration_id, entity_id, declarant_principal, declarant_role,\n                   declaration_kind, effective_from, beneficial_owners, attestation,\n                   state, aggregate_version, submitted_at, receipt_hash_hex,\n                   correlation_id, verification_state, verification_lane,\n                   verification_case_id, verified_at,\n                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at,\n                   metadata_notes, amended_at, corrected_at\n            FROM declarations\n            WHERE declaration_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -102,6 +102,21 @@
         "ordinal": 19,
         "name": "superseded_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "metadata_notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "amended_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 22,
+        "name": "corrected_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -129,8 +144,11 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "247e67a83acbb8178b1870f0711c52a38c9caffc0e9fd0d786667f092375eae4"
+  "hash": "3fce868f26fa3a220379653741700c8c4ae026fb3170edf79de0475d621bbb83"
 }

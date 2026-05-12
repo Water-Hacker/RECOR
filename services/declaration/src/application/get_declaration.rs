@@ -55,6 +55,19 @@ pub struct DeclarationProjection {
     /// Time this declaration was superseded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub superseded_at: Option<OffsetDateTime>,
+
+    /// Most recent amendment timestamp. `None` if the declaration has
+    /// never been amended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amended_at: Option<OffsetDateTime>,
+    /// Free-form metadata annotation set by the declarant via a
+    /// Correct command. Pre-verification only; `None` until a
+    /// correction is applied. See R-DECL-3-CORRECT.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_notes: Option<String>,
+    /// Most recent correction timestamp.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrected_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Error)]

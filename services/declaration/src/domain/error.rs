@@ -79,6 +79,38 @@ pub enum DomainError {
         new_entity_id: uuid::Uuid,
     },
 
+    #[error("cannot amend declaration {0}: it has no Submitted event")]
+    AmendBeforeSubmit(uuid::Uuid),
+
+    #[error("declaration {declaration_id} cannot be amended from state {state}; only Submitted or InVerification declarations can be amended (Accepted → use Supersede; Rejected → re-submit)")]
+    AmendFromInvalidState {
+        declaration_id: uuid::Uuid,
+        state: &'static str,
+    },
+
+    #[error("amend authorisation failed: declarant {actual} does not own declaration {declaration_id} (owned by {expected})")]
+    AmendNotOwner {
+        declaration_id: uuid::Uuid,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("cannot correct declaration {0}: it has no Submitted event")]
+    CorrectBeforeSubmit(uuid::Uuid),
+
+    #[error("declaration {declaration_id} cannot be corrected from state {state}; corrections are allowed only from Submitted (use Amend or Supersede instead)")]
+    CorrectFromInvalidState {
+        declaration_id: uuid::Uuid,
+        state: &'static str,
+    },
+
+    #[error("correct authorisation failed: declarant {actual} does not own declaration {declaration_id} (owned by {expected})")]
+    CorrectNotOwner {
+        declaration_id: uuid::Uuid,
+        expected: String,
+        actual: String,
+    },
+
     #[error(transparent)]
     ValueObject(#[from] ValueObjectError),
 }

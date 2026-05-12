@@ -259,6 +259,57 @@ impl InterestKind {
     }
 }
 
+/// The set of fields amendable in-place on an existing declaration.
+///
+/// Used by `AmendDeclaration` commands and stored in
+/// `DeclarationAmendedV1` events (both as the `before` snapshot — what
+/// the aggregate held — and the `after` snapshot — what the declarant
+/// is replacing them with). Fields NOT in this set cannot be amended:
+///   - `entity_id` (a different entity is `Supersede`, not `Amend`)
+///   - `declarant_principal` (auth-bound; an "amend by someone else"
+///     would be a separate authorisation flow)
+///   - `kind` (changing the declaration's purpose changes its meaning;
+///     out of scope for v1)
+///   - `attestation` itself (the attestation IS the amendment's signature)
+///   - `correlation_id` / `submitted_at` (lifecycle metadata)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AmendmentSet {
+    /// Replacement beneficial-owner roster. Must still satisfy the
+    /// aggregate's owner-sum-invariant (basis points sum to 10_000)
+    /// and the no-duplicate-person-id rule.
+    pub beneficial_owners: Vec<BeneficialOwnerClaim>,
+    /// Replacement effective-from date. Validated by the same
+    /// `validate_effective_from` rule the Submit path uses.
+    #[serde(with = "crate::domain::serde_helpers::iso_date")]
+    #[schema(value_type = String, format = Date, example = "2026-05-01")]
+    pub effective_from: time::Date,
+    /// Replacement declarant role. Most amendments leave this
+    /// unchanged; the field is still recorded explicitly in both
+    /// before/after snapshots so a replay sees the full intent.
+    pub declarant_role: DeclarantRole,
+}
+
+/// The set of pre-verification corrections the API supports.
+///
+/// In v1 the only field is `metadata_notes` — a free-form operator-
+/// facing annotation that lets the declarant attach context the
+/// canonical declaration body doesn't carry (typo explanations,
+/// supporting-document references, etc.). The canonical declaration
+/// payload is untouched by a correction, which is why corrections
+/// are restricted to the `Submitted` state: the verification engine
+/// has not yet processed the declaration, so changing metadata does
+/// not perturb a downstream consumer's view of the aggregate.
+///
+/// Future correctable fields land here as additive `Option<...>` so
+/// `CorrectionSet` remains backward-compatible across versions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CorrectionSet {
+    /// Free-form metadata annotation. `None` represents "no annotation";
+    /// `Some("")` is normalised to `None` at the API boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_notes: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ValueObjectError {
     #[error("ownership basis points {0} exceeds maximum of 10_000 (100%)")]

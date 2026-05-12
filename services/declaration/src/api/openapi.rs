@@ -44,17 +44,19 @@ use utoipa_scalar::{Scalar, Servable};
 
 use crate::api::dlq::{self, DlqItem, ListDlqResponse, ReplayDlqResponse};
 use crate::api::dto::{
-    ErrorBody, ErrorEnvelope, GetDeclarationResponse, HealthzResponse, ReadyzResponse,
-    SubmitDeclarationRequest, SubmitDeclarationResponse, SupersedeDeclarationResponse,
-    VerificationOutcomeRequest, VerificationOutcomeResponse,
+    AmendDeclarationRequest, AmendDeclarationResponse, CorrectDeclarationRequest,
+    CorrectDeclarationResponse, ErrorBody, ErrorEnvelope, GetDeclarationResponse,
+    HealthzResponse, ReadyzResponse, SubmitDeclarationRequest, SubmitDeclarationResponse,
+    SupersedeDeclarationResponse, VerificationOutcomeRequest, VerificationOutcomeResponse,
 };
 use crate::api::internal;
 use crate::api::rest;
 use crate::domain::attestation::{CryptographicAttestation, SignatureAlgorithm};
 use crate::domain::value_object::InterestKind;
 use crate::domain::{
-    BeneficialOwnerClaim, DeclarantRole, DeclarationId, DeclarationKind, DeclarationState,
-    EntityId, OwnershipBasisPoints, PersonId, VerificationLane,
+    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarantRole, DeclarationId,
+    DeclarationKind, DeclarationState, EntityId, OwnershipBasisPoints, PersonId,
+    VerificationLane,
 };
 
 /// Marker struct that carries the `#[derive(OpenApi)]` document.
@@ -93,6 +95,8 @@ use crate::domain::{
         rest::submit_declaration,
         rest::get_declaration,
         rest::supersede_declaration,
+        rest::amend_declaration,
+        rest::correct_declaration,
         dlq::list_dlq,
         dlq::replay_dlq,
         internal::handle_verification_outcome,
@@ -104,6 +108,10 @@ use crate::domain::{
             SubmitDeclarationResponse,
             GetDeclarationResponse,
             SupersedeDeclarationResponse,
+            AmendDeclarationRequest,
+            AmendDeclarationResponse,
+            CorrectDeclarationRequest,
+            CorrectDeclarationResponse,
             VerificationOutcomeRequest,
             VerificationOutcomeResponse,
             // System DTOs
@@ -129,6 +137,8 @@ use crate::domain::{
             InterestKind,
             CryptographicAttestation,
             SignatureAlgorithm,
+            AmendmentSet,
+            CorrectionSet,
         ),
     ),
     modifiers(&SecurityAddon),
@@ -249,6 +259,8 @@ mod tests {
             "/v1/declarations",
             "/v1/declarations/{declaration_id}",
             "/v1/declarations/{declaration_id}/supersede",
+            "/v1/declarations/{declaration_id}/amend",
+            "/v1/declarations/{declaration_id}/correct",
             "/v1/internal/outbox-dlq",
             "/v1/internal/outbox-dlq/{id}/replay",
             "/v1/internal/verification-outcomes",
@@ -301,6 +313,12 @@ mod tests {
             "SubmitDeclarationResponse",
             "GetDeclarationResponse",
             "SupersedeDeclarationResponse",
+            "AmendDeclarationRequest",
+            "AmendDeclarationResponse",
+            "CorrectDeclarationRequest",
+            "CorrectDeclarationResponse",
+            "AmendmentSet",
+            "CorrectionSet",
             "VerificationOutcomeRequest",
             "VerificationOutcomeResponse",
             "ErrorEnvelope",

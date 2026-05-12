@@ -35,7 +35,8 @@ use crate::domain::value_object::{
     EntityId, VerificationLane,
 };
 use crate::domain::{
-    DeclarationEvent, DeclarationSubmittedV1, DeclarationSupersededV1, DeclarationVerifiedV1,
+    DeclarationAmendedV1, DeclarationCorrectedV1, DeclarationEvent, DeclarationSubmittedV1,
+    DeclarationSupersededV1, DeclarationVerifiedV1,
 };
 
 pub struct PostgresDeclarationRepository {
@@ -158,7 +159,8 @@ impl DeclarationRepository for PostgresDeclarationRepository {
                    state, aggregate_version, submitted_at, receipt_hash_hex,
                    correlation_id, verification_state, verification_lane,
                    verification_case_id, verified_at,
-                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at
+                   supersedes_declaration_id, superseded_by_declaration_id, superseded_at,
+                   metadata_notes, amended_at, corrected_at
             FROM declarations
             WHERE declaration_id = $1
             "#,
@@ -197,6 +199,9 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             verification_lane,
             verification_case_id: row.verification_case_id,
             verified_at: row.verified_at,
+            metadata_notes: row.metadata_notes,
+            amended_at: row.amended_at,
+            corrected_at: row.corrected_at,
         }))
     }
 }
@@ -267,6 +272,14 @@ fn decode_event(
             let v1: DeclarationSupersededV1 = serde_json::from_value(payload)?;
             Ok(DeclarationEvent::Superseded(v1))
         }
+        "declaration.amended.v1" => {
+            let v1: DeclarationAmendedV1 = serde_json::from_value(payload)?;
+            Ok(DeclarationEvent::Amended(v1))
+        }
+        "declaration.corrected.v1" => {
+            let v1: DeclarationCorrectedV1 = serde_json::from_value(payload)?;
+            Ok(DeclarationEvent::Corrected(v1))
+        }
         other => Err(RepositoryError::Backend(sqlx::Error::Decode(
             format!("unknown event_type: {other}").into(),
         ))),
@@ -289,6 +302,12 @@ async fn insert_event(
             (p.declaration_id.0, p.verification_case_id, serde_json::to_value(p)?)
         }
         DeclarationEvent::Superseded(p) => {
+            (p.declaration_id.0, p.correlation_id, serde_json::to_value(p)?)
+        }
+        DeclarationEvent::Amended(p) => {
+            (p.declaration_id.0, p.correlation_id, serde_json::to_value(p)?)
+        }
+        DeclarationEvent::Corrected(p) => {
             (p.declaration_id.0, p.correlation_id, serde_json::to_value(p)?)
         }
     };
@@ -466,6 +485,54 @@ async fn upsert_projection(
             .execute(&mut **tx)
             .await?;
         }
+        DeclarationEvent::Amended(p) => {
+            // Re-project the amended fields in place. State is
+            // unchanged (Submitted or InVerification per the
+            // aggregate's invariant); aggregate_version advances; the
+            // amended_at timestamp captures when the amendment landed.
+            let owners = serde_json::to_value(&p.after.beneficial_owners)?;
+            let role = p.after.declarant_role.as_str();
+            sqlx::query!(
+                r#"
+                UPDATE declarations
+                SET beneficial_owners = $2,
+                    effective_from    = $3,
+                    declarant_role    = $4,
+                    aggregate_version = $5,
+                    amended_at        = $6,
+                    updated_at        = NOW()
+                WHERE declaration_id = $1
+                "#,
+                p.declaration_id.0,
+                owners,
+                p.after.effective_from,
+                role,
+                new_version,
+                p.amended_at,
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
+        DeclarationEvent::Corrected(p) => {
+            // Update metadata only; canonical declaration payload is
+            // unchanged. Aggregate state stays Submitted.
+            sqlx::query!(
+                r#"
+                UPDATE declarations
+                SET metadata_notes    = $2,
+                    aggregate_version = $3,
+                    corrected_at      = $4,
+                    updated_at        = NOW()
+                WHERE declaration_id = $1
+                "#,
+                p.declaration_id.0,
+                p.after.metadata_notes.as_deref(),
+                new_version,
+                p.corrected_at,
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -478,6 +545,8 @@ async fn write_outbox(
         DeclarationEvent::Submitted(p) => (p.declaration_id.0, serde_json::to_value(p)?),
         DeclarationEvent::Verified(p) => (p.declaration_id.0, serde_json::to_value(p)?),
         DeclarationEvent::Superseded(p) => (p.declaration_id.0, serde_json::to_value(p)?),
+        DeclarationEvent::Amended(p) => (p.declaration_id.0, serde_json::to_value(p)?),
+        DeclarationEvent::Corrected(p) => (p.declaration_id.0, serde_json::to_value(p)?),
     };
     let event_id = uuid::Uuid::now_v7();
     let event_type = event.event_type();
