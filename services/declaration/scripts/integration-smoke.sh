@@ -68,6 +68,14 @@ DECL_RESP=$(curl -sS -X POST http://127.0.0.1:8080/v1/declarations \
 HTTP=$(echo "$DECL_RESP" | tail -1)
 BODY=$(echo "$DECL_RESP" | sed '$d')
 echo "Declaration POST: HTTP $HTTP"
+# OPS-1 regression guard: rate limiting on this endpoint must not
+# trip for a single normal-load submission. A 429 here means the
+# tower-governor configuration is mis-tuned for prod-like traffic.
+if [ "$HTTP" = "429" ]; then
+    echo "FAIL: rate limiter rejected first submission (OPS-1 regression)"
+    echo "$BODY"
+    exit 1
+fi
 [ "$HTTP" = "201" ] || { echo "FAIL: expected 201"; echo "$BODY"; exit 1; }
 echo "$BODY" | jq '{declaration_id, state, receipt_hash_hex}'
 

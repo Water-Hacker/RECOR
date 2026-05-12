@@ -109,6 +109,24 @@ pub struct Config {
     #[serde(default)]
     pub admin_principals: String,
 
+    /// Per-principal sustained rate limit, expressed as
+    /// requests-per-minute. Applied to the two state-changing public
+    /// submit endpoints (POST /v1/declarations and POST
+    /// /v1/declarations/{id}/supersede). 0 disables rate limiting
+    /// entirely — the safe default for tests and local development,
+    /// but production deployments should set this. GET endpoints and
+    /// internal HMAC endpoints are never rate-limited. (OPS-1)
+    #[serde(default = "default_rate_limit_per_min")]
+    pub rate_limit_per_min: u32,
+
+    /// Per-principal burst capacity for the rate limiter. The token
+    /// bucket holds up to this many tokens; once exhausted the
+    /// principal must wait for the bucket to refill at
+    /// `rate_limit_per_min` per 60s. Ignored when
+    /// `rate_limit_per_min == 0`. (OPS-1)
+    #[serde(default = "default_rate_limit_burst")]
+    pub rate_limit_burst: u32,
+
     /// PII-redaction posture for tracing logs (OPS-2). One of:
     ///   - `enabled` — full redaction (production default)
     ///   - `disabled-for-dev` — pass-through (dev default; lets
@@ -237,4 +255,12 @@ fn default_secret() -> SecretString {
 
 fn default_subject_claim() -> String {
     "sub".to_string()
+}
+
+fn default_rate_limit_per_min() -> u32 {
+    60
+}
+
+fn default_rate_limit_burst() -> u32 {
+    10
 }
