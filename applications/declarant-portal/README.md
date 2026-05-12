@@ -55,7 +55,10 @@ applications/declarant-portal/
 ├── tests/setup.ts
 ├── index.html
 ├── Dockerfile                         — multi-stage build
-├── nginx.conf                         — SPA fallback + security headers
+├── nginx.conf.template                — SPA fallback + security headers (envsubst-rendered at container start)
+├── security-headers.conf.template     — shared header set included in every location block
+├── docker-entrypoint.sh               — renders the templates, then `exec nginx`
+├── scripts/headers-smoke.sh           — OPS-3 smoke: builds the image and asserts every required header
 ├── docker-compose.yaml                — portal + declaration + postgres
 ├── tsconfig.json, vite.config.ts, package.json
 ```

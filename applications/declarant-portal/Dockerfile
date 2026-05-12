@@ -14,8 +14,26 @@ COPY tests ./tests
 RUN pnpm build
 
 FROM nginx:1.27-alpine AS runtime
+# envsubst lives in the gettext package on alpine.
+RUN apk add --no-cache gettext
+
 COPY --from=builder /build/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Templates are rendered at container startup by docker-entrypoint.sh
+# so the CSP can carry the deployment's API origin without rebuilding
+# the image. See applications/declarant-portal/CLAUDE.md § security
+# headers for the policy rationale.
+COPY nginx.conf.template /etc/nginx/templates/nginx.conf.template
+COPY security-headers.conf.template /etc/nginx/templates/security-headers.conf.template
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Remove the default nginx server block; our entrypoint writes the
+# real one to /etc/nginx/conf.d/default.conf from the template.
+RUN rm -f /etc/nginx/conf.d/default.conf
+
 EXPOSE 8082
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O- http://localhost:8082/healthz || exit 1
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

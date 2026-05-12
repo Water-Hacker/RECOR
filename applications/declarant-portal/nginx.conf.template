@@ -1,0 +1,167 @@
+# nginx config template for the RÉCOR declarant portal.
+#
+# Tokens of the form ${VAR} are substituted at container startup by the
+# `docker-entrypoint.sh` script using `envsubst` so the Content-Security-
+# Policy can carry the deployment's actual API origin without rebaking
+# the image.
+#
+# Substituted variables:
+#   ${CSP_CONNECT_SRC}  whitespace-separated origin list allowed in
+#                       `connect-src` (e.g. "https://api.recor.cm").
+#                       Defaults to "'self'" in the entrypoint when unset.
+#   ${CSP_REPORT_URI}   optional CSP report endpoint; entrypoint sets to
+#                       empty when unset so the directive is omitted.
+#
+# All other directives are static. Run `nginx -T` inside the container
+# after substitution to inspect the materialised config.
+
+server {
+    listen 8082 default_server;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Hide the nginx version from response headers + error pages.
+    server_tokens off;
+
+    # ── Security headers ─────────────────────────────────────────────
+    #
+    # Set on every response (including 4xx/5xx) via `always`. nginx by
+    # default only emits add_header on 2xx/3xx; the security headers
+    # must apply to error responses too because index.html itself is
+    # served as 200 via try_files, but error pages must not leak a
+    # less-restrictive context.
+    #
+    # Content-Security-Policy
+    #   default-src 'self'         — same-origin everything by default
+    #   script-src 'self'          — no inline scripts; the SPA bundle
+    #                                is served from /assets/ on this
+    #                                origin. No `unsafe-inline`, no
+    #                                `unsafe-eval`. Vite's prod bundle
+    #                                emits external JS only.
+    #   style-src 'self' 'unsafe-inline'
+    #                              — Tailwind v4 generates an external
+    #                                stylesheet, but React 19 + Vite
+    #                                still emit a small number of
+    #                                inline <style> tags (HMR-less prod
+    #                                still relies on inline critical
+    #                                CSS for the splash). 'unsafe-inline'
+    #                                here is a known, accepted exposure.
+    #   connect-src 'self' ${CSP_CONNECT_SRC}
+    #                              — XHR/fetch/WebSocket. 'self' covers
+    #                                the healthz probe; the templated
+    #                                value is the declaration service
+    #                                origin (e.g. https://api.recor.cm).
+    #   img-src 'self' data:       — data: lets us inline small SVG/PNG
+    #                                icons inside the bundle without a
+    #                                round-trip. No remote images.
+    #   font-src 'self'            — fonts are bundled; no Google Fonts.
+    #   frame-ancestors 'none'     — refuses iframe embedding outright
+    #                                (defense in depth with X-Frame-
+    #                                Options: DENY for old browsers).
+    #   base-uri 'self'            — refuses <base> tag attacks that
+    #                                could rewrite relative URLs.
+    #   form-action 'self'         — refuses form submissions to other
+    #                                origins (the declaration form posts
+    #                                via fetch, not native submit, but
+    #                                this closes the legacy path).
+    #   object-src 'none'          — no <object>/<embed>/<applet>.
+    #
+    # If a deployment needs to relax `connect-src` (e.g. for OIDC
+    # discovery hitting a third-party IdP), extend CSP_CONNECT_SRC at
+    # the orchestrator layer — never edit this template inline.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ${CSP_CONNECT_SRC}; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
+    # Strict-Transport-Security
+    #   2 years (63072000s) so the host stays HSTS-pinned through any
+    #   single year-long cert rotation. `includeSubDomains` covers the
+    #   API subdomain. `preload` makes the host eligible for the
+    #   browser preload list (hstspreload.org).
+    #
+    #   The TLS terminator in front of this container (Envoy/ingress in
+    #   prod, the dev compose stack in local) sets X-Forwarded-Proto.
+    #   We emit HSTS unconditionally on this internal listener because
+    #   the listener is only ever reached via an HTTPS-terminating
+    #   proxy in production. Browsers ignore HSTS over plain HTTP
+    #   anyway, so the worst case in dev is a no-op header.
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    # X-Content-Type-Options
+    #   Refuses MIME-sniffing. A *.js file is JS regardless of what the
+    #   bytes look like — closes the "upload a polyglot, serve as JS"
+    #   class.
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # X-Frame-Options
+    #   Belt-and-braces with frame-ancestors 'none' for legacy browsers
+    #   that don't honour CSP frame-ancestors. The portal is never
+    #   iframed.
+    add_header X-Frame-Options "DENY" always;
+
+    # Referrer-Policy
+    #   Sends the origin (but not the path) when navigating cross-
+    #   origin over HTTPS, and nothing on a downgrade. Avoids leaking
+    #   declaration IDs in the Referer to any third-party link the
+    #   user clicks from the receipt screen.
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Permissions-Policy
+    #   The portal needs none of the listed browser features. Every
+    #   entry is explicitly disabled so a future bundle bug or a
+    #   compromised dependency can't silently grow privilege.
+    add_header Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), autoplay=(), fullscreen=(), picture-in-picture=()" always;
+
+    # Cross-Origin-Opener-Policy
+    #   Isolates the browsing context so window.opener-based attacks
+    #   (Spectre-class side-channels, popup hijacks) are mitigated.
+    #   Compatible with Vite's bundle (no cross-origin opener required).
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+
+    # Cross-Origin-Resource-Policy
+    #   Refuses cross-origin sites embedding our resources. Tighter
+    #   than CORP-default and compatible with our zero cross-origin
+    #   resources policy (everything is same-origin).
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+
+    # NOTE: Cross-Origin-Embedder-Policy (COEP) require-corp is deliberately
+    # OMITTED. It would force every same-origin resource to declare
+    # CORP and would block any third-party assets we may add (favicon
+    # CDN, analytics) without a coordinated rollout. Re-enable when we
+    # have a documented audit confirming every loaded resource is
+    # CORP-compatible.
+
+    # ── Caching policy ──────────────────────────────────────────────
+    #
+    # Static-asset caching — bundle filenames carry content-hashes so
+    # an aggressive immutable cache is safe. add_header inside a
+    # location block REPLACES the server-level headers for that
+    # location in nginx, so we have to repeat the security headers
+    # here. (This is an nginx quirk; the more_set_headers module
+    # avoids it, but it's not part of nginx:1.27-alpine's default
+    # build.) We use an include file to keep the duplication
+    # mechanical.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/security-headers.conf;
+        try_files $uri =404;
+    }
+
+    # SPA fallback — every non-static path returns index.html so React
+    # Router (or window.location-based routing in this v1) can handle
+    # it.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        include /etc/nginx/security-headers.conf;
+    }
+
+    # Liveness probe — no caching, no SPA fallback. Security headers
+    # apply (the response is JSON, so CSP is irrelevant, but headers
+    # like X-Content-Type-Options are still useful).
+    location = /healthz {
+        access_log off;
+        default_type application/json;
+        include /etc/nginx/security-headers.conf;
+        return 200 '{"status":"ok"}';
+    }
+}
