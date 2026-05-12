@@ -174,5 +174,12 @@
       "publicKeyHeading": "Signing public key",
       "publicKeyExplanation": "This public key travels with your declaration and lets RÉCOR verify the signature. The matching private key never leaves your browser's memory."
     }
+  },
+  "drafts": {
+    "resumePrompt": "Resume your saved draft?",
+    "savedAt": "Last saved {{when}}. Drafts are stored only on this device and expire after 24 hours.",
+    "resumeButton": "Resume",
+    "discardButton": "Discard",
+    "unavailableNotice": "Offline drafts are unavailable in this browser (IndexedDB is disabled). Your form is not being saved — submit before leaving this page."
   }
 }
