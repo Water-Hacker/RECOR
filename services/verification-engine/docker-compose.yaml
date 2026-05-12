@@ -1,0 +1,63 @@
+name: recor-verification-engine-dev
+
+networks:
+  verification:
+    driver: bridge
+
+volumes:
+  pg-data:
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: recor-verification-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recor
+      POSTGRES_PASSWORD: "${RECOR_DB_PASSWORD:?Set RECOR_DB_PASSWORD in .env}"
+      POSTGRES_DB: verification
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    networks:
+      - verification
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recor -d verification"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  recor-verification-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: recor/verification-engine:dev
+    container_name: recor-verification-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUST_BACKTRACE: "1"
+      BIND_ADDR: "0.0.0.0:8081"
+      DATABASE_URL: "postgres://recor:${RECOR_DB_PASSWORD}@postgres:5432/verification"
+      DB_POOL_MAX_CONNECTIONS: "10"
+      OTLP_ENDPOINT: ""
+      LOG_FILTER: "info,recor_verification_engine=debug,sqlx=warn"
+      SERVICE_NAME: "recor-verification-engine"
+      ENVIRONMENT: "dev"
+      HTTP_TIMEOUT_SECONDS: "30"
+      RECOR_BASE_URL: "http://localhost:8081"
+    ports:
+      - "127.0.0.1:8081:8081"
+    networks:
+      - verification
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
