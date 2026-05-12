@@ -19,6 +19,10 @@ path = "src/lib.rs"
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
 recor-logging = { path = "../../packages/recor-logging" }
+# R-LOOP-3 SPIFFE Workload API client + rustls glue. Same shape as
+# in the declaration service — config knobs in src/config.rs gate
+# whether the service brings up mTLS at startup.
+recor-spiffe = { path = "../../packages/recor-spiffe" }
 
 tokio.workspace = true
 tokio-util.workspace = true

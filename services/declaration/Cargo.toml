@@ -30,6 +30,12 @@ path = "src/lib.rs"
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
 recor-logging = { path = "../../packages/recor-logging" }
+# R-LOOP-3 SPIFFE Workload API client + rustls glue. Pulled in for
+# both the AUTH_TRANSPORT=hmac default (only for the config-level
+# constants like DEFAULT_WORKLOAD_API_SOCKET) and the
+# AUTH_TRANSPORT=mtls / mtls-only paths (SpiffeClient + ServerConfig
+# build at startup).
+recor-spiffe = { path = "../../packages/recor-spiffe" }
 
 # Async runtime
 tokio.workspace = true
