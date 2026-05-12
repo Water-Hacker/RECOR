@@ -30,6 +30,9 @@ path = "src/lib.rs"
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
 recor-logging = { path = "../../packages/recor-logging" }
+# OPS-4: Vault client for secret loading at startup. Optional at
+# runtime (no VAULT_ADDR ⇒ env-only mode), required at build.
+recor-vault-client = { path = "../../packages/recor-vault-client" }
 
 # Async runtime
 tokio.workspace = true
