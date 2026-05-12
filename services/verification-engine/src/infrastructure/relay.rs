@@ -155,19 +155,51 @@ impl VerificationOutboxRelay {
                         %event_id, %status, attempt = prior_attempts + 1,
                         "writeback subscriber returned non-2xx: {text}"
                     );
-                    self.record_failure(id, &format!("http {status}: {text}"))
-                        .await?;
+                    self.handle_failure(
+                        id,
+                        event_id,
+                        prior_attempts + 1,
+                        &format!("http {status}: {text}"),
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     warn!(
                         %event_id, error = %e, attempt = prior_attempts + 1,
                         "writeback transport error"
                     );
-                    self.record_failure(id, &format!("transport: {e}")).await?;
+                    self.handle_failure(
+                        id,
+                        event_id,
+                        prior_attempts + 1,
+                        &format!("transport: {e}"),
+                    )
+                    .await?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// Routes a failed dispatch attempt to either `record_failure`
+    /// (still has retries left) or `move_to_dlq` (exhausted).
+    /// `new_attempts` is the count INCLUDING the just-failed try.
+    async fn handle_failure(
+        &self,
+        id: uuid::Uuid,
+        event_id: uuid::Uuid,
+        new_attempts: i32,
+        message: &str,
+    ) -> Result<(), sqlx::Error> {
+        if new_attempts >= self.max_attempts {
+            warn!(
+                %id, %event_id, attempts = new_attempts, max_attempts = self.max_attempts,
+                "verification_outbox row dead-lettered (max_attempts exhausted)"
+            );
+            self.move_to_dlq(id, new_attempts, message).await
+        } else {
+            self.record_failure(id, message).await
+        }
     }
 
     async fn record_failure(&self, id: uuid::Uuid, message: &str) -> Result<(), sqlx::Error> {
@@ -181,6 +213,45 @@ impl VerificationOutboxRelay {
         .bind(message)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Atomic move: copy the verification_outbox row into
+    /// verification_outbox_dlq with final dispatch_attempts +
+    /// last_error, then delete the original. Both run in one
+    /// transaction so a row exists in exactly one table at any time.
+    async fn move_to_dlq(
+        &self,
+        id: uuid::Uuid,
+        attempts: i32,
+        last_error: &str,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+            INSERT INTO verification_outbox_dlq (
+                id, event_id, event_type, event_version,
+                aggregate_id, partition_key, payload, created_at,
+                dispatch_attempts, last_error
+            )
+            SELECT
+                id, event_id, event_type, event_version,
+                aggregate_id, partition_key, payload, created_at,
+                $2, $3
+            FROM verification_outbox
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(attempts)
+        .bind(last_error)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(r#"DELETE FROM verification_outbox WHERE id = $1"#)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 }
