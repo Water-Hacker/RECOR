@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO outbox (\n                id, event_id, event_type, event_version, aggregate_type,\n                aggregate_id, partition_key, payload, headers,\n                created_at, dispatched_at, dispatch_attempts, last_error\n            )\n            SELECT\n                id, event_id, event_type, event_version, aggregate_type,\n                aggregate_id, partition_key, payload, headers,\n                created_at, NULL, 0, NULL\n            FROM outbox_dlq\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3303c32244b8055eed85e9cd6d12e0338b0bb4916f76216602e89daab1ac7458"
+}

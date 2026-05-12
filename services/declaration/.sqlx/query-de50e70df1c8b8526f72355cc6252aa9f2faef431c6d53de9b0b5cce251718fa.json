@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE outbox\n                           SET dispatched_at = NOW(),\n                               dispatch_attempts = dispatch_attempts + 1\n                           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de50e70df1c8b8526f72355cc6252aa9f2faef431c6d53de9b0b5cce251718fa"
+}

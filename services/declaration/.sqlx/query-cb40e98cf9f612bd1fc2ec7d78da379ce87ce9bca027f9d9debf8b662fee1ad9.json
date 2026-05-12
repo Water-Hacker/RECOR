@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE declarations\n                SET state               = $2,\n                    aggregate_version   = $3,\n                    verification_state  = $4,\n                    verification_lane   = $5,\n                    verification_case_id = $6,\n                    verified_at         = $7,\n                    updated_at          = NOW()\n                WHERE declaration_id = $1\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cb40e98cf9f612bd1fc2ec7d78da379ce87ce9bca027f9d9debf8b662fee1ad9"
+}

@@ -6,6 +6,14 @@ FROM rust:1.88-bookworm AS builder
 
 WORKDIR /build
 
+# Production builds use sqlx's offline cache (R-DECL-7): the committed
+# `.sqlx/` directory replaces a live-DB connection at compile time. The
+# image therefore builds without network access to Postgres, satisfying
+# Doctrine 19 (reproducible everything) and Doctrine 14 (fail-closed at
+# the image-build boundary if the cache is stale — `cargo build` errors
+# out rather than silently falling back to a runtime check).
+ENV SQLX_OFFLINE=true
+
 COPY Cargo.toml rust-toolchain.toml ./
 COPY packages/recor-auth-oidc/Cargo.toml ./packages/recor-auth-oidc/
 COPY services/declaration/Cargo.toml ./services/declaration/
@@ -27,6 +35,10 @@ RUN mkdir -p packages/recor-auth-oidc/src \
 COPY packages/recor-auth-oidc ./packages/recor-auth-oidc
 COPY services/verification-engine/src ./services/verification-engine/src
 COPY services/verification-engine/migrations ./services/verification-engine/migrations
+# Offline sqlx cache (committed alongside the source). SQLX_OFFLINE=true
+# above tells the macros to consult this directory instead of opening a
+# database connection.
+COPY services/verification-engine/.sqlx ./services/verification-engine/.sqlx
 
 RUN find packages services -name "*.rs" -exec touch {} +
 

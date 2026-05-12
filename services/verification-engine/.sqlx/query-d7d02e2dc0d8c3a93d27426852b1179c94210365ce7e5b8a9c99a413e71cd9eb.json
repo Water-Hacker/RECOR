@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, event_id, event_type, event_version, aggregate_id, payload, dispatch_attempts\n            FROM verification_outbox\n            WHERE dispatched_at IS NULL\n              AND dispatch_attempts < $1\n            ORDER BY created_at ASC\n            LIMIT 32\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "aggregate_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "dispatch_attempts",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d7d02e2dc0d8c3a93d27426852b1179c94210365ce7e5b8a9c99a413e71cd9eb"
+}

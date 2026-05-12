@@ -17,7 +17,7 @@
 //! aggregate. Admin queries skip the aggregate (the aggregate doesn't
 //! care that an outbox row was retried).
 
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use thiserror::Error;
 use time::OffsetDateTime;
 use tracing::{info, instrument};
@@ -67,7 +67,8 @@ impl OutboxAdminStore {
         offset: i64,
     ) -> Result<Vec<DlqRow>, OutboxAdminError> {
         let effective_limit = limit.clamp(1, 200);
-        let rows = sqlx::query(
+        let offset_clamped = offset.max(0);
+        let rows = sqlx::query!(
             r#"
             SELECT id, event_id, event_type, event_version,
                    aggregate_id, partition_key, payload, created_at,
@@ -76,37 +77,38 @@ impl OutboxAdminStore {
             ORDER BY dead_lettered_at DESC
             LIMIT $1 OFFSET $2
             "#,
+            effective_limit,
+            offset_clamped,
         )
-        .bind(effective_limit)
-        .bind(offset.max(0))
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter()
-            .map(|row| {
-                Ok(DlqRow {
-                    id: row.try_get("id")?,
-                    event_id: row.try_get("event_id")?,
-                    event_type: row.try_get("event_type")?,
-                    event_version: row.try_get("event_version")?,
-                    aggregate_id: row.try_get("aggregate_id")?,
-                    partition_key: row.try_get("partition_key")?,
-                    payload: row.try_get("payload")?,
-                    created_at: row.try_get("created_at")?,
-                    dead_lettered_at: row.try_get("dead_lettered_at")?,
-                    dispatch_attempts: row.try_get("dispatch_attempts")?,
-                    last_error: row.try_get("last_error")?,
-                })
+        Ok(rows
+            .into_iter()
+            .map(|row| DlqRow {
+                id: row.id,
+                event_id: row.event_id,
+                event_type: row.event_type,
+                event_version: row.event_version,
+                aggregate_id: row.aggregate_id,
+                partition_key: row.partition_key,
+                payload: row.payload,
+                created_at: row.created_at,
+                dead_lettered_at: row.dead_lettered_at,
+                dispatch_attempts: row.dispatch_attempts,
+                last_error: row.last_error,
             })
-            .collect()
+            .collect())
     }
 
     /// Count of DLQ rows. Cheap; used by the list endpoint for pagination.
     pub async fn count_dlq(&self) -> Result<i64, OutboxAdminError> {
-        let row = sqlx::query("SELECT COUNT(*)::bigint AS n FROM verification_outbox_dlq")
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.try_get::<i64, _>("n")?)
+        let row = sqlx::query!(
+            r#"SELECT COUNT(*)::bigint AS "n!" FROM verification_outbox_dlq"#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.n)
     }
 
     /// Atomically replay a DLQ row: move it back into
@@ -129,17 +131,17 @@ impl OutboxAdminStore {
     pub async fn replay_dlq(&self, id: Uuid) -> Result<(), OutboxAdminError> {
         let mut tx = self.pool.begin().await?;
 
-        let exists: Option<(Uuid,)> = sqlx::query_as(
+        let exists = sqlx::query_scalar!(
             "SELECT id FROM verification_outbox_dlq WHERE id = $1 FOR UPDATE",
+            id,
         )
-        .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
         if exists.is_none() {
             return Err(OutboxAdminError::NotFound(id));
         }
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO verification_outbox (
                 id, event_id, event_type, event_version,
@@ -153,13 +155,12 @@ impl OutboxAdminStore {
             FROM verification_outbox_dlq
             WHERE id = $1
             "#,
+            id,
         )
-        .bind(id)
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query("DELETE FROM verification_outbox_dlq WHERE id = $1")
-            .bind(id)
+        sqlx::query!("DELETE FROM verification_outbox_dlq WHERE id = $1", id)
             .execute(&mut *tx)
             .await?;
 

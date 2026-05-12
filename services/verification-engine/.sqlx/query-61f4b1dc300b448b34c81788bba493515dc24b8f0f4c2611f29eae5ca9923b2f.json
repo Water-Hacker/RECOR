@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO verification_cases (\n                case_id, declaration_id, entity_id, declarant_principal,\n                lane, authenticity_belief, authenticity_plausibility,\n                risk_belief, case_payload, created_at, completed_at,\n                total_duration_ms\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)\n            ON CONFLICT (case_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "61f4b1dc300b448b34c81788bba493515dc24b8f0f4c2611f29eae5ca9923b2f"
+}

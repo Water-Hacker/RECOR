@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT response_status, response_body, request_hash\n            FROM idempotency_records\n            WHERE idempotency_key = $1\n              AND declarant_principal = $2\n              AND expires_at > NOW()\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "response_status",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 1,
+        "name": "response_body",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "request_hash",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "94c07563a5c6d2bf6cbb48e543a574bd0c79432c33907291b89422545f4ab047"
+}

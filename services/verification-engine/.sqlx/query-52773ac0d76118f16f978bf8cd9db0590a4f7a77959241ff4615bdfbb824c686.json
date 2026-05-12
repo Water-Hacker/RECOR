@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO verification_outbox (\n                event_id, event_type, event_version, aggregate_id, partition_key, payload\n            )\n            VALUES ($1, $2, $3, $4, $5, $6)\n            ON CONFLICT (event_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int4",
+        "Uuid",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "52773ac0d76118f16f978bf8cd9db0590a4f7a77959241ff4615bdfbb824c686"
+}
