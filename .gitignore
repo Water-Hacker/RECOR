@@ -82,6 +82,11 @@ desktop.ini
 .claude/transcripts/
 .claude/cache/
 .claude/local-settings.json
+# Runtime lock for the autonomous-loop wakeup harness; not source.
+.claude/scheduled_tasks.lock
+
+# Stray cargo target dirs from one-off pre-merge build checks.
+target-precheck/
 
 # Local working state — derived artefacts from the .docx documents and graphify
 _extracted/
