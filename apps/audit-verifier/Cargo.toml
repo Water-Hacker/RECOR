@@ -1,0 +1,66 @@
+[package]
+name = "audit-verifier"
+description = "RÉCOR audit verifier — fetches all Fabric audit entries for a declaration and re-derives the BLAKE3 receipt hash from the projection to detect tampering. Public-facing read surface."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "audit-verifier"
+path = "src/main.rs"
+
+[lib]
+name = "audit_verifier"
+path = "src/lib.rs"
+
+[dependencies]
+fabric-bridge = { path = "../../packages/fabric-bridge" }
+recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+recor-logging = { path = "../../packages/recor-logging" }
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+
+# HTTP server
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+http.workspace = true
+
+# Database (read-only projection access)
+sqlx.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+
+# Crypto / IDs
+blake3.workspace = true
+hex.workspace = true
+uuid.workspace = true
+time.workspace = true
+
+# Errors
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Observability
+tracing.workspace = true
+tracing-subscriber.workspace = true
+prometheus.workspace = true
+
+# Config
+config.workspace = true
+secrecy.workspace = true
+dotenvy.workspace = true
+
+# HTTP client (gateway query)
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+wiremock = "0.6"

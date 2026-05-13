@@ -1,0 +1,15 @@
+{
+  "_comment": "SPIRE registration entry for the Declaration service. Issued to any container with the org.spiffe.workload=declaration label. The bootstrap script loads this via `spire-server entry create`.",
+  "spiffe_id": "spiffe://recor.cm/declaration",
+  "parent_id": "spiffe://recor.cm/spire/agent/join_token/recor-dev-agent",
+  "selectors": [
+    "docker:label:org.spiffe.workload:declaration"
+  ],
+  "ttl": 3600,
+  "admin": false,
+  "downstream": false,
+  "dns_names": [
+    "declaration",
+    "declaration.recor.local"
+  ]
+}

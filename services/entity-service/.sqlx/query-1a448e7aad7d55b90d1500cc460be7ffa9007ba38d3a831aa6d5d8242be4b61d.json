@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE entities\n        SET canonical_name    = $2,\n            entity_type       = $3,\n            aggregate_version = $4,\n            updated_at        = NOW()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1a448e7aad7d55b90d1500cc460be7ffa9007ba38d3a831aa6d5d8242be4b61d"
+}
