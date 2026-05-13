@@ -102,6 +102,13 @@ hmac = "0.12"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# R-LOOP-2 — Kafka transport. The `cmake-build` feature lets the crate
+# build librdkafka from source (no apt install required); `ssl-vendored`
+# bundles BoringSSL for SASL_SSL in production (dev is plaintext). The
+# crate exposes a `tokio`-aware `FutureProducer` + `StreamConsumer` that
+# slot into the existing async stack without a thread pool of our own.
+rdkafka = { version = "0.36", default-features = false, features = ["cmake-build", "tokio", "libz"] }
+
 # Rate limiting (OPS-1). Token-bucket via tower-governor; we key the
 # limiter on the authenticated Principal::subject — see
 # `services/declaration/src/api/rate_limit.rs`. We also pull in the

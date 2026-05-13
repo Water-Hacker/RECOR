@@ -7,6 +7,13 @@ FROM rust:1.88-bookworm AS builder
 
 WORKDIR /build
 
+# R-LOOP-2: librdkafka is built from source by rdkafka-sys and needs
+# cmake + libcurl headers. The rust:1.88-bookworm image ships gcc but
+# not cmake / libcurl-dev.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Production builds use sqlx's offline cache (R-DECL-7): the committed
 # `.sqlx/` directory replaces a live-DB connection at compile time. The
 # image therefore builds without network access to Postgres, satisfying

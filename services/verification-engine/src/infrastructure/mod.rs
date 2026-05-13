@@ -1,5 +1,6 @@
 pub mod bunec_real;
 pub mod icij_postgres;
+pub mod kafka_consumer;
 pub mod mock_bunec;
 pub mod name_match;
 pub mod outbox_admin;
@@ -11,6 +12,7 @@ pub mod sanctions_postgres;
 
 pub use bunec_real::{BunecFailPolicy, BunecRealConfig, RealBunecAdapter};
 pub use icij_postgres::PostgresIcijRepository;
+pub use kafka_consumer::{ConsumeOutcome, KafkaConsumer, ParseResult};
 pub use mock_bunec::PostgresMockBunec;
 pub use name_match::{NameCandidate, name_match};
 pub use outbox_admin::{DlqRow, OutboxAdminError, OutboxAdminStore};

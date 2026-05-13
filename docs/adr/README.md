@@ -34,6 +34,7 @@ record.
 | [ADR-0004](0004-oidc-jwks-principal-authentication.md) | OIDC + JWKS for principal authentication | Accepted | 2026-05-11 |
 | [ADR-0005](0005-hmac-channel-rotation.md) | Per-channel HMAC secrets with dual-secret rotation | Accepted | 2026-05-12 |
 | [ADR-0006](0006-observability-stack-choice.md) | Observability stack — dev compose + production Helm | Accepted | 2026-05-11 |
+| [ADR-0007](0007-kafka-transport-cutover.md) | Kafka transport cutover plan for the D↔V loop | Proposed | 2026-05-12 |
 
 ## How to add a new ADR
 

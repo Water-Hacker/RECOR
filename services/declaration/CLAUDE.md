@@ -40,6 +40,11 @@ fail-close at the boundary.
   are NEVER touched. See `docs/compliance/data-retention.md`.
 - Outbox: every event is written to `outbox` in the same transaction; a
   future outbox-relay worker publishes to Kafka.
+- Kafka transport (R-LOOP-2): `infrastructure::kafka_producer` publishes
+  the same outbox rows to `recor.declaration.events.v1` keyed by
+  `aggregate_id`. Gated by `RELAY_TRANSPORT=http|kafka` (default `http`);
+  set `KAFKA_BROKERS` + `RELAY_TRANSPORT=kafka` to spawn the producer
+  alongside the HTTP relay during the cutover (see ADR-0007).
 - gRPC contracts: `contracts/declaration.proto` (R-DECL-8 / #78).
   tonic-based server bound on `GRPC_BIND_ADDR` (default empty →
   disabled; production uses `0.0.0.0:9080`). Same OIDC verifier as
