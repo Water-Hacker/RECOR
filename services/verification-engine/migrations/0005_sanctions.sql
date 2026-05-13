@@ -1,4 +1,4 @@
--- Migration: 0004_sanctions
+-- Migration: 0005_sanctions
 -- Service:   verification-engine
 -- Ticket:    R-VER-2
 -- Rationale: Stage 3 sanctions screening index. Stores normalised
