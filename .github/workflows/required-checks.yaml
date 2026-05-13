@@ -181,6 +181,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88.0"
+      - name: install librdkafka build deps
+        # R-LOOP-2 added rdkafka (via the declaration crate's kafka_producer
+        # module). rdkafka-sys builds librdkafka from source and needs
+        # cmake + libcurl headers at compile time, even when WITH_CURL=0
+        # because some translation units include curl/curl.h unconditionally.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake build-essential libcurl4-openssl-dev
       - name: cache cargo registry + target
         uses: actions/cache@v4
         with:
@@ -253,10 +261,11 @@ jobs:
         run: |
           cargo install sqlx-cli --version 0.8.6 \
             --no-default-features --features postgres,rustls --locked
-      - name: install psql
+      - name: install psql + librdkafka build deps
+        # R-LOOP-2: cmake + libcurl-dev for the rdkafka-sys build.
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-client cmake build-essential libcurl4-openssl-dev
       - name: apply declaration migrations
         env:
           PGPASSWORD: postgres
