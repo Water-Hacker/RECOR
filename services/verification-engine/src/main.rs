@@ -135,6 +135,48 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
     info!("prometheus metrics registry initialised");
 
+    // R-LOOP-3 — SPIFFE/mTLS bootstrap. Same shape as the declaration
+    // service: if the operator asked for mTLS we refuse to start
+    // unless the Workload API hands us a valid SVID (D14 fail-closed
+    // / D7 no-workarounds).
+    let spiffe_metrics = std::sync::Arc::new(
+        recor_spiffe::SpiffeMetrics::register(&metrics.registry)
+            .map_err(|e| anyhow::anyhow!("spiffe metrics register failed: {e}"))?,
+    );
+    let spiffe_client = if cfg.mtls_enabled() {
+        info!(
+            socket = %cfg.spiffe_socket,
+            self_id = %cfg.spiffe_id_self,
+            peer_id = %cfg.spiffe_id_peer,
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT requires SPIFFE — bootstrapping Workload API client"
+        );
+        let api = std::sync::Arc::new(
+            recor_spiffe::HttpWorkloadApi::new(cfg.spiffe_socket.clone()),
+        );
+        let client = std::sync::Arc::new(recor_spiffe::SpiffeClient::new(
+            api,
+            Some(spiffe_metrics.clone()),
+        ));
+        client
+            .bootstrap(&cfg.spiffe_id_self)
+            .await
+            .context("SPIFFE Workload API bootstrap failed — refusing to start under AUTH_TRANSPORT=mtls (D14 fail-closed)")?;
+        info!("SPIFFE SVID + trust bundle fetched");
+        // TODO(R-LOOP-3-followup): swap axum::serve for axum-server +
+        // rustls::ServerConfig built from spiffe_client + add a tower
+        // middleware that extracts the peer SPIFFE ID and enforces
+        // cfg.spiffe_id_peer via recor_spiffe::enforce_peer_id.
+        Some(client)
+    } else {
+        info!(
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT=hmac — SPIFFE not bootstrapped"
+        );
+        None
+    };
+    let _spiffe = spiffe_client;
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,

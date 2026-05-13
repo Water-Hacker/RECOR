@@ -1,0 +1,93 @@
+# SPIRE server + agent — single-node dev setup for R-LOOP-3.
+#
+# Purpose: provide local SVID issuance + trust-bundle distribution so the
+# Declaration service and the Verification engine can run with
+# AUTH_TRANSPORT=mtls during integration smokes and developer workflows.
+# Production deployment lives under infrastructure/helm/spire/ in a
+# follow-up — this compose is dev-only and assumes a single host.
+#
+# Trust domain: `recor.cm` (the national-registry domain; matches the
+# SPIFFE IDs called out in services/declaration/scripts/integration-smoke.sh
+# which already use spiffe://recor.cm/<workload> for OIDC dev principals).
+#
+# Bring up:
+#   docker compose -f infrastructure/spire/docker-compose.yaml up -d
+#   bash infrastructure/spire/scripts/bootstrap.sh
+#
+# Workload-attestation strategy: docker-label-based attestation via the
+# spire-agent's docker workload-attestor plugin. Each application
+# container declares `org.spiffe.workload=<name>` and the agent issues
+# SVIDs against the matching registration entry. See
+# `registration-entries/*.json` for the selector → SPIFFE-ID mapping.
+#
+# Persistence: SPIRE server keys + datastore are kept in named volumes
+# so that an agent restart does not re-trigger a server-side
+# trust-bundle rotation (which would force every workload to re-attest).
+
+name: recor-spire
+
+networks:
+  spire:
+    driver: bridge
+
+volumes:
+  spire-server-data:
+  spire-agent-data:
+  spire-agent-socket:
+
+services:
+  # ─── SPIRE server ──────────────────────────────────────────────────
+  # Issues SVIDs (X.509 + JWT) for workloads that match a registration
+  # entry. The control plane of the SPIFFE deployment.
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.10.4
+    container_name: recor-spire-server
+    command:
+      - "-config"
+      - "/run/spire/conf/server.conf"
+    volumes:
+      - ./server.conf:/run/spire/conf/server.conf:ro
+      - spire-server-data:/run/spire/data
+    networks: [spire]
+    ports:
+      # Server's gRPC API — only exposed for the bootstrap script to
+      # issue `spire-server entry create` calls. Bound to loopback only.
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck", "-socketPath", "/tmp/spire-server/private/api.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  # ─── SPIRE agent ───────────────────────────────────────────────────
+  # Workload-API endpoint on the host's filesystem (UDS). Application
+  # containers mount this socket and fetch their SVIDs via the
+  # standardised SPIFFE Workload API gRPC surface.
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.10.4
+    container_name: recor-spire-agent
+    depends_on:
+      spire-server: { condition: service_healthy }
+    command:
+      - "-config"
+      - "/run/spire/conf/agent.conf"
+    volumes:
+      - ./agent.conf:/run/spire/conf/agent.conf:ro
+      - spire-agent-data:/run/spire/data
+      # Public Workload API socket — applications consume this. The
+      # path here matches the default `SPIFFE_ENDPOINT_SOCKET` value
+      # expected by spiffe-rs and the recor-spiffe shared crate.
+      - spire-agent-socket:/tmp/spire-agent/public
+      # docker workload attestor needs the docker socket to inspect
+      # container labels for selector matching.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [spire]
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-agent", "healthcheck", "-socketPath", "/tmp/spire-agent/public/api.sock"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped

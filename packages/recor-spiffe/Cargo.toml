@@ -1,0 +1,53 @@
+[package]
+name = "recor-spiffe"
+description = "SPIFFE Workload API client + rustls glue for RÉCOR services. Fetches X.509 SVIDs + trust bundles at startup, exposes rustls ServerConfig + ClientConfig builders for inbound and outbound mTLS, provides a tower middleware that extracts the peer SPIFFE ID from the TLS connection and enforces an allowlist. Closes R-LOOP-3."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_spiffe"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait.workspace = true
+prometheus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+# rustls 0.23 stack — same version axis as reqwest's rustls-tls feature
+# (already in the workspace via the relay's outbound client). We pull
+# the crate in directly so we can build ServerConfig / ClientConfig
+# instances from the SVID + trust bundle returned by the Workload API.
+# `ring` is the cryptographic provider we use everywhere in the
+# workspace.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+rustls-pemfile = "2"
+# x509-parser lets us pull the URI SAN out of a peer certificate so the
+# tower middleware can extract the verified SPIFFE ID. Standard,
+# pure-Rust, no openssl dep.
+x509-parser = { version = "0.16", default-features = false }
+
+[features]
+# Exposes the `fixtures` module + the `MockWorkloadApi` to consumers
+# outside this crate's own unit-tests (e.g. an end-to-end smoke that
+# wants to drive the SpiffeClient without bringing up SPIRE).
+# Internal tests do not need to enable this — the fixtures are always
+# compiled in under `cfg(test)`.
+test-fixtures = []
+
+[dev-dependencies]
+# wiremock-backed HTTP stub for the (alternate, REST-shaped) Workload
+# API surface we use in unit tests. The production gRPC client is
+# wired separately in the service composition root; the trait-based
+# abstraction lets unit tests run without a live SPIRE agent.
+wiremock = "0.6"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+prometheus.workspace = true
+serde_json.workspace = true

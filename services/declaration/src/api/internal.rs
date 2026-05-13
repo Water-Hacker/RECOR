@@ -70,6 +70,16 @@ pub struct InternalAppState {
     ///      + retry budget), operator clears `old_hmac_secret`. Only
     ///      the new secret is accepted from now on.
     pub old_hmac_secret: String,
+    /// R-LOOP-3 — whether the inbound endpoint requires the HMAC
+    /// header. `true` for `AUTH_TRANSPORT=hmac` and `mtls` (defence
+    /// in depth during cutover); `false` for `mtls-only` once the
+    /// transport-layer mTLS gate is the sole authenticator.
+    pub hmac_required: bool,
+    /// R-LOOP-3 — the SPIFFE ID this endpoint expects the connected
+    /// peer to present at the TLS layer. Used by the
+    /// `enforce_peer_id` gate when mtls_enabled is true. Empty
+    /// string when mtls is disabled.
+    pub expected_peer_spiffe_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,37 +125,42 @@ pub async fn handle_verification_outcome(
     body: Bytes,
 ) -> Result<(StatusCode, Json<VerificationOutcomeResponse>), (StatusCode, Json<serde_json::Value>)>
 {
-    if state.hmac_secret.is_empty() {
-        warn!("writeback endpoint hit but HMAC secret is unconfigured");
-        return Err(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "writeback_disabled",
-            "writeback endpoint disabled — WRITEBACK_HMAC_SECRET unset",
-        ));
-    }
-
-    let Some(provided_hex) = headers
-        .get("x-recor-signature")
-        .and_then(|v| v.to_str().ok())
-    else {
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "missing_signature",
-            "X-RECOR-Signature header required",
-        ));
-    };
-    if !verify_hmac_with_rotation(
-        &state.hmac_secret,
-        &state.old_hmac_secret,
-        &body,
-        provided_hex,
-    ) {
-        warn!("writeback HMAC verification failed");
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "bad_signature",
-            "HMAC signature did not verify",
-        ));
+    // R-LOOP-3: under AUTH_TRANSPORT=mtls-only the HMAC requirement
+    // is dropped — the TLS-layer peer-SPIFFE-ID gate is the sole
+    // authenticator. Under `hmac` (v1) and `mtls` (defence in depth
+    // during cutover) the HMAC header is still mandatory.
+    if state.hmac_required {
+        if state.hmac_secret.is_empty() {
+            warn!("writeback endpoint hit but HMAC secret is unconfigured");
+            return Err(error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "writeback_disabled",
+                "writeback endpoint disabled — WRITEBACK_HMAC_SECRET unset",
+            ));
+        }
+        let Some(provided_hex) = headers
+            .get("x-recor-signature")
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "missing_signature",
+                "X-RECOR-Signature header required",
+            ));
+        };
+        if !verify_hmac_with_rotation(
+            &state.hmac_secret,
+            &state.old_hmac_secret,
+            &body,
+            provided_hex,
+        ) {
+            warn!("writeback HMAC verification failed");
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "bad_signature",
+                "HMAC signature did not verify",
+            ));
+        }
     }
 
     let envelope: InboundEnvelope = serde_json::from_slice(&body).map_err(|e| {

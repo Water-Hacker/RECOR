@@ -24,6 +24,7 @@ members = [
     "packages/fabric-bridge",
     "packages/recor-auth-oidc",
     "packages/recor-logging",
+    "packages/recor-spiffe",
     "packages/recor-vault-client",
     "services/declaration",
     "services/entity-service",

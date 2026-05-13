@@ -187,6 +187,51 @@ pub struct Config {
     /// uniformly across transports.
     #[serde(default)]
     pub grpc_bind_addr: String,
+
+    /// R-LOOP-3 — service-to-service auth transport. One of:
+    ///
+    /// - `"hmac"` (default): the existing HMAC-SHA256 path on
+    ///   `/v1/internal/*`. No SPIFFE involvement; the V1 transport.
+    /// - `"mtls"`: rustls-terminated mTLS via SPIFFE SVID; **HMAC
+    ///   header is still required** as a defence-in-depth fallback
+    ///   during the cutover window. Refusal at startup if the
+    ///   SPIFFE Workload API is unreachable (D14 fail-closed).
+    /// - `"mtls-only"`: rustls-terminated mTLS via SPIFFE SVID;
+    ///   HMAC verification is dropped. This is the post-cutover
+    ///   steady state.
+    ///
+    /// Empty defaults to `hmac` for backward compatibility with the
+    /// existing integration-smoke + production rollout.
+    ///
+    /// See `docs/adr/0008-spiffe-mtls.md` for the design decision and
+    /// `docs/runbooks/spiffe-onboarding.md` for operational
+    /// procedures (registering a new workload, rotating the trust
+    /// bundle, debugging SVID-fetch failures).
+    #[serde(default = "default_auth_transport")]
+    pub auth_transport: String,
+
+    /// R-LOOP-3 — SPIFFE Workload API socket path. Used only when
+    /// `auth_transport != "hmac"`. The socket lives on a tmpfs
+    /// shared with the SPIRE agent container (see
+    /// `infrastructure/spire/docker-compose.yaml`).
+    #[serde(default = "default_spiffe_socket")]
+    pub spiffe_socket: String,
+
+    /// R-LOOP-3 — the SPIFFE ID this service expects from its own
+    /// SVID. The Workload API may issue multiple SVIDs to a
+    /// containerised workload; this config nails down which one we
+    /// bind into the TLS stack. Defaults to
+    /// `spiffe://recor.cm/declaration`.
+    #[serde(default = "default_spiffe_id_self_declaration")]
+    pub spiffe_id_self: String,
+
+    /// R-LOOP-3 — the SPIFFE ID this service expects from inbound
+    /// peers on `/v1/internal/verification-outcomes`. The
+    /// verification engine is the only legitimate caller; we gate
+    /// on its SPIFFE ID rather than IP/network. Defaults to
+    /// `spiffe://recor.cm/verification`.
+    #[serde(default = "default_spiffe_id_peer_verification")]
+    pub spiffe_id_peer: String,
 }
 
 impl Config {
@@ -219,7 +264,27 @@ impl Config {
                 return Err(ConfigError::RelaySecretRequired);
             }
         }
+        // R-LOOP-3: validate auth_transport against the enum.
+        match cfg.auth_transport.as_str() {
+            "hmac" | "mtls" | "mtls-only" => {}
+            other => {
+                return Err(ConfigError::InvalidAuthTransport(other.to_string()));
+            }
+        }
         Ok(cfg)
+    }
+
+    /// True iff this service should bring up SPIFFE/mTLS at startup
+    /// (i.e. `auth_transport` is `mtls` or `mtls-only`).
+    pub fn mtls_enabled(&self) -> bool {
+        matches!(self.auth_transport.as_str(), "mtls" | "mtls-only")
+    }
+
+    /// True iff this service still requires the HMAC header on
+    /// inbound internal endpoints. `hmac` and `mtls` both keep the
+    /// HMAC requirement; only `mtls-only` drops it.
+    pub fn hmac_required(&self) -> bool {
+        !matches!(self.auth_transport.as_str(), "mtls-only")
     }
 
     pub fn http_timeout(&self) -> Duration {
@@ -255,6 +320,8 @@ pub enum ConfigError {
     OidcAudienceRequired,
     #[error("RELAY_HMAC_SECRET is required when RELAY_WEBHOOK_URL is set")]
     RelaySecretRequired,
+    #[error("AUTH_TRANSPORT must be one of: hmac, mtls, mtls-only (got `{0}`)")]
+    InvalidAuthTransport(String),
 }
 
 fn default_bind_addr() -> String {
@@ -307,4 +374,25 @@ fn default_rate_limit_burst() -> u32 {
 
 fn default_outbox_retention_interval() -> u64 {
     86_400 // 24 hours
+}
+
+fn default_auth_transport() -> String {
+    // R-LOOP-3: hmac is the v1 default; integration smokes opt in to
+    // mtls / mtls-only explicitly so existing CI runs are unaffected.
+    "hmac".to_string()
+}
+
+fn default_spiffe_socket() -> String {
+    // Matches infrastructure/spire/agent.conf socket_path. Empty would
+    // be a configuration error when mtls_enabled() returns true; the
+    // service's main.rs checks that.
+    recor_spiffe::DEFAULT_WORKLOAD_API_SOCKET.to_string()
+}
+
+fn default_spiffe_id_self_declaration() -> String {
+    "spiffe://recor.cm/declaration".to_string()
+}
+
+fn default_spiffe_id_peer_verification() -> String {
+    "spiffe://recor.cm/verification".to_string()
 }
