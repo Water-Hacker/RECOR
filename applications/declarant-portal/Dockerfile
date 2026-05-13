@@ -13,7 +13,11 @@ COPY src ./src
 COPY tests ./tests
 RUN pnpm build
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
+# Bump from nginx:1.27-alpine (Alpine 3.21.3) → 1.29-alpine (Alpine
+# 3.22) — the older base picked up HIGH/CRITICAL CVEs that Trivy
+# fail-closes the publish-images workflow on (CI-2 #70). The 1.29
+# line tracks newer Alpine patches.
 # envsubst lives in the gettext package on alpine.
 RUN apk add --no-cache gettext
 
