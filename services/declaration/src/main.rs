@@ -29,6 +29,50 @@ use recor_declaration::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // OPS-4: load secrets from Vault before the env-based config loader
+    // runs. When VAULT_ADDR is non-empty, the bridge logs in via AppRole,
+    // reads the secret/recor/declaration/* paths, and injects the
+    // resolved values into process env. The existing Config::from_env()
+    // then sees them like any other env var and runs its cross-field
+    // validation. When VAULT_ADDR is empty, `populate_from_vault`
+    // returns Ok(false) after emitting a startup warn! so operators see
+    // they are NOT using Vault. D14: a non-empty VAULT_ADDR with an
+    // unreachable Vault is a hard-fail.
+    let vault_paths: &[(&str, &[(&str, &str)])] = &[
+        (
+            "recor/declaration/database",
+            &[("DATABASE_URL", "DATABASE_URL")],
+        ),
+        (
+            "recor/declaration/relay",
+            &[
+                ("RELAY_HMAC_SECRET", "RELAY_HMAC_SECRET"),
+                ("RELAY_HMAC_SECRET_OLD", "RELAY_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/declaration/writeback",
+            &[
+                ("WRITEBACK_HMAC_SECRET", "WRITEBACK_HMAC_SECRET"),
+                ("WRITEBACK_HMAC_SECRET_OLD", "WRITEBACK_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/declaration/oidc",
+            &[
+                ("OIDC_ISSUER_URL", "OIDC_ISSUER_URL"),
+                ("OIDC_AUDIENCE", "OIDC_AUDIENCE"),
+            ],
+        ),
+        (
+            "recor/declaration/observability",
+            &[("LOG_REDACTION_KEY", "LOG_REDACTION_KEY")],
+        ),
+    ];
+    recor_vault_client::populate_from_vault(vault_paths)
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault secret loading failed (D14 fail-closed): {e}"))?;
+
     let cfg = Config::from_env().context("loading configuration from environment")?;
     let _tracing_guard = recor_declaration::observability::init(&cfg)
         .map_err(|e| anyhow::anyhow!("tracing init failed: {e}"))?;
@@ -107,6 +151,60 @@ async fn main() -> Result<()> {
     let metrics = recor_declaration::metrics::Metrics::new()
         .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
     info!("prometheus metrics registry initialised");
+
+    // R-LOOP-3 — SPIFFE/mTLS bootstrap. Refuses to start when
+    // AUTH_TRANSPORT=mtls / mtls-only and the SPIFFE Workload API
+    // is unreachable (D14 fail-closed + D7 no-workarounds: if the
+    // operator asked for mTLS, mTLS MUST succeed). The SpiffeMetrics
+    // bundle is registered against the same Prometheus registry the
+    // rest of the service uses, so `/metrics` exposes the SVID-fetch
+    // + peer-verify counters under the standard service namespace.
+    let spiffe_metrics = std::sync::Arc::new(
+        recor_spiffe::SpiffeMetrics::register(&metrics.registry)
+            .map_err(|e| anyhow::anyhow!("spiffe metrics register failed: {e}"))?,
+    );
+    let spiffe_client = if cfg.mtls_enabled() {
+        info!(
+            socket = %cfg.spiffe_socket,
+            self_id = %cfg.spiffe_id_self,
+            peer_id = %cfg.spiffe_id_peer,
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT requires SPIFFE — bootstrapping Workload API client"
+        );
+        // The HttpWorkloadApi shim is the dev/test transport. Production
+        // wiring of the gRPC Workload-API client over a UDS lives in a
+        // follow-up; for now we accept that AUTH_TRANSPORT=mtls in this
+        // build requires the dev HTTP shim to be reachable. The
+        // composition root refuses to start if the bootstrap fails.
+        let api = std::sync::Arc::new(
+            recor_spiffe::HttpWorkloadApi::new(cfg.spiffe_socket.clone()),
+        );
+        let client = std::sync::Arc::new(recor_spiffe::SpiffeClient::new(
+            api,
+            Some(spiffe_metrics.clone()),
+        ));
+        client
+            .bootstrap(&cfg.spiffe_id_self)
+            .await
+            .context("SPIFFE Workload API bootstrap failed — refusing to start under AUTH_TRANSPORT=mtls (D14 fail-closed)")?;
+        info!("SPIFFE SVID + trust bundle fetched");
+        // TODO(R-LOOP-3-followup): build the rustls ServerConfig +
+        // ClientConfig from spiffe_client and use them to swap
+        // `axum::serve` for `axum-server::tls_rustls::bind`. The
+        // bootstrap succeeds today and the metrics ticked; the
+        // actual TLS termination is the second-step wiring.
+        Some(client)
+    } else {
+        info!(
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT=hmac — SPIFFE not bootstrapped"
+        );
+        None
+    };
+    // Keep the client alive for the lifetime of the process. Even
+    // without the rustls wiring it owns the cached SVID + trust
+    // bundle that the follow-up step consumes.
+    let _spiffe = spiffe_client;
 
     let app_state = AppState {
         submit_usecase: submit,

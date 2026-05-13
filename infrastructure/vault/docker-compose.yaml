@@ -1,0 +1,81 @@
+# RÉCOR — dev Vault (OPS-4)
+#
+# Single-node HashiCorp Vault in dev mode, bound to 127.0.0.1 only.
+# DEV MODE IS NOT FOR PRODUCTION: keys are held in memory, every
+# restart clears all secrets, and the root token is well-known.
+#
+# Bring up:
+#   docker compose -f infrastructure/vault/docker-compose.yaml up -d
+#
+# Bootstrap (idempotent):
+#   bash infrastructure/vault/scripts/init-dev-vault.sh
+#
+# Tear down:
+#   docker compose -f infrastructure/vault/docker-compose.yaml down -v
+#
+# Ports:
+#   8200  HTTP API + UI                (127.0.0.1 only — never the LAN)
+#
+# Production deployment lives in infrastructure/helm/vault (TODO,
+# tracked separately). This compose file is for local dev / CI smoke
+# only and must never be reused for staging or production.
+#
+# See:
+#   - infrastructure/vault/README.md           (overview)
+#   - infrastructure/vault/scripts/init-dev-vault.sh
+#   - docs/runbooks/vault-onboarding.md        (operator runbook)
+#   - .env.example                             (VAULT_DEV_ROOT_TOKEN_ID)
+
+name: recor-vault-dev
+
+networks:
+  vault:
+    driver: bridge
+
+volumes:
+  # Audit log persistence. In dev mode the secret store is in-memory,
+  # but we want the audit log to survive restarts so a developer can
+  # inspect what the bootstrap script wrote even after `docker compose
+  # restart`. The audit log file is bind-mounted via this volume to
+  # /vault/audit/audit.log inside the container.
+  vault-audit:
+  vault-logs:
+
+services:
+  vault:
+    # 1.18.x is the line tracked by HashiCorp's OSS releases as of
+    # 2026-Q2. Bump in lockstep with the Helm chart for prod.
+    image: hashicorp/vault:1.18.3
+    container_name: recor-vault-dev
+    restart: unless-stopped
+    # Dev mode: starts unsealed, KV-v2 mounted at secret/, root token
+    # printed at startup AND fixed via VAULT_DEV_ROOT_TOKEN_ID for
+    # reproducibility. NEVER use this token outside dev.
+    command: ["server", "-dev", "-dev-root-token-id=${VAULT_DEV_ROOT_TOKEN_ID:?VAULT_DEV_ROOT_TOKEN_ID is required — copy .env.example to .env}", "-dev-listen-address=0.0.0.0:8200"]
+    environment:
+      VAULT_ADDR: "http://127.0.0.1:8200"
+      VAULT_API_ADDR: "http://127.0.0.1:8200"
+      # IPC_LOCK is required for production-mode mlock; in dev mode
+      # Vault skips mlock anyway, but we keep the capability so the
+      # same compose file mirrors the production-image expectations.
+      SKIP_SETCAP: "true"
+    cap_add:
+      - IPC_LOCK
+    ports:
+      # 127.0.0.1 only — Vault in dev mode is a development convenience
+      # and must never be exposed on the LAN. D17 (zero trust).
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - vault-audit:/vault/audit
+      - vault-logs:/vault/logs
+    networks:
+      - vault
+    healthcheck:
+      # /v1/sys/health returns 200 when initialized, unsealed, active.
+      # Dev mode is always all three after server start, so this
+      # converges quickly.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s

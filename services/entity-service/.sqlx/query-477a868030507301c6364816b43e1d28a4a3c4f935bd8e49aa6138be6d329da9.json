@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO entities (\n            id, canonical_name, entity_type, jurisdiction,\n            registration_number_in_jurisdiction,\n            founded_at, dissolved_at, aggregate_version\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, NULL, $7)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bpchar",
+        "Text",
+        "Date",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "477a868030507301c6364816b43e1d28a4a3c4f935bd8e49aa6138be6d329da9"
+}

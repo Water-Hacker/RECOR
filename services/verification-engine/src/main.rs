@@ -28,6 +28,43 @@ use recor_verification_engine::infrastructure::retention::warn_if_misconfigured;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // OPS-4: Vault bridge — see services/declaration/src/main.rs for
+    // the rationale and the equivalent comment. When VAULT_ADDR is
+    // set, fetch the V-engine's secrets from Vault and inject them
+    // into env before Config::from_env() runs. When empty, env-only
+    // mode with a startup warn!.
+    let vault_paths: &[(&str, &[(&str, &str)])] = &[
+        (
+            "recor/verification-engine/database",
+            &[("DATABASE_URL", "DATABASE_URL")],
+        ),
+        (
+            "recor/verification-engine/inbound",
+            &[
+                ("INBOUND_HMAC_SECRET", "INBOUND_HMAC_SECRET"),
+                ("INBOUND_HMAC_SECRET_OLD", "INBOUND_HMAC_SECRET_OLD"),
+            ],
+        ),
+        (
+            "recor/verification-engine/writeback",
+            &[("WRITEBACK_HMAC_SECRET", "WRITEBACK_HMAC_SECRET")],
+        ),
+        (
+            "recor/verification-engine/oidc",
+            &[
+                ("OIDC_ISSUER_URL", "OIDC_ISSUER_URL"),
+                ("OIDC_AUDIENCE", "OIDC_AUDIENCE"),
+            ],
+        ),
+        (
+            "recor/verification-engine/observability",
+            &[("LOG_REDACTION_KEY", "LOG_REDACTION_KEY")],
+        ),
+    ];
+    recor_vault_client::populate_from_vault(vault_paths)
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault secret loading failed (D14 fail-closed): {e}"))?;
+
     let cfg = Config::from_env().context("loading configuration")?;
     let _guard = recor_verification_engine::observability::init(&cfg)
         .map_err(|e| anyhow::anyhow!("tracing init failed: {e}"))?;
@@ -98,6 +135,48 @@ async fn main() -> Result<()> {
     let metrics = recor_verification_engine::metrics::Metrics::new()
         .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
     info!("prometheus metrics registry initialised");
+
+    // R-LOOP-3 — SPIFFE/mTLS bootstrap. Same shape as the declaration
+    // service: if the operator asked for mTLS we refuse to start
+    // unless the Workload API hands us a valid SVID (D14 fail-closed
+    // / D7 no-workarounds).
+    let spiffe_metrics = std::sync::Arc::new(
+        recor_spiffe::SpiffeMetrics::register(&metrics.registry)
+            .map_err(|e| anyhow::anyhow!("spiffe metrics register failed: {e}"))?,
+    );
+    let spiffe_client = if cfg.mtls_enabled() {
+        info!(
+            socket = %cfg.spiffe_socket,
+            self_id = %cfg.spiffe_id_self,
+            peer_id = %cfg.spiffe_id_peer,
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT requires SPIFFE — bootstrapping Workload API client"
+        );
+        let api = std::sync::Arc::new(
+            recor_spiffe::HttpWorkloadApi::new(cfg.spiffe_socket.clone()),
+        );
+        let client = std::sync::Arc::new(recor_spiffe::SpiffeClient::new(
+            api,
+            Some(spiffe_metrics.clone()),
+        ));
+        client
+            .bootstrap(&cfg.spiffe_id_self)
+            .await
+            .context("SPIFFE Workload API bootstrap failed — refusing to start under AUTH_TRANSPORT=mtls (D14 fail-closed)")?;
+        info!("SPIFFE SVID + trust bundle fetched");
+        // TODO(R-LOOP-3-followup): swap axum::serve for axum-server +
+        // rustls::ServerConfig built from spiffe_client + add a tower
+        // middleware that extracts the peer SPIFFE ID and enforces
+        // cfg.spiffe_id_peer via recor_spiffe::enforce_peer_id.
+        Some(client)
+    } else {
+        info!(
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT=hmac — SPIFFE not bootstrapped"
+        );
+        None
+    };
+    let _spiffe = spiffe_client;
 
     let app_state = AppState {
         submit_usecase: submit,

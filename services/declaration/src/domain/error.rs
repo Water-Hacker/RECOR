@@ -113,4 +113,7 @@ pub enum DomainError {
 
     #[error(transparent)]
     ValueObject(#[from] ValueObjectError),
+
+    #[error("beneficial_owner.person_id {0} does not resolve in the Person registry (R-DECL-4)")]
+    BeneficialOwnerNotInPersonRegistry(uuid::Uuid),
 }

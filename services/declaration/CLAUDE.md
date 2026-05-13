@@ -58,6 +58,21 @@ fail-close at the boundary.
 - Public APIs: REST under `/v1/declarations` (see `src/api/rest.rs` and
   the dto module) + gRPC `recor.declaration.v1.DeclarationService`
   (see `src/api/grpc.rs`).
+- **Audit anchoring (R-DECL-9):** every declaration event is
+  asynchronously anchored to the Hyperledger Fabric `recor-audit`
+  channel via the `worker-fabric-bridge` app
+  (`apps/worker-fabric-bridge/`). The bridge consumes from the same
+  outbox-relay channel as the verification engine, calls the
+  `audit-witness` chaincode (`chaincode/audit-witness/`) through the
+  Fabric Gateway HTTP shim, and dead-letters permanent failures to
+  `fabric_bridge_dlq`. The verifier app (`apps/audit-verifier/`)
+  re-derives the receipt hash from the projection and compares to
+  the on-chain entry, exposing
+  `GET /v1/audit/verify/{declaration_id}` for operator and public
+  verification. Closes Gap G1 in `docs/security/threat-model.md`.
+  See `docs/adr/0009-fabric-audit-anchoring.md`,
+  `docs/runbooks/fabric-bridge.md`, and
+  `docs/runbooks/audit-verification.md`.
 - GDPR data-subject access: `GET /v1/declarations/by-principal`
   returns every declaration submitted by the authenticated principal
   (COMP-1). Principal sourced from auth, never from request; see
@@ -106,8 +121,9 @@ domain invariants the SLOs depend on) is mapped in
   doesn't need it.
 - **D15 cryptographic provenance** — Every declaration carries an
   Ed25519 attestation. Receipt hash is BLAKE3 over the canonical form.
-  Future: anchor receipts to the Fabric audit channel
-  (`R-DECL-9`).
+  Receipts are anchored to the Hyperledger Fabric audit channel via
+  the bridge worker (R-DECL-9, shipped). Tampering on the projection
+  is detectable via the audit-verifier app.
 - **D18 no secrets** — The Postgres password lives in `.env`
   (gitignored). The service refuses to start without `DATABASE_URL`.
 - **D14 fail-closed** — Any malformed request, bad attestation,

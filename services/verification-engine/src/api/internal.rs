@@ -38,6 +38,13 @@ pub struct InternalAppState {
     /// declaration service's internal.rs doc comment for the full
     /// rotation procedure.
     pub old_hmac_secret: String,
+    /// R-LOOP-3 — whether the inbound endpoint requires the HMAC
+    /// header. `true` for `AUTH_TRANSPORT=hmac` and `mtls`; `false`
+    /// for `mtls-only`.
+    pub hmac_required: bool,
+    /// R-LOOP-3 — the SPIFFE ID this endpoint expects from peers at
+    /// the TLS layer. Empty when mTLS is disabled.
+    pub expected_peer_spiffe_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,37 +109,40 @@ pub async fn handle_declaration_event(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, Json<InboundResponse>), (StatusCode, Json<serde_json::Value>)> {
-    // 1. HMAC verification.
-    if state.hmac_secret.is_empty() {
-        warn!("internal endpoint hit but HMAC secret is unconfigured");
-        return Err(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "inbound_disabled",
-            "internal endpoint disabled — INBOUND_HMAC_SECRET unset",
-        ));
-    }
-    let Some(provided_hex) = headers
-        .get("x-recor-signature")
-        .and_then(|v| v.to_str().ok())
-    else {
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "missing_signature",
-            "X-RECOR-Signature header required",
-        ));
-    };
-    if !verify_hmac_with_rotation(
-        &state.hmac_secret,
-        &state.old_hmac_secret,
-        &body,
-        provided_hex,
-    ) {
-        warn!("inbound HMAC verification failed");
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "bad_signature",
-            "HMAC signature did not verify",
-        ));
+    // 1. HMAC verification — skipped under AUTH_TRANSPORT=mtls-only
+    // (the TLS-layer peer-SPIFFE-ID gate is the sole authenticator).
+    if state.hmac_required {
+        if state.hmac_secret.is_empty() {
+            warn!("internal endpoint hit but HMAC secret is unconfigured");
+            return Err(error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "inbound_disabled",
+                "internal endpoint disabled — INBOUND_HMAC_SECRET unset",
+            ));
+        }
+        let Some(provided_hex) = headers
+            .get("x-recor-signature")
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "missing_signature",
+                "X-RECOR-Signature header required",
+            ));
+        };
+        if !verify_hmac_with_rotation(
+            &state.hmac_secret,
+            &state.old_hmac_secret,
+            &body,
+            provided_hex,
+        ) {
+            warn!("inbound HMAC verification failed");
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "bad_signature",
+                "HMAC signature did not verify",
+            ));
+        }
     }
 
     // 2. Deserialise the envelope.

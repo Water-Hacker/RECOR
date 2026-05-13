@@ -7,7 +7,9 @@ use thiserror::Error;
 use time::OffsetDateTime;
 use tracing::{Instrument, info_span};
 
-use crate::application::port::{DeclarationRepository, RepositoryError};
+use crate::application::port::{
+    DeclarationRepository, PersonRegistryError, PersonRegistryPort, RepositoryError,
+};
 use crate::domain::{
     DeclarationAggregate, DeclarationEvent, DeclarationId, DeclarationSubmittedV1, DomainError,
     SubmitDeclaration,
@@ -28,16 +30,37 @@ pub enum SubmitError {
     Domain(#[from] DomainError),
     #[error(transparent)]
     Repository(#[from] RepositoryError),
+    #[error("person registry unavailable: {0}")]
+    PersonRegistry(#[from] PersonRegistryError),
 }
 
 /// Use case object — a thin orchestrator over the repository port.
 pub struct SubmitDeclarationUseCase {
     repository: Arc<dyn DeclarationRepository>,
+    /// R-DECL-4: optional gate that validates each
+    /// `beneficial_owner.person_id` against the Person registry. `None`
+    /// (the test/dev default while `PERSON_SERVICE_URL` is empty) skips
+    /// the check. Production wiring uses
+    /// `PersonRegistryHttpAdapter`.
+    person_registry: Option<Arc<dyn PersonRegistryPort>>,
 }
 
 impl SubmitDeclarationUseCase {
     pub fn new(repository: Arc<dyn DeclarationRepository>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            person_registry: None,
+        }
+    }
+
+    /// Builder-style: attach a Person registry port. Once attached,
+    /// `execute` validates every `beneficial_owner.person_id` against
+    /// the registry before persisting the event. A negative answer
+    /// surfaces as `DomainError::BeneficialOwnerNotInPersonRegistry`.
+    #[must_use]
+    pub fn with_person_registry(mut self, registry: Arc<dyn PersonRegistryPort>) -> Self {
+        self.person_registry = Some(registry);
+        self
     }
 
     #[tracing::instrument(
@@ -61,6 +84,29 @@ impl SubmitDeclarationUseCase {
             .instrument(info_span!("load_events"))
             .await?;
         let aggregate = DeclarationAggregate::from_events(id, &events);
+
+        // R-DECL-4 cross-service validation: each beneficial_owner.person_id
+        // must resolve in the Person registry. Gated behind an Option<_> so
+        // dev/test stays end-to-end exercisable without a second service.
+        // Run BEFORE the aggregate's domain validation so an unknown person
+        // surfaces as the more-precise BeneficialOwnerNotInPersonRegistry
+        // error rather than a generic ownership invariant failure.
+        if let Some(registry) = self.person_registry.as_ref() {
+            for owner in &command.beneficial_owners {
+                let exists = registry
+                    .exists(owner.person_id.0)
+                    .instrument(info_span!(
+                        "person_registry.exists",
+                        person_id = %owner.person_id
+                    ))
+                    .await?;
+                if !exists {
+                    return Err(SubmitError::Domain(
+                        DomainError::BeneficialOwnerNotInPersonRegistry(owner.person_id.0),
+                    ));
+                }
+            }
+        }
 
         // Validate + produce event.
         let event = aggregate.handle_submit(command)?;
@@ -251,6 +297,48 @@ mod tests {
         cmd.beneficial_owners.clear();
         let err = usecase.execute(cmd).await.unwrap_err();
         assert!(matches!(err, SubmitError::Domain(DomainError::NoBeneficialOwners)));
+    }
+
+    // ─── R-DECL-4: Person registry validation ─────────────────────────────
+
+    /// A stub that returns the same answer for every person id.
+    struct StaticRegistry {
+        answer: bool,
+    }
+
+    #[async_trait]
+    impl crate::application::port::PersonRegistryPort for StaticRegistry {
+        async fn exists(
+            &self,
+            _person_id: uuid::Uuid,
+        ) -> Result<bool, crate::application::port::PersonRegistryError> {
+            Ok(self.answer)
+        }
+    }
+
+    #[tokio::test]
+    async fn person_registry_denial_surfaces_beneficial_owner_not_in_registry() {
+        let repo = Arc::new(InMemoryRepo::default());
+        let registry: Arc<dyn crate::application::port::PersonRegistryPort> =
+            Arc::new(StaticRegistry { answer: false });
+        let usecase = SubmitDeclarationUseCase::new(repo).with_person_registry(registry);
+        let cmd = make_cmd(DeclarationId::new());
+        let err = usecase.execute(cmd).await.unwrap_err();
+        assert!(matches!(
+            err,
+            SubmitError::Domain(DomainError::BeneficialOwnerNotInPersonRegistry(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn person_registry_acceptance_admits_submission() {
+        let repo = Arc::new(InMemoryRepo::default());
+        let registry: Arc<dyn crate::application::port::PersonRegistryPort> =
+            Arc::new(StaticRegistry { answer: true });
+        let usecase = SubmitDeclarationUseCase::new(repo).with_person_registry(registry);
+        let cmd = make_cmd(DeclarationId::new());
+        let receipt = usecase.execute(cmd).await.expect("registry-accepted submit");
+        assert_eq!(receipt.state, "submitted");
     }
 
     // Suppress the "DeclarationState used by transitive imports" warning.

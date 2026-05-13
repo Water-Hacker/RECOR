@@ -138,6 +138,36 @@ pub struct Config {
     /// duplicates. See `docs/adr/0007-kafka-transport-cutover.md`.
     #[serde(default = "default_verification_transport")]
     pub verification_transport: String,
+
+    /// R-LOOP-3 — service-to-service auth transport. One of:
+    ///
+    /// - `"hmac"` (default): HMAC-SHA256 path on `/v1/internal/*`.
+    /// - `"mtls"`: rustls-terminated mTLS via SPIFFE SVID; HMAC
+    ///   header is still required as defence-in-depth during cutover.
+    /// - `"mtls-only"`: mTLS-only steady state, HMAC dropped.
+    ///
+    /// See `docs/adr/0008-spiffe-mtls.md` for the design and
+    /// `docs/runbooks/spiffe-onboarding.md` for operational
+    /// procedures.
+    #[serde(default = "default_auth_transport")]
+    pub auth_transport: String,
+
+    /// R-LOOP-3 — SPIFFE Workload API socket. Used only when
+    /// `auth_transport != "hmac"`.
+    #[serde(default = "default_spiffe_socket")]
+    pub spiffe_socket: String,
+
+    /// R-LOOP-3 — this service's own SPIFFE ID. Defaults to
+    /// `spiffe://recor.cm/verification`.
+    #[serde(default = "default_spiffe_id_self_verification")]
+    pub spiffe_id_self: String,
+
+    /// R-LOOP-3 — the SPIFFE ID expected from inbound peers on
+    /// `/v1/internal/declaration-events`. Defaults to
+    /// `spiffe://recor.cm/declaration` (the declaration service is
+    /// the only legitimate caller of the inbound surface).
+    #[serde(default = "default_spiffe_id_peer_declaration")]
+    pub spiffe_id_peer: String,
 }
 
 impl Config {
@@ -155,9 +185,27 @@ impl Config {
         if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
             return Err(ConfigError::OidcAudienceRequired);
         }
+        match cfg.auth_transport.as_str() {
+            "hmac" | "mtls" | "mtls-only" => {}
+            other => {
+                return Err(ConfigError::InvalidAuthTransport(other.to_string()));
+            }
+        }
         Ok(cfg)
     }
     pub fn is_dev(&self) -> bool { self.environment == "dev" }
+
+    /// True iff this service should bring up SPIFFE/mTLS at startup.
+    pub fn mtls_enabled(&self) -> bool {
+        matches!(self.auth_transport.as_str(), "mtls" | "mtls-only")
+    }
+
+    /// True iff the inbound internal endpoint still requires the
+    /// HMAC header. `hmac` + `mtls` both require it (defence in
+    /// depth during cutover); only `mtls-only` drops it.
+    pub fn hmac_required(&self) -> bool {
+        !matches!(self.auth_transport.as_str(), "mtls-only")
+    }
 
     /// Parse `admin_principals` (CSV) into a deduplicated list of
     /// trimmed, non-empty principal strings. Returns an empty Vec
@@ -182,6 +230,8 @@ pub enum ConfigError {
     OidcRequiredOutsideDev,
     #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
     OidcAudienceRequired,
+    #[error("AUTH_TRANSPORT must be one of: hmac, mtls, mtls-only (got `{0}`)")]
+    InvalidAuthTransport(String),
 }
 
 fn default_bind_addr() -> String { "0.0.0.0:8081".to_string() }
@@ -198,3 +248,17 @@ fn default_outbox_retention_interval() -> u64 { 86_400 }
 fn default_consumer_group() -> String { "recor-verification-engine".to_string() }
 fn default_declaration_topic() -> String { "recor.declaration.events.v1".to_string() }
 fn default_verification_transport() -> String { "http".to_string() }
+
+// R-LOOP-3.
+fn default_auth_transport() -> String {
+    "hmac".to_string()
+}
+fn default_spiffe_socket() -> String {
+    recor_spiffe::DEFAULT_WORKLOAD_API_SOCKET.to_string()
+}
+fn default_spiffe_id_self_verification() -> String {
+    "spiffe://recor.cm/verification".to_string()
+}
+fn default_spiffe_id_peer_declaration() -> String {
+    "spiffe://recor.cm/declaration".to_string()
+}

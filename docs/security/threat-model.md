@@ -102,7 +102,7 @@ tickets):
 |---|---|---|---|
 | S | Forged declarant identity in request body | Principal comes from `auth_middleware` (OIDC sub or dev header), never from request body — D17 | `services/declaration/src/api/auth.rs:58` |
 | S | JWT alg-confusion (sign with HMAC, claim RS256) | HMAC algs (HS256/384/512) refused outright before signature check | `services/declaration/src/api/oidc.rs`, R-DECL-1 closed |
-| T | Tampered event log after write | Event log is append-only at the SQL level: BEFORE UPDATE/DELETE/TRUNCATE triggers RAISE EXCEPTION on every mutation attempt regardless of invoking role (COMP-2, migration `services/declaration/migrations/0007_audit_log_immutability.sql`); UPDATE/DELETE/TRUNCATE also REVOKEd from PUBLIC. | migrations + integration test `services/declaration/tests/audit_immutability.rs`; partial gap: no in-DB checksum chain (deferred to R-DECL-9 Fabric anchoring) |
+| T | Tampered event log after write | Event log is append-only at the SQL level: BEFORE UPDATE/DELETE/TRUNCATE triggers RAISE EXCEPTION on every mutation attempt regardless of invoking role (COMP-2, migration `services/declaration/migrations/0007_audit_log_immutability.sql`); UPDATE/DELETE/TRUNCATE also REVOKEd from PUBLIC. **Plus**: every event is anchored to the Hyperledger Fabric `recor-audit` channel via R-DECL-9; tampering on the projection is detectable post-hoc via `apps/audit-verifier/` re-derivation. | migrations + integration test `services/declaration/tests/audit_immutability.rs` + Fabric anchoring (G1 closed) |
 | T | Outbox row mutated between write and relay | Outbox + event + projection in single Postgres transaction (D13); relay is idempotent on `event_id` | `services/declaration/src/infrastructure/outbox.rs` |
 | R | Declarant later disputes that they signed | Ed25519 attestation persisted alongside the event; BLAKE3 receipt deterministic from canonical bytes | D15 |
 | I | PII leaked via tracing logs | OPS-2 (shipped): `recor-logging::RedactingLayer` masks SPIFFE paths, UUID PII fields, partial receipt hashes | `packages/recor-logging/src/lib.rs` |
@@ -133,6 +133,8 @@ tickets):
 | I | HMAC secret leaked in tracing | OPS-2 redacting layer + secrets wrapped in `SecretString`; no `expose_secret()` in any log site | `packages/recor-logging/src/lib.rs` |
 | D | DLQ floods consume disk | DLQ admin endpoints (R-LOOP-DLQ-2/3, shipped) let operator drain; alert wiring is OBS-1 (Phase 2) | `services/declaration/src/api/dlq.rs` |
 | E | Cross-channel misuse: D→V secret accepted on V→D path | Secrets are separately-named env vars; verifier on each side only reads its own slot | `services/declaration/src/config.rs` |
+| S | HMAC compromise affects both directions (symmetric secret) | mTLS via SPIFFE narrows the trust boundary further than HMAC alone: each workload carries a per-instance SVID whose private key never leaves the agent; transport-layer mTLS authentication is independent of the application-layer signature. Cutover staged behind `AUTH_TRANSPORT={hmac\|mtls\|mtls-only}`; `mtls` mode keeps HMAC as defence-in-depth, `mtls-only` retires it. Refusal to start under `mtls` if the SPIRE Workload API is unreachable (D14 fail-closed). | ADR-0008, `packages/recor-spiffe/`, `infrastructure/spire/` |
+| E | SPIRE issues an SVID to the wrong workload (mis-attested selector) | Defence in depth: transport-layer mTLS gates the connection; `enforce_peer_id` then asserts the verified peer SPIFFE ID matches the per-endpoint allowlist. A misconfigured registration entry still fails the application gate (HTTP 403). Counter `recor_spiffe_peer_verify_total{result=denied}` exposes the deny rate; alert in `docs/runbooks/spiffe-onboarding.md`. | ADR-0008, `enforce_peer_id` |
 
 ### 5. Auth (OIDC + dev header)
 
@@ -153,7 +155,7 @@ tickets):
 | S | Service-role credential used by an unauthorised client | DB credential is a `SecretString` in env; no shared role; refuses to start without `DATABASE_URL` | D18 |
 | T | Direct row mutation on event log bypasses domain | UPDATE/DELETE/TRUNCATE refused by BEFORE trigger that fires regardless of invoking role (COMP-2); REVOKE strips PUBLIC; tested by `services/declaration/tests/audit_immutability.rs`. Same mirror on `verification_cases`. | migrations 0007 (declaration) + 0003 (verification-engine) |
 | T | sqlx query injection | sqlx runtime-checked queries with parameterised binds; no string-built SQL | code-review-enforced |
-| R | DBA later denies running a destructive statement | Production DBA access is procedural (DOC-3 incident-response-template) | **Gap G4** — no in-database audit of DBA-role statements; OBS-1 (Phase 2) ships programmatic audit |
+| R | DBA later denies running a destructive statement | Production DBA access is procedural (DOC-3 incident-response-template). OPS-4 (Vault) makes the `DATABASE_URL` credential a centrally-audited surface: every credential fetch goes through Vault's file audit device, so the question "who pulled which credential when" is answerable from Vault's audit log even when the in-database audit of statement-level activity is still on the roadmap. This closes the *credential-distribution* slice of G4; in-database statement audit remains open. | **Gap G4 (partially closed)** — credential distribution audited via Vault (`docs/runbooks/vault-onboarding.md`); in-database statement audit ships under OBS-1 (Phase 2) |
 | I | Backup theft (see Declaration § I) | Filesystem encryption + access restrictions on backup hosts. Per-column PII / Sensitive-PII inventory and handling rules in `docs/compliance/data-classification.md` (COMP-3) define which columns must be field-level encrypted before backups stop carrying plaintext PII (Gap G3 closure path). | accepted-risk for v1; classification doc enumerates the columns in scope |
 | D | Connection pool exhaustion under load | `db_pool_max_connections` (configurable); per-request timeout in axum | `services/declaration/src/config.rs` |
 | E | Privilege escalation via Postgres extension | No extensions installed beyond `pgcrypto` for `gen_random_uuid()`; testcontainers pinned to `postgres:17-alpine` matching production | migrations |
@@ -175,17 +177,18 @@ tickets):
 
 | # | Gap | Closing ticket |
 |---|---|---|
-| G1 | No in-DB audit chain on the event log (today: append-only via triggers + grants — COMP-2 shipped — but no cryptographic chaining between rows) | R-DECL-9 (Fabric anchoring, Phase 2) |
+| G1 | **CLOSED** by R-DECL-9 (this ticket). Every declaration event is now asynchronously anchored to the Hyperledger Fabric `recor-audit` channel via the `worker-fabric-bridge` app (`apps/worker-fabric-bridge/`), and verification is exposed publicly via the `audit-verifier` app's `GET /v1/audit/verify/{declaration_id}`. The chaincode (`chaincode/audit-witness/`) is jointly endorsed by ARMP, ANIF, DGI, and CONAC; tampering on the projection is now detectable by re-derivation. See `docs/adr/0009-fabric-audit-anchoring.md`, `docs/runbooks/fabric-bridge.md`, and `docs/runbooks/audit-verification.md`. | R-DECL-9 (closed) |
 | G2 | D↔V replay window not bound to envelope timestamp | TBD — Phase 2 follow-up; tracked in `docs/PRODUCTION-TODO.md` R-LOOP-2 (Kafka migration carries the iat enforcement) |
 | G3 | Declaration body PII unencrypted at rest in the projection table | TBD — encryption-at-rest ticket to file; not in Phase 0 |
-| G4 | DBA-role statement audit | OBS-1 (Phase 2 — production observability) |
+| G4 | DBA-role statement audit (in-database) | OBS-1 (Phase 2 — production observability). The *credential-distribution* slice is closed by OPS-4 (Vault): every secret fetch is recorded by Vault's audit device. |
 | G5 | Portal Ed25519 key isn't programmatically restricted from persistence (memory-only by code-review) | R-PORT-2 (offline drafts; carries this constraint) |
 | G6 | Post-quantum agility plan not yet drafted | TBD — D21 ADR in Phase 2 |
 | G7 | Threat model independence (this doc is self-authored; no external security review) | PEN-1 (Phase 5 pre-launch penetration test + threat-model peer review) |
 
-Closing G1, G3, and G4 is a precondition for launch. G2, G5, G6, G7 are
-acknowledged accepted-risks for the v1 launch envelope and have
-named tickets owning the resolution path.
+G1 is now CLOSED (R-DECL-9 Fabric anchoring). Closing G3 and G4 remains
+a precondition for launch. G2, G5, G6, G7 are acknowledged
+accepted-risks for the v1 launch envelope and have named tickets
+owning the resolution path.
 
 ---
 

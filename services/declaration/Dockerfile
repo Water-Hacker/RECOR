@@ -15,46 +15,18 @@ WORKDIR /build
 # out rather than silently falling back to a runtime check).
 ENV SQLX_OFFLINE=true
 
-# Copy workspace root + every member manifest first, then build a stub
-# for each crate so cargo can fetch + compile all transitive deps with
-# only the manifests on disk. This caches the dep graph independently
-# from source changes.
-COPY Cargo.toml rust-toolchain.toml ./
-COPY packages/recor-auth-oidc/Cargo.toml ./packages/recor-auth-oidc/
-COPY packages/recor-logging/Cargo.toml ./packages/recor-logging/
-COPY services/declaration/Cargo.toml services/declaration/build.rs ./services/declaration/
-COPY services/verification-engine/Cargo.toml ./services/verification-engine/
-COPY contracts ./contracts
+# protoc-bin-vendored provides the protoc binary the declaration crate's
+# build.rs needs for tonic-build (R-DECL-8). No system protoc install
+# required.
 
-RUN mkdir -p packages/recor-auth-oidc/src \
-             packages/recor-logging/src \
-             services/declaration/src \
-             services/verification-engine/src \
-    && echo "" > packages/recor-auth-oidc/src/lib.rs \
-    && echo "" > packages/recor-logging/src/lib.rs \
-    && echo "fn main() {}" > services/declaration/src/main.rs \
-    && echo "" > services/declaration/src/lib.rs \
-    && echo "fn main() {}" > services/verification-engine/src/main.rs \
-    && echo "" > services/verification-engine/src/lib.rs \
-    && cargo build --release --bin recor-declaration --quiet \
-    && rm -rf packages/recor-auth-oidc/src \
-              packages/recor-logging/src \
-              services/declaration/src \
-              services/verification-engine/src
-
-# Now bring in the real source for the crates we actually need to build
-# the declaration binary: the workspace member + its shared deps.
-COPY packages/recor-auth-oidc ./packages/recor-auth-oidc
-COPY packages/recor-logging ./packages/recor-logging
-COPY services/declaration/src ./services/declaration/src
-COPY services/declaration/migrations ./services/declaration/migrations
-# Offline sqlx cache (committed alongside the source). SQLX_OFFLINE=true
-# above tells the macros to consult this directory instead of opening a
-# database connection.
-COPY services/declaration/.sqlx ./services/declaration/.sqlx
-
-# Touch so cargo doesn't reuse stub artefacts.
-RUN find packages services -name "*.rs" -exec touch {} +
+# Copy the entire workspace tree. We previously did a manifest-only
+# stub-build phase for finer Docker cache hits, but the workspace
+# now spans many crates added across multiple PRs (recor-auth-oidc,
+# recor-logging, recor-vault-client, etc.) and any new workspace
+# member silently broke the stub-build's hand-rolled file list. The
+# tradeoff is a slower cold build, but `docker buildx` layer caching
+# on the published image keeps incremental builds fast.
+COPY . .
 
 RUN cargo build --release --bin recor-declaration --quiet \
     && strip target/release/recor-declaration
