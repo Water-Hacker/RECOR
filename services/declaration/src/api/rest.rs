@@ -174,6 +174,18 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         record_verification_usecase: state.record_verification_usecase.clone(),
         hmac_secret: cfg.writeback_hmac_secret.expose_secret().to_string(),
         old_hmac_secret: cfg.writeback_hmac_secret_old.expose_secret().to_string(),
+        // R-LOOP-3: HMAC stays required unless AUTH_TRANSPORT=mtls-only.
+        // The peer-SPIFFE-ID allowlist is only consulted when the
+        // service is actually running with mTLS termination (the
+        // composition root in main.rs gates that with an outer
+        // tower layer; this state field is consumed inside the
+        // handler for logging + future per-route enforcement).
+        hmac_required: cfg.hmac_required(),
+        expected_peer_spiffe_id: if cfg.mtls_enabled() {
+            cfg.spiffe_id_peer.clone()
+        } else {
+            String::new()
+        },
     };
     let internal = Router::new()
         .route(

@@ -133,6 +133,8 @@ tickets):
 | I | HMAC secret leaked in tracing | OPS-2 redacting layer + secrets wrapped in `SecretString`; no `expose_secret()` in any log site | `packages/recor-logging/src/lib.rs` |
 | D | DLQ floods consume disk | DLQ admin endpoints (R-LOOP-DLQ-2/3, shipped) let operator drain; alert wiring is OBS-1 (Phase 2) | `services/declaration/src/api/dlq.rs` |
 | E | Cross-channel misuse: D→V secret accepted on V→D path | Secrets are separately-named env vars; verifier on each side only reads its own slot | `services/declaration/src/config.rs` |
+| S | HMAC compromise affects both directions (symmetric secret) | mTLS via SPIFFE narrows the trust boundary further than HMAC alone: each workload carries a per-instance SVID whose private key never leaves the agent; transport-layer mTLS authentication is independent of the application-layer signature. Cutover staged behind `AUTH_TRANSPORT={hmac\|mtls\|mtls-only}`; `mtls` mode keeps HMAC as defence-in-depth, `mtls-only` retires it. Refusal to start under `mtls` if the SPIRE Workload API is unreachable (D14 fail-closed). | ADR-0008, `packages/recor-spiffe/`, `infrastructure/spire/` |
+| E | SPIRE issues an SVID to the wrong workload (mis-attested selector) | Defence in depth: transport-layer mTLS gates the connection; `enforce_peer_id` then asserts the verified peer SPIFFE ID matches the per-endpoint allowlist. A misconfigured registration entry still fails the application gate (HTTP 403). Counter `recor_spiffe_peer_verify_total{result=denied}` exposes the deny rate; alert in `docs/runbooks/spiffe-onboarding.md`. | ADR-0008, `enforce_peer_id` |
 
 ### 5. Auth (OIDC + dev header)
 
