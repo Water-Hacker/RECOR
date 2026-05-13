@@ -1,0 +1,76 @@
+# R-LOOP-2 — single-broker Kafka cluster for local dev + integration-smoke.
+#
+# KRaft mode (no Zookeeper): one combined controller+broker node.
+# Suitable for local development and the kafka-smoke integration test;
+# production deployments use a 3+-broker replicated cluster managed via
+# the Strimzi operator (see infrastructure/helm/kafka, follow-up).
+#
+# Bring up with (from this directory):
+#   docker compose up -d
+#   ./topics-init.sh           # creates the v1 topics
+#   docker compose logs -f kafka
+#
+# Tear down:
+#   docker compose down -v     # -v drops the named volume
+#
+# D18: no secrets in this file; KRaft single-node has no authentication
+# in dev. Production Helm chart wires SASL + mTLS via the operator. The
+# `KAFKA_*` env block here is intentionally vanilla; mirror the
+# operator's values.yaml for prod-shaped settings.
+
+name: recor-kafka
+
+networks:
+  kafka:
+    driver: bridge
+
+volumes:
+  kafka-data:
+
+services:
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: recor-kafka
+    networks: [kafka]
+    ports:
+      # Host-side bind on 9092 so the kafka-smoke script and local
+      # `kcat`/`kafka-console-consumer` invocations can hit the broker
+      # directly from the host. Inside the docker network, services
+      # use kafka:29092 (the INTERNAL listener).
+      - "127.0.0.1:9092:9092"
+    environment:
+      # KRaft mode: combined controller + broker on a single node.
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092"
+      # PLAINTEXT for in-cluster (declaration/verification reach the
+      # broker over the docker network); EXTERNAL for host-side tools.
+      # CONTROLLER carries KRaft metadata traffic only.
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,EXTERNAL://127.0.0.1:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      # Single-broker convenience defaults. Production overrides every
+      # one of these in the Helm values.
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: "1"
+      # Auto-create-topics OFF: topics-init.sh is the source of truth
+      # for v1 topic names + retention. D14 fail-closed: a producer
+      # publishing to a typo'd topic name fails immediately instead of
+      # silently creating a divergent topic.
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Allow plaintext for the dev image.
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1 || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s

@@ -55,6 +55,18 @@ pub struct Metrics {
 
     /// Health-probe latency.
     pub health_check_duration_seconds: HistogramVec,
+
+    // ─── R-LOOP-2: Kafka consumer metrics ───────────────────────────
+    /// Per-message outcome counter — label `result` ∈
+    /// {"applied","skipped","dlq"}. Incremented once per polled Kafka
+    /// message regardless of whether the offset committed (it always
+    /// does, but the result captures the application outcome).
+    pub kafka_consume_total: IntCounterVec,
+    /// Wall-clock lag from broker-stamped timestamp to consume time,
+    /// in seconds. Sampled per polled message so the gauge tracks
+    /// near-realtime — but it's a *gauge* not a histogram because
+    /// dashboards need an instantaneous value for alerting.
+    pub kafka_consume_lag_seconds: prometheus::Gauge,
 }
 
 const HTTP_LATENCY_BUCKETS: &[f64] = &[
@@ -177,6 +189,22 @@ impl Metrics {
         )?;
         registry.register(Box::new(health_check_duration_seconds.clone()))?;
 
+        // R-LOOP-2 Kafka consumer metrics.
+        let kafka_consume_total = IntCounterVec::new(
+            Opts::new(
+                "recor_kafka_consume_total",
+                "Kafka consume outcomes from the declaration-events topic. result=applied: use case succeeded; result=skipped: non-declaration event (no-op); result=dlq: message dead-lettered (parse or use-case error).",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(kafka_consume_total.clone()))?;
+
+        let kafka_consume_lag_seconds = prometheus::Gauge::with_opts(Opts::new(
+            "recor_kafka_consume_lag_seconds",
+            "Wall-clock lag in seconds between Kafka broker-stamped timestamp and consume time. Sampled per polled message.",
+        ))?;
+        registry.register(Box::new(kafka_consume_lag_seconds.clone()))?;
+
         Ok(Arc::new(Self {
             registry,
             http_requests_total,
@@ -190,6 +218,8 @@ impl Metrics {
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             health_check_duration_seconds,
+            kafka_consume_total,
+            kafka_consume_lag_seconds,
         }))
     }
 
@@ -298,6 +328,11 @@ mod tests {
         m.health_check_duration_seconds
             .with_label_values(&["readyz"])
             .observe(0.002);
+        // R-LOOP-2 metrics.
+        m.kafka_consume_total
+            .with_label_values(&["applied"])
+            .inc();
+        m.kafka_consume_lag_seconds.set(0.42);
 
         let (body, _ct) = m.gather_text().expect("encodes");
         let text = String::from_utf8(body).expect("utf-8");
@@ -313,6 +348,8 @@ mod tests {
             "recor_oidc_jwks_fetch_latency_seconds",
             "recor_oidc_verify_total",
             "recor_health_check_duration_seconds",
+            "recor_kafka_consume_total",
+            "recor_kafka_consume_lag_seconds",
         ] {
             assert!(text.contains(name), "missing metric `{name}`; got:\n{text}");
         }

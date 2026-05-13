@@ -188,6 +188,33 @@ pub struct Config {
     #[serde(default)]
     pub grpc_bind_addr: String,
 
+    // ─── R-LOOP-2: Kafka transport (alongside HTTP relay) ────────────
+    /// Comma-separated list of Kafka broker addresses, e.g.
+    /// `kafka:29092`. Empty disables the Kafka path entirely — the
+    /// safe default for tests and existing dev environments that have
+    /// not yet provisioned a broker. When non-empty AND
+    /// `relay_transport == "kafka"`, the boot wiring spawns a Kafka
+    /// producer alongside (or instead of) the HTTP outbox relay.
+    #[serde(default)]
+    pub kafka_brokers: String,
+
+    /// Kafka topic the declaration events land on. Defaults to
+    /// `recor.declaration.events.v1`. The v1 suffix is the schema
+    /// version; a future schema-registry follow-up bumps to v2.
+    #[serde(default = "default_declaration_topic")]
+    pub kafka_declaration_topic: String,
+
+    /// Transport selector. One of `"http"` (default — preserves
+    /// current behaviour) or `"kafka"` (spawn the Kafka producer).
+    /// During the cutover window operators may set BOTH transports
+    /// active by setting `relay_transport=kafka` AND keeping
+    /// `relay_webhook_url` non-empty — each event then lands once via
+    /// HTTP and once via Kafka. The V-engine's idempotency-on-event-id
+    /// catches the duplicate so the dual-transport behaviour is safe.
+    /// See `docs/adr/0007-kafka-transport-cutover.md`.
+    #[serde(default = "default_relay_transport")]
+    pub relay_transport: String,
+
     /// R-LOOP-3 — service-to-service auth transport. One of:
     ///
     /// - `"hmac"` (default): the existing HMAC-SHA256 path on
@@ -374,6 +401,16 @@ fn default_rate_limit_burst() -> u32 {
 
 fn default_outbox_retention_interval() -> u64 {
     86_400 // 24 hours
+}
+
+fn default_declaration_topic() -> String {
+    "recor.declaration.events.v1".to_string()
+}
+
+fn default_relay_transport() -> String {
+    // HTTP is the v1 default — preserves existing behaviour for every
+    // environment that hasn't opted into Kafka.
+    "http".to_string()
 }
 
 fn default_auth_transport() -> String {

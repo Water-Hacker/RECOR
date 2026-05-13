@@ -40,7 +40,8 @@ use std::time::Instant;
 
 use axum::{extract::MatchedPath, http::Request, middleware::Next, response::Response};
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Encoder, Histogram, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry,
+    TextEncoder,
 };
 
 // ─── Shared registry handle ──────────────────────────────────────────
@@ -91,6 +92,15 @@ pub struct Metrics {
 
     /// Health-check (readyz/healthz) latency histogram.
     pub health_check_duration_seconds: HistogramVec,
+
+    // ─── R-LOOP-2: Kafka producer metrics ───────────────────────────
+    /// Per-send outcome counter — label `result` ∈ {"success","failure"}.
+    /// Incremented once per attempted `kafka_producer` send.
+    pub kafka_produce_total: IntCounterVec,
+    /// Histogram of single-send latency in seconds (envelope build →
+    /// broker ack). Buckets cover sub-ms (in-cluster broker) to multi-
+    /// second (ISR re-election under transient failure).
+    pub kafka_produce_latency_seconds: Histogram,
 }
 
 /// HTTP latency buckets in seconds. Tuned for a Postgres-backed REST
@@ -116,6 +126,13 @@ const JWKS_FETCH_BUCKETS: &[f64] =
 /// Health-check buckets: should be near-instant (DB ping).
 const HEALTH_CHECK_BUCKETS: &[f64] =
     &[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0];
+
+/// Kafka produce latency buckets — tighter than the HTTP relay
+/// histogram because a healthy in-cluster broker acks in
+/// single-digit ms. Long tail extends to 30s (the rdkafka
+/// `message.timeout.ms` ceiling).
+const KAFKA_PRODUCE_BUCKETS: &[f64] =
+    &[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
 
 impl Metrics {
     /// Build a fresh registry + all collectors. Fails only if the
@@ -239,6 +256,26 @@ impl Metrics {
         )?;
         registry.register(Box::new(health_check_duration_seconds.clone()))?;
 
+        // R-LOOP-2 Kafka producer metrics. The label set is bounded by
+        // construction (success | failure) — D18 cardinality guard.
+        let kafka_produce_total = IntCounterVec::new(
+            Opts::new(
+                "recor_kafka_produce_total",
+                "Kafka produce attempts from the declaration outbox. result=success increments after broker ack; result=failure on transport/timeout/backpressure errors.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(kafka_produce_total.clone()))?;
+
+        let kafka_produce_latency_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "recor_kafka_produce_latency_seconds",
+                "Kafka per-message produce latency in seconds (envelope build → broker ack).",
+            )
+            .buckets(KAFKA_PRODUCE_BUCKETS.to_vec()),
+        )?;
+        registry.register(Box::new(kafka_produce_latency_seconds.clone()))?;
+
         Ok(Arc::new(Self {
             registry,
             http_requests_total,
@@ -254,6 +291,8 @@ impl Metrics {
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             health_check_duration_seconds,
+            kafka_produce_total,
+            kafka_produce_latency_seconds,
         }))
     }
 
@@ -388,6 +427,11 @@ mod tests {
         m.health_check_duration_seconds
             .with_label_values(&["readyz"])
             .observe(0.002);
+        // R-LOOP-2 metrics.
+        m.kafka_produce_total
+            .with_label_values(&["success"])
+            .inc();
+        m.kafka_produce_latency_seconds.observe(0.012);
 
         let (body, _ct) = m.gather_text().expect("encodes");
         let text = String::from_utf8(body).expect("utf-8");
@@ -405,6 +449,8 @@ mod tests {
             "recor_oidc_jwks_fetch_latency_seconds",
             "recor_oidc_verify_total",
             "recor_health_check_duration_seconds",
+            "recor_kafka_produce_total",
+            "recor_kafka_produce_latency_seconds",
         ] {
             assert!(
                 text.contains(name),

@@ -22,7 +22,8 @@ use recor_declaration::infrastructure::postgres::{
     IdempotencyStore, PostgresDeclarationRepository,
 };
 use recor_declaration::infrastructure::{
-    OutboxAdminStore, OutboxRelay, OutboxRetention, RelaySubscriber,
+    KafkaProducer, OutboxAdminStore, OutboxRelay, OutboxRetention, RelayBackend,
+    RelaySubscriber,
 };
 use recor_declaration::infrastructure::retention::warn_if_misconfigured;
 
@@ -270,6 +271,14 @@ async fn main() -> Result<()> {
 
     // Outbox relay — optional. Enabled when RELAY_WEBHOOK_URL is set.
     // When disabled, outbox rows accumulate; a future ticket relays them.
+    //
+    // R-LOOP-2 (Kafka transport) — see ADR-0007. The HTTP relay below
+    // continues to run when RELAY_WEBHOOK_URL is set, regardless of
+    // RELAY_TRANSPORT. The Kafka producer (spawned a few lines down)
+    // runs ADDITIONALLY when RELAY_TRANSPORT=kafka. During the cutover
+    // window both transports are active; each event lands once via
+    // HTTP and once via Kafka. The verification engine's idempotency-
+    // on-event-id absorbs the duplicate.
     let relay_handle = if !cfg.relay_webhook_url.is_empty() {
         let subscriber = RelaySubscriber {
             name: "verification-engine".to_string(),
@@ -285,13 +294,61 @@ async fn main() -> Result<()> {
         info!(
             webhook = %cfg.relay_webhook_url,
             poll_interval_s = cfg.relay_poll_interval_seconds,
-            "outbox relay enabled"
+            "outbox relay (HTTP) enabled"
         );
         Some(tokio::spawn(async move {
             relay.run(cancel_relay).await;
         }))
     } else {
-        info!("outbox relay disabled (RELAY_WEBHOOK_URL not set)");
+        info!("outbox relay (HTTP) disabled (RELAY_WEBHOOK_URL not set)");
+        None
+    };
+
+    // R-LOOP-2 — Kafka producer. Enabled when KAFKA_BROKERS is set AND
+    // RELAY_TRANSPORT == "kafka". Either condition unset preserves
+    // existing HTTP-only behaviour. The producer reads the same outbox
+    // table the HTTP relay reads — both compete for the same rows
+    // when both are active, with the producer winning whichever row
+    // it claims first (UPDATE ... WHERE dispatched_at IS NULL is the
+    // serialisation point).
+    let kafka_handle = if !cfg.kafka_brokers.is_empty() && cfg.relay_transport == "kafka" {
+        match KafkaProducer::build_producer(&cfg.kafka_brokers) {
+            Ok(producer_client) => {
+                let kafka = KafkaProducer::new(
+                    pool.clone(),
+                    producer_client,
+                    cfg.kafka_declaration_topic.clone(),
+                )
+                .with_poll_interval(std::time::Duration::from_secs(
+                    cfg.relay_poll_interval_seconds,
+                ))
+                .with_metrics(metrics.clone());
+                let cancel_kafka = cancel.clone();
+                info!(
+                    brokers = %cfg.kafka_brokers,
+                    topic = %cfg.kafka_declaration_topic,
+                    poll_interval_s = cfg.relay_poll_interval_seconds,
+                    "kafka producer enabled (R-LOOP-2)"
+                );
+                Some(tokio::spawn(async move {
+                    let backend: std::sync::Arc<dyn RelayBackend> = std::sync::Arc::new(kafka);
+                    backend.run(cancel_kafka).await;
+                }))
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "kafka producer build failed — continuing with HTTP relay only"
+                );
+                None
+            }
+        }
+    } else {
+        info!(
+            kafka_brokers_set = !cfg.kafka_brokers.is_empty(),
+            relay_transport = %cfg.relay_transport,
+            "kafka producer disabled (R-LOOP-2 inactive)"
+        );
         None
     };
 
@@ -334,6 +391,9 @@ async fn main() -> Result<()> {
 
     // Wait for the relay + retention worker + gRPC server to finish.
     if let Some(h) = relay_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = kafka_handle {
         let _ = h.await;
     }
     let _ = retention_handle.await;
