@@ -72,7 +72,7 @@ Specifics:
     parent service if the bootstrap fails.
   - `build_server_config` / `build_client_config` — rustls
     ServerConfig and ClientConfig builders that consume the SVID
-    + trust bundle. Mutual authentication is the default; the
+    and trust bundle. Mutual authentication is the default; the
     `WebPkiClientVerifier` requires + verifies a peer certificate.
   - `peer_spiffe_id_from_cert` + `PeerSpiffeId` request extension
     — extract the URI-SAN SPIFFE ID from a verified peer leaf and
