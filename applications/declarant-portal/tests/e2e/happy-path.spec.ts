@@ -65,8 +65,11 @@ test.describe('R-PORT-6 — happy path', () => {
     await fillDeclarationForm(page);
     await clickSubmit(page);
 
-    // Verification-status panel takes over (status role + aria-live).
-    const statusPanel = page.getByRole('status');
+    // Verification-status panel takes over. Use the explicit
+    // data-testid rather than role="status" because the wizard's
+    // drafts-unavailable notice is also role="status" and getByRole
+    // would match the first one when IndexedDB is unavailable.
+    const statusPanel = page.getByTestId('verification-status-panel');
     await expect(statusPanel).toBeVisible({ timeout: 15_000 });
 
     // The receipt header is immutable — the declaration_id and the

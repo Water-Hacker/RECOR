@@ -191,6 +191,7 @@ fn test_config(rest_bind_addr: &str, database_url: &str, grpc_bind_addr: &str) -
         writeback_hmac_secret: SecretString::from(String::new()),
         writeback_hmac_secret_old: SecretString::from(String::new()),
         admin_principals: String::new(),
+        cors_allowed_origins: String::new(),
         rate_limit_per_min: 0,
         rate_limit_burst: 0,
         log_redaction: String::new(),

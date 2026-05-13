@@ -77,6 +77,7 @@ export function VerificationStatus({
     <div
       role="status"
       aria-live="polite"
+      data-testid="verification-status-panel"
       className={clsx(
         'space-y-4 rounded-lg border-2 p-6',
         statusContainerCls(verificationState, lane),
