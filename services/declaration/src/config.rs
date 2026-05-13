@@ -109,6 +109,16 @@ pub struct Config {
     #[serde(default)]
     pub admin_principals: String,
 
+    /// CSV of origins that may make cross-origin requests against the
+    /// REST API. The declarant portal (typically served from a
+    /// different origin than the service in dev / CI) needs an entry
+    /// here so the browser can XHR submit. Empty disables CORS
+    /// entirely — the production default when the portal proxies the
+    /// API through its own nginx (same-origin from the browser's
+    /// view).
+    #[serde(default)]
+    pub cors_allowed_origins: String,
+
     /// Per-principal sustained rate limit, expressed as
     /// requests-per-minute. Applied to the two state-changing public
     /// submit endpoints (POST /v1/declarations and POST
