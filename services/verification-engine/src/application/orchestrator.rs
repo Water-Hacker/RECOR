@@ -55,7 +55,9 @@ impl PipelineOrchestrator {
                 });
                 continue;
             }
-            let outcome = stage.run(&declaration).await;
+            let outcome = stage
+                .run_with_context(&declaration, &outcomes)
+                .await;
             if matches!(outcome.kind, StageOutcomeKind::ShortCircuitFailClosed) {
                 warn!(stage_id = ?stage.id(), "stage short-circuited pipeline fail-closed");
                 short_circuited = true;

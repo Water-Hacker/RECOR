@@ -23,6 +23,7 @@ members = [
     "apps/worker-fabric-bridge",
     "packages/fabric-bridge",
     "packages/recor-auth-oidc",
+    "packages/recor-inference-gateway",
     "packages/recor-logging",
     "packages/recor-spiffe",
     "packages/recor-vault-client",

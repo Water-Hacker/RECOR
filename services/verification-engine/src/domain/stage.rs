@@ -104,4 +104,17 @@ pub trait Stage: Send + Sync {
     /// timeout) returns an `InsufficientEvidence` outcome with the
     /// failure reason in the evidence JSON.
     async fn run(&self, declaration: &DeclarationSnapshot) -> StageOutcome;
+
+    /// Some stages (notably Stage 7 cross-source triangulation) need
+    /// to see the outcomes of preceding stages. The orchestrator calls
+    /// this variant when available; the default delegates to `run`
+    /// (the `_upstream` slice is ignored), so existing stages stay
+    /// source-compatible.
+    async fn run_with_context(
+        &self,
+        declaration: &DeclarationSnapshot,
+        _upstream: &[StageOutcome],
+    ) -> StageOutcome {
+        self.run(declaration).await
+    }
 }

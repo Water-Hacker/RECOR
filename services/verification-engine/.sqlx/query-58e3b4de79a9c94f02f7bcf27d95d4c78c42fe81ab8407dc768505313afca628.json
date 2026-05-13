@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id                                                  AS \"id!: uuid::Uuid\",\n                source                                              AS \"source!\",\n                full_name_canonical                                 AS \"full_name_canonical!\",\n                position                                            AS \"position?\",\n                country                                             AS \"country?\",\n                is_current                                          AS \"is_current!\",\n                relationship_kind                                   AS \"relationship_kind!\",\n                similarity(full_name_canonical, $1)::float8         AS \"similarity!\"\n            FROM peps\n            WHERE full_name_canonical % $1\n              AND similarity(full_name_canonical, $1) >= 0.5\n            ORDER BY similarity(full_name_canonical, $1) DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: uuid::Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "full_name_canonical!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "position?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "country?",
+        "type_info": "Bpchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_current!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "relationship_kind!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "similarity!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "58e3b4de79a9c94f02f7bcf27d95d4c78c42fe81ab8407dc768505313afca628"
+}

@@ -56,6 +56,49 @@ pub struct Metrics {
     /// Health-probe latency.
     pub health_check_duration_seconds: HistogramVec,
 
+    // ─── R-VER-1 — BUNEC adapter ───────────────────────────────────────
+    /// BUNEC lookups by outcome.
+    /// `result` ∈ {found, not_found, circuit_open, retries_exhausted,
+    /// non_retryable, mismatch}.
+    pub bunec_calls_total: IntCounterVec,
+    /// BUNEC call latency in seconds, by outcome.
+    pub bunec_call_latency_seconds: HistogramVec,
+
+    // ─── R-VER-2 — Sanctions (Stage 3) ─────────────────────────────────
+    /// Sanctions screen outcomes. `result` ∈ {certain, near, none, error}.
+    pub sanctions_screen_total: IntCounterVec,
+    /// Sanctions screen latency in seconds.
+    pub sanctions_screen_latency_seconds: HistogramVec,
+    /// Number of rows in `sanctions_persons` (sampled at ingest).
+    pub sanctions_index_rows: IntGauge,
+
+    // ─── R-VER-3 — PEP (Stage 4) ───────────────────────────────────────
+    /// PEP screen outcomes. `result` ∈ {confirmed, associate, none, error}.
+    pub pep_screen_total: IntCounterVec,
+    /// PEP screen latency in seconds.
+    pub pep_screen_latency_seconds: HistogramVec,
+    /// Number of rows in `peps` (sampled at ingest).
+    pub pep_index_rows: IntGauge,
+
+    // ─── R-VER-4 — Adverse media (Stage 5) ─────────────────────────────
+    /// Adverse-media calls by outcome. `result` ∈ {match, none, error, fixture}.
+    pub adverse_media_calls_total: IntCounterVec,
+    /// Adverse-media latency in seconds.
+    pub adverse_media_latency_seconds: HistogramVec,
+    /// Anthropic Inference Gateway token usage. Labels: purpose, model.
+    pub inference_tokens_used_total: IntCounterVec,
+
+    // ─── R-VER-5 — Pattern detection (Stage 6) ─────────────────────────
+    /// Pattern-detection signature firings. Label: `signature`.
+    pub pattern_detection_total: IntCounterVec,
+    /// Pattern-detection latency in seconds.
+    pub pattern_detection_latency_seconds: HistogramVec,
+
+    // ─── R-VER-6 — Triangulation (Stage 7) ─────────────────────────────
+    /// Pairwise consistency counters across upstream stage BPAs.
+    pub triangulation_pairs_consistent_total: IntCounterVec,
+    pub triangulation_pairs_inconsistent_total: IntCounterVec,
+
     // ─── R-LOOP-2: Kafka consumer metrics ───────────────────────────
     /// Per-message outcome counter — label `result` ∈
     /// {"applied","skipped","dlq"}. Incremented once per polled Kafka
@@ -67,6 +110,7 @@ pub struct Metrics {
     /// near-realtime — but it's a *gauge* not a histogram because
     /// dashboards need an instantaneous value for alerting.
     pub kafka_consume_lag_seconds: prometheus::Gauge,
+
 }
 
 const HTTP_LATENCY_BUCKETS: &[f64] = &[
@@ -83,6 +127,21 @@ const JWKS_FETCH_BUCKETS: &[f64] =
 
 const HEALTH_CHECK_BUCKETS: &[f64] =
     &[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0];
+
+/// BUNEC + sanctions + PEP latency buckets — partner-call shaped.
+const PARTNER_LATENCY_BUCKETS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+
+/// Inference-gateway latency buckets — model calls run longer.
+const INFERENCE_LATENCY_BUCKETS: &[f64] = &[
+    0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+];
+
+/// Pattern detection per-signature buckets.
+const PATTERN_LATENCY_BUCKETS: &[f64] = &[
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+];
 
 impl Metrics {
     pub fn new() -> Result<Arc<Self>, prometheus::Error> {
@@ -189,6 +248,137 @@ impl Metrics {
         )?;
         registry.register(Box::new(health_check_duration_seconds.clone()))?;
 
+        // R-VER-1
+        let bunec_calls_total = IntCounterVec::new(
+            Opts::new(
+                "recor_bunec_calls_total",
+                "BUNEC adapter call outcomes. result ∈ {found,not_found,circuit_open,retries_exhausted,non_retryable,mismatch}.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(bunec_calls_total.clone()))?;
+        let bunec_call_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_bunec_call_latency_seconds",
+                "BUNEC adapter call latency in seconds, by outcome.",
+            )
+            .buckets(PARTNER_LATENCY_BUCKETS.to_vec()),
+            &["result"],
+        )?;
+        registry.register(Box::new(bunec_call_latency_seconds.clone()))?;
+
+        // R-VER-2
+        let sanctions_screen_total = IntCounterVec::new(
+            Opts::new(
+                "recor_sanctions_screen_total",
+                "Sanctions-screening outcomes. result ∈ {certain,near,none,error}.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(sanctions_screen_total.clone()))?;
+        let sanctions_screen_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_sanctions_screen_latency_seconds",
+                "Sanctions-screening latency in seconds.",
+            )
+            .buckets(PARTNER_LATENCY_BUCKETS.to_vec()),
+            &["result"],
+        )?;
+        registry.register(Box::new(sanctions_screen_latency_seconds.clone()))?;
+        let sanctions_index_rows = IntGauge::with_opts(Opts::new(
+            "recor_sanctions_index_rows",
+            "Number of rows in the `sanctions_persons` table (sampled at ingest).",
+        ))?;
+        registry.register(Box::new(sanctions_index_rows.clone()))?;
+
+        // R-VER-3
+        let pep_screen_total = IntCounterVec::new(
+            Opts::new(
+                "recor_pep_screen_total",
+                "PEP-screening outcomes. result ∈ {confirmed,associate,none,error}.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(pep_screen_total.clone()))?;
+        let pep_screen_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_pep_screen_latency_seconds",
+                "PEP-screening latency in seconds.",
+            )
+            .buckets(PARTNER_LATENCY_BUCKETS.to_vec()),
+            &["result"],
+        )?;
+        registry.register(Box::new(pep_screen_latency_seconds.clone()))?;
+        let pep_index_rows = IntGauge::with_opts(Opts::new(
+            "recor_pep_index_rows",
+            "Number of rows in the `peps` table (sampled at ingest).",
+        ))?;
+        registry.register(Box::new(pep_index_rows.clone()))?;
+
+        // R-VER-4
+        let adverse_media_calls_total = IntCounterVec::new(
+            Opts::new(
+                "recor_adverse_media_calls_total",
+                "Adverse-media call outcomes. result ∈ {match,none,error,fixture}.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(adverse_media_calls_total.clone()))?;
+        let adverse_media_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_adverse_media_latency_seconds",
+                "Adverse-media end-to-end latency in seconds.",
+            )
+            .buckets(INFERENCE_LATENCY_BUCKETS.to_vec()),
+            &["result"],
+        )?;
+        registry.register(Box::new(adverse_media_latency_seconds.clone()))?;
+        let inference_tokens_used_total = IntCounterVec::new(
+            Opts::new(
+                "recor_inference_tokens_used_total",
+                "Anthropic Inference Gateway tokens consumed. Labels: purpose, model.",
+            ),
+            &["purpose", "model"],
+        )?;
+        registry.register(Box::new(inference_tokens_used_total.clone()))?;
+
+        // R-VER-5
+        let pattern_detection_total = IntCounterVec::new(
+            Opts::new(
+                "recor_pattern_detection_total",
+                "Pattern-detection signature firings. Label: signature.",
+            ),
+            &["signature", "outcome"],
+        )?;
+        registry.register(Box::new(pattern_detection_total.clone()))?;
+        let pattern_detection_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_pattern_detection_latency_seconds",
+                "Pattern-detection per-signature latency in seconds.",
+            )
+            .buckets(PATTERN_LATENCY_BUCKETS.to_vec()),
+            &["signature"],
+        )?;
+        registry.register(Box::new(pattern_detection_latency_seconds.clone()))?;
+
+        // R-VER-6
+        let triangulation_pairs_consistent_total = IntCounterVec::new(
+            Opts::new(
+                "recor_triangulation_pairs_consistent_total",
+                "Cross-source pairwise consistency: agreements. Label: pair.",
+            ),
+            &["pair"],
+        )?;
+        registry.register(Box::new(triangulation_pairs_consistent_total.clone()))?;
+        let triangulation_pairs_inconsistent_total = IntCounterVec::new(
+            Opts::new(
+                "recor_triangulation_pairs_inconsistent_total",
+                "Cross-source pairwise consistency: disagreements. Label: pair.",
+            ),
+            &["pair"],
+        )?;
+        registry.register(Box::new(triangulation_pairs_inconsistent_total.clone()))?;
+
         // R-LOOP-2 Kafka consumer metrics.
         let kafka_consume_total = IntCounterVec::new(
             Opts::new(
@@ -205,6 +395,7 @@ impl Metrics {
         ))?;
         registry.register(Box::new(kafka_consume_lag_seconds.clone()))?;
 
+
         Ok(Arc::new(Self {
             registry,
             http_requests_total,
@@ -218,8 +409,25 @@ impl Metrics {
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             health_check_duration_seconds,
+            bunec_calls_total,
+            bunec_call_latency_seconds,
+            sanctions_screen_total,
+            sanctions_screen_latency_seconds,
+            sanctions_index_rows,
+            pep_screen_total,
+            pep_screen_latency_seconds,
+            pep_index_rows,
+            adverse_media_calls_total,
+            adverse_media_latency_seconds,
+            inference_tokens_used_total,
+            pattern_detection_total,
+            pattern_detection_latency_seconds,
+            triangulation_pairs_consistent_total,
+            triangulation_pairs_inconsistent_total,
+
             kafka_consume_total,
             kafka_consume_lag_seconds,
+
         }))
     }
 
@@ -328,11 +536,48 @@ mod tests {
         m.health_check_duration_seconds
             .with_label_values(&["readyz"])
             .observe(0.002);
+        m.bunec_calls_total.with_label_values(&["found"]).inc();
+        m.bunec_call_latency_seconds
+            .with_label_values(&["found"])
+            .observe(0.05);
+        m.sanctions_screen_total.with_label_values(&["none"]).inc();
+        m.sanctions_screen_latency_seconds
+            .with_label_values(&["none"])
+            .observe(0.005);
+        m.sanctions_index_rows.set(0);
+        m.pep_screen_total.with_label_values(&["none"]).inc();
+        m.pep_screen_latency_seconds
+            .with_label_values(&["none"])
+            .observe(0.005);
+        m.pep_index_rows.set(0);
+        m.adverse_media_calls_total
+            .with_label_values(&["fixture"])
+            .inc();
+        m.adverse_media_latency_seconds
+            .with_label_values(&["fixture"])
+            .observe(0.01);
+        m.inference_tokens_used_total
+            .with_label_values(&["adverse_media", "claude-haiku-4-5-20251001"])
+            .inc_by(0);
+        m.pattern_detection_total
+            .with_label_values(&["circular_ownership", "fired"])
+            .inc();
+        m.pattern_detection_latency_seconds
+            .with_label_values(&["circular_ownership"])
+            .observe(0.001);
+        m.triangulation_pairs_consistent_total
+            .with_label_values(&["identity__sanctions"])
+            .inc();
+        m.triangulation_pairs_inconsistent_total
+            .with_label_values(&["identity__sanctions"])
+            .inc_by(0);
+
         // R-LOOP-2 metrics.
         m.kafka_consume_total
             .with_label_values(&["applied"])
             .inc();
         m.kafka_consume_lag_seconds.set(0.42);
+
 
         let (body, _ct) = m.gather_text().expect("encodes");
         let text = String::from_utf8(body).expect("utf-8");
@@ -348,8 +593,25 @@ mod tests {
             "recor_oidc_jwks_fetch_latency_seconds",
             "recor_oidc_verify_total",
             "recor_health_check_duration_seconds",
+            "recor_bunec_calls_total",
+            "recor_bunec_call_latency_seconds",
+            "recor_sanctions_screen_total",
+            "recor_sanctions_screen_latency_seconds",
+            "recor_sanctions_index_rows",
+            "recor_pep_screen_total",
+            "recor_pep_screen_latency_seconds",
+            "recor_pep_index_rows",
+            "recor_adverse_media_calls_total",
+            "recor_adverse_media_latency_seconds",
+            "recor_inference_tokens_used_total",
+            "recor_pattern_detection_total",
+            "recor_pattern_detection_latency_seconds",
+            "recor_triangulation_pairs_consistent_total",
+            "recor_triangulation_pairs_inconsistent_total",
+
             "recor_kafka_consume_total",
             "recor_kafka_consume_lag_seconds",
+
         ] {
             assert!(text.contains(name), "missing metric `{name}`; got:\n{text}");
         }
