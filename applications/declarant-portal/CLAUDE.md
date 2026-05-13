@@ -497,6 +497,27 @@ first-paint critical path.
   timers (vitest fake timers + fake-indexeddb deadlock — fake-IDB
   schedules its own setTimeout/microtasks).
 
+## Accessibility (R-PORT-5)
+
+The portal is held to **WCAG 2.1 Level AA** on every PR through a
+two-tier gate:
+
+- **Static:** `eslint-plugin-jsx-a11y` (recommended rule-set) runs
+  on every `pnpm lint`. Wired in `eslint.config.js`.
+- **Runtime:** `@axe-core/playwright` runs against the six major
+  views in `tests/e2e/a11y-smoke.spec.ts` — wizard steps 1-4, the
+  `VerificationStatus` panel, and the validation error state.
+  Critical / Serious findings fail the build (D14 fail-closed);
+  Moderate / Minor are surfaced via Playwright annotations for the
+  follow-up backlog.
+
+The audit cycle lives at `docs/security/a11y-audit-{year}-Q{q}.md`;
+the 2026 Q2 record is the canonical baseline. Re-audit on every UI
+change that touches focus order, labels, error messages, or
+contrast, and quarterly regardless. A future cycle adds the manual
+NVDA / VoiceOver pass currently tracked as `[TODO]` in the audit
+doc.
+
 ## When in doubt
 
 1. Read this document

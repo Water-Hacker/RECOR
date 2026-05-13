@@ -26,6 +26,9 @@ that map each commitment to the running system.
   the legal-grade contract the vendor signs alongside the NDA:
   authorised actions, forbidden actions, data-handling, liability,
   disclosure protocol, contact graph (PEN-1).
+- [Portal accessibility audit (2026 Q2)](a11y-audit-2026-Q2.md) —
+  WCAG 2.1 AA audit record + findings table + remediation log;
+  baseline for the quarterly cycle (R-PORT-5).
 
 ## How to use this directory
 
