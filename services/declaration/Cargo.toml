@@ -90,6 +90,11 @@ hmac.workspace = true
 sha2.workspace = true
 reqwest.workspace = true
 
+# R-LOOP-2: Kafka producer alongside the HTTP relay. Wired in
+# `infrastructure::kafka_producer`. The transport is selected at boot
+# via `RELAY_TRANSPORT=http|kafka` (default http — see config.rs).
+rdkafka.workspace = true
+
 # Rate limiting (OPS-1)
 tower_governor.workspace = true
 governor.workspace = true
@@ -128,7 +133,10 @@ proptest.workspace = true
 rstest.workspace = true
 reqwest.workspace = true
 testcontainers.workspace = true
-testcontainers-modules.workspace = true
+# Override testcontainers-modules locally to add the kafka feature
+# alongside postgres. The workspace-pin is postgres-only because no
+# other crate needs kafka; this declaration extends it.
+testcontainers-modules = { version = "0.11", features = ["postgres", "kafka"] }
 serde_path_to_error = "0.1"
 ed25519-dalek.workspace = true
 jsonwebtoken.workspace = true

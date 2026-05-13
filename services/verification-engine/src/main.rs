@@ -8,7 +8,7 @@ use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use recor_verification_engine::api::{AppState, OidcVerifier};
 use recor_verification_engine::application::{
@@ -21,7 +21,7 @@ use recor_verification_engine::application::{
 use recor_verification_engine::config::Config;
 use recor_verification_engine::domain::{LaneThresholds, Stage};
 use recor_verification_engine::infrastructure::{
-    OutboxAdminStore, PostgresMockBunec, PostgresVerificationRepository,
+    KafkaConsumer, OutboxAdminStore, PostgresMockBunec, PostgresVerificationRepository,
     VerificationOutboxRelay, VerificationOutboxRetention, WritebackSubscriber,
 };
 use recor_verification_engine::infrastructure::retention::warn_if_misconfigured;
@@ -66,6 +66,7 @@ async fn main() -> Result<()> {
 
     let orchestrator = Arc::new(PipelineOrchestrator::new(stages, LaneThresholds::default()));
     let submit = Arc::new(SubmitVerificationUseCase::new(orchestrator.clone(), repository.clone()));
+    let submit_for_kafka = submit.clone();
     let get = Arc::new(GetVerificationUseCase::new(repository.clone()));
 
     // OIDC verifier — discovered at startup with JWKS pre-warm.
@@ -168,6 +169,53 @@ async fn main() -> Result<()> {
         retention.run(cancel_retention).await;
     });
 
+    // R-LOOP-2 — Kafka consumer. Enabled when KAFKA_BROKERS is set AND
+    // VERIFICATION_TRANSPORT == "kafka". The HTTP `/v1/internal/
+    // declaration-events` webhook continues to handle inbound from the
+    // declaration's HTTP outbox-relay regardless of this flag — both
+    // transports may be active during the cutover. The use case is
+    // idempotent on declaration_id (see submit_verification.rs), so
+    // a duplicate delivery is absorbed without double-applying state.
+    let kafka_consumer_handle = if !cfg.kafka_brokers.is_empty()
+        && cfg.verification_transport == "kafka"
+    {
+        match KafkaConsumer::build_consumer(&cfg.kafka_brokers, &cfg.kafka_consumer_group) {
+            Ok(consumer_client) => {
+                let consumer = KafkaConsumer::new(
+                    consumer_client,
+                    cfg.kafka_declaration_topic.clone(),
+                    pool.clone(),
+                    submit_for_kafka,
+                )
+                .with_metrics(metrics.clone());
+                let cancel_consumer = cancel.clone();
+                info!(
+                    brokers = %cfg.kafka_brokers,
+                    group_id = %cfg.kafka_consumer_group,
+                    topic = %cfg.kafka_declaration_topic,
+                    "kafka consumer enabled (R-LOOP-2)"
+                );
+                Some(tokio::spawn(async move {
+                    consumer.run(cancel_consumer).await;
+                }))
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "kafka consumer build failed — continuing with HTTP webhook only"
+                );
+                None
+            }
+        }
+    } else {
+        info!(
+            kafka_brokers_set = !cfg.kafka_brokers.is_empty(),
+            verification_transport = %cfg.verification_transport,
+            "kafka consumer disabled (R-LOOP-2 inactive)"
+        );
+        None
+    };
+
     let cancel_serve = cancel.clone();
     let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -181,6 +229,9 @@ async fn main() -> Result<()> {
     }
 
     if let Some(h) = relay_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = kafka_consumer_handle {
         let _ = h.await;
     }
     let _ = retention_handle.await;

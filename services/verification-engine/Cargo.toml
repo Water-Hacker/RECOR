@@ -64,6 +64,13 @@ sha2.workspace = true
 # Outbox relay HTTP client + cancellation token
 reqwest.workspace = true
 
+# R-LOOP-2: Kafka consumer alongside the HTTP webhook. Wired in
+# `infrastructure::kafka_consumer`. The transport is selected at boot
+# via `VERIFICATION_TRANSPORT=http|kafka` (default http — see config.rs).
+rdkafka.workspace = true
+
+futures = "0.3"
+
 [dev-dependencies]
 proptest.workspace = true
 rstest.workspace = true

@@ -38,6 +38,14 @@ in fact wrong, which is a worse outcome than no platform.
 - Lane routing: pure threshold logic in `src/domain/lane.rs`.
 - Mock BUNEC: Postgres-backed in `src/infrastructure/mock_bunec.rs`;
   real BUNEC integration is `R-VER-1`.
+- Kafka transport (R-LOOP-2): `infrastructure::kafka_consumer` reads
+  `recor.declaration.events.v1` and feeds the same
+  `SubmitVerificationUseCase` the HTTP webhook calls. Gated by
+  `VERIFICATION_TRANSPORT=http|kafka` (default `http`); set
+  `KAFKA_BROKERS` + `VERIFICATION_TRANSPORT=kafka` to spawn the
+  consumer alongside the HTTP webhook during the cutover (see
+  ADR-0007). Parse-error + retry-exhausted messages land in
+  `kafka_consumer_dlq`.
 
 ## SLOs
 

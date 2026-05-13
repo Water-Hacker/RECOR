@@ -108,6 +108,36 @@ pub struct Config {
     /// Dev falls back to a random per-restart key with a startup warn.
     #[serde(default = "default_secret")]
     pub log_redaction_key: SecretString,
+
+    // ─── R-LOOP-2: Kafka transport (alongside HTTP webhook) ──────────
+    /// Comma-separated list of Kafka broker addresses, e.g.
+    /// `kafka:29092`. Empty disables the Kafka consumer entirely —
+    /// the safe default for tests. When non-empty AND
+    /// `verification_transport == "kafka"`, the boot wiring spawns a
+    /// Kafka consumer alongside (or instead of) the HTTP webhook on
+    /// `POST /v1/internal/declaration-events`.
+    #[serde(default)]
+    pub kafka_brokers: String,
+
+    /// Kafka consumer group id. Multiple V-engine replicas in the
+    /// same group split partitions; multiple groups (e.g.
+    /// `recor-v-engine-prod` vs `recor-v-engine-replay`) consume
+    /// independently. Defaults to `recor-verification-engine`.
+    #[serde(default = "default_consumer_group")]
+    pub kafka_consumer_group: String,
+
+    /// Kafka topic to consume from. Defaults to
+    /// `recor.declaration.events.v1` — must match the producer side.
+    #[serde(default = "default_declaration_topic")]
+    pub kafka_declaration_topic: String,
+
+    /// Transport selector for the inbound declaration-events path.
+    /// One of `"http"` (default — preserves current behaviour) or
+    /// `"kafka"` (spawn the consumer). Both can be active during
+    /// the cutover; the V-engine's idempotency-on-event-id absorbs
+    /// duplicates. See `docs/adr/0007-kafka-transport-cutover.md`.
+    #[serde(default = "default_verification_transport")]
+    pub verification_transport: String,
 }
 
 impl Config {
@@ -165,3 +195,6 @@ fn default_writeback_poll_interval() -> u64 { 5 }
 fn default_writeback_max_attempts() -> i32 { 12 }
 fn default_subject_claim() -> String { "sub".to_string() }
 fn default_outbox_retention_interval() -> u64 { 86_400 }
+fn default_consumer_group() -> String { "recor-verification-engine".to_string() }
+fn default_declaration_topic() -> String { "recor.declaration.events.v1".to_string() }
+fn default_verification_transport() -> String { "http".to_string() }
