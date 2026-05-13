@@ -45,6 +45,7 @@ impl Stage for IdentityAuthenticationStage {
 
         let mut results: Vec<PerOwnerEvidence> = Vec::with_capacity(declaration.beneficial_owners.len());
         let mut backend_failed = false;
+        let mut circuit_open = false;
 
         for owner in &declaration.beneficial_owners {
             match self.bunec.lookup(owner.person_id).await {
@@ -66,6 +67,16 @@ impl Stage for IdentityAuthenticationStage {
                     nationality: None,
                     error: None,
                 }),
+                Ok(BunecLookup::CircuitOpen { since }) => {
+                    circuit_open = true;
+                    results.push(PerOwnerEvidence {
+                        person_id: owner.person_id,
+                        found: false,
+                        canonical_full_name: None,
+                        nationality: None,
+                        error: Some(format!("bunec circuit open at {since}")),
+                    });
+                }
                 Err(e) => {
                     backend_failed = true;
                     results.push(PerOwnerEvidence {
@@ -83,7 +94,7 @@ impl Stage for IdentityAuthenticationStage {
         let found = results.iter().filter(|r| r.found).count();
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        let (kind, authenticity_bpa) = if backend_failed {
+        let (kind, authenticity_bpa) = if backend_failed || circuit_open {
             (
                 StageOutcomeKind::InsufficientEvidence,
                 BasicProbabilityAssignment::vacuous(),
@@ -122,6 +133,7 @@ impl Stage for IdentityAuthenticationStage {
                 "owners_total": total,
                 "owners_found": found,
                 "backend_failed": backend_failed,
+                "circuit_open": circuit_open,
                 "per_owner": results,
             }),
             duration_ms,

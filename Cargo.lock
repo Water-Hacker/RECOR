@@ -2450,6 +2450,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "recor-inference-gateway"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "recor-logging"
 version = "0.1.0"
 dependencies = [
@@ -2484,6 +2498,7 @@ dependencies = [
  "prometheus",
  "proptest",
  "recor-auth-oidc",
+ "recor-inference-gateway",
  "recor-logging",
  "reqwest",
  "rstest",

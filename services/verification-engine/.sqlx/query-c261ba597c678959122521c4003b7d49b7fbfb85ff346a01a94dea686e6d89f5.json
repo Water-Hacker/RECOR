@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id                                                  AS \"id!: uuid::Uuid\",\n                source                                              AS \"source!\",\n                full_name_canonical                                 AS \"full_name_canonical!\",\n                sanction_program                                    AS \"sanction_program!\",\n                similarity(full_name_canonical, $1)::float8         AS \"similarity!\"\n            FROM sanctions_persons\n            WHERE full_name_canonical % $1\n              AND similarity(full_name_canonical, $1) >= 0.5\n            ORDER BY similarity(full_name_canonical, $1) DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: uuid::Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "full_name_canonical!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "sanction_program!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "similarity!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "c261ba597c678959122521c4003b7d49b7fbfb85ff346a01a94dea686e6d89f5"
+}

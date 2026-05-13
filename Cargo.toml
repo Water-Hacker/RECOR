@@ -20,6 +20,7 @@
 resolver = "2"
 members = [
     "packages/recor-auth-oidc",
+    "packages/recor-inference-gateway",
     "packages/recor-logging",
     "services/declaration",
     "services/verification-engine",

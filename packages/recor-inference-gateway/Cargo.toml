@@ -1,0 +1,24 @@
+[package]
+name = "recor-inference-gateway"
+description = "RÉCOR Inference Gateway — Anthropic-primary (D22) shim used by Stage 5 adverse media and any future Tier-A/Tier-B inference path. Tool-use structured output, token-budget metric, fixture mode for offline tests, deterministic schema validation."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_inference_gateway"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+secrecy.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

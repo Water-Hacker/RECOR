@@ -1,11 +1,21 @@
+pub mod bunec_real;
+pub mod icij_postgres;
 pub mod mock_bunec;
+pub mod name_match;
 pub mod outbox_admin;
+pub mod pep_postgres;
 pub mod postgres;
 pub mod relay;
 pub mod retention;
+pub mod sanctions_postgres;
 
+pub use bunec_real::{BunecFailPolicy, BunecRealConfig, RealBunecAdapter};
+pub use icij_postgres::PostgresIcijRepository;
 pub use mock_bunec::PostgresMockBunec;
+pub use name_match::{NameCandidate, name_match};
 pub use outbox_admin::{DlqRow, OutboxAdminError, OutboxAdminStore};
+pub use pep_postgres::PostgresPepAdapter;
 pub use postgres::PostgresVerificationRepository;
 pub use relay::{VerificationOutboxRelay, WritebackSubscriber};
 pub use retention::{PruneOutcome, VerificationOutboxRetention};
+pub use sanctions_postgres::PostgresSanctionsAdapter;

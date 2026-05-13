@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+recor-inference-gateway = { path = "../../packages/recor-inference-gateway" }
 recor-logging = { path = "../../packages/recor-logging" }
 
 tokio.workspace = true
