@@ -54,8 +54,11 @@ test.describe('R-PORT-6 — verification rejected (red lane)', () => {
     await fillDeclarationForm(page, { personId: UNSEEDED_PERSON_ID });
     await clickSubmit(page);
 
-    // Status panel takes over.
-    const statusPanel = page.getByRole('status');
+    // Status panel takes over. Use the explicit data-testid rather
+    // than role="status" because the wizard's drafts-unavailable
+    // notice is also role="status" and `getByRole` would match the
+    // first one (live IndexedDB availability varies by runner).
+    const statusPanel = page.getByTestId('verification-status-panel');
     await expect(statusPanel).toBeVisible({ timeout: 15_000 });
 
     // The "rejected" heading is translated (fr.json

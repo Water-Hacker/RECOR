@@ -14,6 +14,7 @@ use blake3::Hasher;
 use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::{
+    cors::{AllowMethods, AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
@@ -233,6 +234,15 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         metrics_middleware,
     ));
 
+    // CORS for the declarant portal (different origin in dev/CI:
+    // localhost:8082 → localhost:8080). Production deployments
+    // typically front the API through the portal's nginx and skip
+    // CORS, but the portal-e2e/live CI rig hits both origins
+    // directly so the browser blocks XHR without these headers.
+    // Origin allowlist is sourced from `CORS_ALLOWED_ORIGINS` (CSV);
+    // empty disables CORS entirely (production default).
+    let cors_layer = cors_layer_from_csv(&cfg.cors_allowed_origins);
+
     app_routes.merge(metrics_router).layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
@@ -243,8 +253,35 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
                 http::HeaderName::from_static("x-request-id"),
             ))
             .layer(TraceLayer::new_for_http())
+            .layer(cors_layer)
             .layer(TimeoutLayer::new(Duration::from_secs(cfg.http_timeout_seconds))),
     )
+}
+
+fn cors_layer_from_csv(allowed: &str) -> CorsLayer {
+    let origins: Vec<_> = allowed
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<http::HeaderValue>().ok())
+        .collect();
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods(AllowMethods::list([
+            http::Method::GET,
+            http::Method::POST,
+            http::Method::OPTIONS,
+        ]))
+        .allow_headers([
+            http::header::AUTHORIZATION,
+            http::header::CONTENT_TYPE,
+            http::HeaderName::from_static("idempotency-key"),
+            http::HeaderName::from_static("x-recor-dev-principal"),
+        ])
+        .max_age(std::time::Duration::from_secs(300))
 }
 
 #[utoipa::path(
