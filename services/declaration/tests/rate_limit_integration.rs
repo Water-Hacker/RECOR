@@ -171,6 +171,7 @@ fn test_config(
         writeback_hmac_secret: SecretString::from(String::new()),
         writeback_hmac_secret_old: SecretString::from(String::new()),
         admin_principals: String::new(),
+        cors_allowed_origins: String::new(),
         rate_limit_per_min,
         rate_limit_burst,
         log_redaction: String::new(),
