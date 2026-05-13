@@ -1,0 +1,13 @@
+
+/home/kali/Music/RECOR-audit-C/applications/declarant-portal/src/features/declaration/wizard/index.tsx
+  155:11  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+  184:9   warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+  228:7   warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+
+/home/kali/Music/RECOR-audit-C/applications/declarant-portal/src/features/declaration/wizard/useDraftAutosave.ts
+  139:15  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+  169:13  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+
+✖ 5 problems (0 errors, 5 warnings)
+  0 errors and 5 warnings potentially fixable with the `--fix` option.
+

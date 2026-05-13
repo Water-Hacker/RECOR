@@ -1,0 +1,22 @@
+[1A[2K[WebServer] 
+[WebServer] > recor-declarant-portal@0.1.0 preview /home/kali/Music/RECOR-audit-C/applications/declarant-portal
+[WebServer] > vite preview --host 0.0.0.0 --port 5173 --port 5173
+[WebServer] 
+
+[1A[2K[WebServer]   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+
+[1A[2K[WebServer]   [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.211:[1m5173[22m/[39m
+[WebServer]   [32m➜[39m  [1mNetwork[22m: [36mhttp://172.20.0.1:[1m5173[22m/[39m
+
+[1A[2K[WebServer]   [32m➜[39m  [1mNetwork[22m: [36mhttp://172.18.0.1:[1m5173[22m/[39m
+
+
+Running 6 tests using 6 workers
+
+[1A[2K[1/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:95:3 › R-PORT-5 — WCAG 2.1 AA smoke › wizard step 2 — Owners — clean against WCAG AA
+[1A[2K[2/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:107:3 › R-PORT-5 — WCAG 2.1 AA smoke › wizard step 3 — Review — clean against WCAG AA
+[1A[2K[3/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:88:3 › R-PORT-5 — WCAG 2.1 AA smoke › wizard step 1 — Entity — clean against WCAG AA
+[1A[2K[4/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:119:3 › R-PORT-5 — WCAG 2.1 AA smoke › wizard step 4 — Sign + Submit — clean against WCAG AA
+[1A[2K[5/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:129:3 › R-PORT-5 — WCAG 2.1 AA smoke › VerificationStatus panel — clean against WCAG AA
+[1A[2K[6/6] [chromium] › tests/e2e/a11y-smoke.spec.ts:140:3 › R-PORT-5 — WCAG 2.1 AA smoke › validation error state — clean against WCAG AA
+[1A[2K  6 passed (8.7s)
