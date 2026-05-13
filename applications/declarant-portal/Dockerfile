@@ -15,11 +15,18 @@ RUN pnpm build
 
 FROM nginx:1.29-alpine AS runtime
 # Bump from nginx:1.27-alpine (Alpine 3.21.3) → 1.29-alpine (Alpine
-# 3.22) — the older base picked up HIGH/CRITICAL CVEs that Trivy
+# 3.23) — the older base picked up HIGH/CRITICAL CVEs that Trivy
 # fail-closes the publish-images workflow on (CI-2 #70). The 1.29
 # line tracks newer Alpine patches.
-# envsubst lives in the gettext package on alpine.
-RUN apk add --no-cache gettext
+#
+# `apk upgrade` AFTER apk add ensures we pick up any HIGH/CRITICAL
+# patches that landed in Alpine's repos after the upstream nginx
+# image was last rebuilt. Without this, Trivy flags transitive
+# dependencies (e.g. nghttp2-libs HIGH CVE-2026-27135) that already
+# have fixes available in the Alpine repo but haven't propagated
+# into the nginx:1.29-alpine base image yet.
+RUN apk add --no-cache gettext \
+    && apk upgrade --no-cache
 
 COPY --from=builder /build/dist /usr/share/nginx/html
 

@@ -1,4 +1,4 @@
--- Migration: 0005_graph_views
+-- Migration: 0006_graph_views
 -- Service:   verification-engine
 -- Ticket:    R-VER-5
 -- Rationale: Stage 6 pattern detection runs over an ownership graph

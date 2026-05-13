@@ -1,4 +1,4 @@
--- Migration: 0005_peps_and_icij
+-- Migration: 0007_peps_and_icij
 -- Service:   verification-engine
 -- Tickets:   R-VER-3 (PEPs), R-VER-4 (ICIJ Offshore Leaks)
 -- Rationale: Stage 4 PEP screening + Stage 5 adverse-media retrieval

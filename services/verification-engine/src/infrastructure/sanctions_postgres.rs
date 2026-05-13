@@ -2,7 +2,9 @@
 //! `sanctions_persons` table using pg_trgm trigram similarity over
 //! `full_name_canonical`. Implementation notes:
 //!
-//!   * pg_trgm is loaded in migration `0004_sanctions.sql`.
+//!   * pg_trgm is loaded in migration `0005_sanctions.sql`
+//!     (renumbered from `0004_sanctions.sql` to avoid the collision
+//!     with R-LOOP-2's `0004_add_kafka_consumer_dlq.sql`).
 //!   * The GIN index on `full_name_canonical gin_trgm_ops` makes the
 //!     `%` operator (default 0.3 threshold) fast for large indexes.
 //!   * Application-layer filter raises the floor to 0.5; below that
