@@ -35,7 +35,14 @@
  *   Declarant Portal i18n).
  */
 
+// @ts-ignore
 import { defineConfig, devices } from '@playwright/test';
+
+// Type declaration for Node.js process global
+declare const process: {
+  env: Record<string, string | undefined>;
+  cwd(): string;
+};
 
 /**
  * Mode selection. Default to mocked because that's the path a fresh
