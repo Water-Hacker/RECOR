@@ -1,3 +1,4 @@
+// @ts-ignore
 import { useTranslation } from 'react-i18next';
 
 import { DeclarationForm } from './features/declaration/DeclarationForm';

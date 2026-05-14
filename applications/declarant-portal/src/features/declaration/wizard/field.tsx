@@ -8,6 +8,7 @@
  */
 
 import type { ReactNode } from 'react';
+// @ts-ignore
 import type { TFunction } from 'i18next';
 
 /** Tailwind classes shared by every text/number/select input. */

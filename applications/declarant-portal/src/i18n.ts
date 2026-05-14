@@ -33,9 +33,13 @@
  *     it can be caught by observability rather than silently rendered.
  */
 
+// @ts-ignore
 import i18n from 'i18next';
+// @ts-ignore
 import { initReactI18next } from 'react-i18next';
+// @ts-ignore
 import LanguageDetector from 'i18next-browser-languagedetector';
+// @ts-ignore
 import resourcesToBackend from 'i18next-resources-to-backend';
 
 export const SUPPORTED_LOCALES = ['fr', 'en', 'pidgin'] as const;

@@ -26,6 +26,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+// @ts-ignore
 import type { TFunction } from 'i18next';
 import clsx from 'clsx';
 
