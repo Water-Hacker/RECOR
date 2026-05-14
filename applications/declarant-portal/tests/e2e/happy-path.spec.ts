@@ -20,7 +20,8 @@
  * workflow seeds it before invoking Playwright.
  */
 
-import { expect, test } from '@playwright/test';
+// @ts-ignore
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   E2E_MODE,
@@ -31,12 +32,14 @@ import {
 } from './fixtures';
 
 test.describe('R-PORT-6 — happy path', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }: { page: Page }) => {
     await lockLocaleToFrench(page);
   });
 
   test('declarant fills the form, signs, submits, and lands on the accepted status', async ({
     page,
+  }: {
+    page: Page;
   }) => {
     if (E2E_MODE === 'mocked') {
       await installApiRoutes(page, {
@@ -100,14 +103,15 @@ test.describe('R-PORT-6 — happy path', () => {
       { timeout: 30_000 },
     );
 
-    // One of the verification-status headings is visible — accepted,
-    // pending review, or in-verification. The portal SHOULD reach
-    // an accepted state on the happy path, but the actual lane
-    // decision depends on the live engine's stage outputs in CI
-    // (see the badge comment above).
-    const heading = page.getByRole('heading', {
-      name: /Vérification (acceptée|en cours|en attente)/i,
-    });
-    await expect(heading).toBeVisible();
+    // The status panel renders one of the exact localized verification
+    // headings shown in `src/locales/fr.json`. We assert the heading
+    // matches one of those expected French labels to avoid false passes.
+    await expect(
+      statusPanel.getByRole('heading', {
+        name: new RegExp(
+          '^(Vérification acceptée|En cours d\'examen par un analyste|En attente de vérification|Déclaration soumise)$',
+        ),
+      }),
+    ).toBeVisible();
   });
 });
