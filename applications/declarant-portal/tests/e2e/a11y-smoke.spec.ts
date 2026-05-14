@@ -12,7 +12,9 @@
 // See `docs/security/a11y-audit-2026-Q2.md` for the audit record +
 // findings table.
 
+// @ts-ignore
 import AxeBuilder from '@axe-core/playwright';
+// @ts-ignore
 import { expect, test, type Page } from '@playwright/test';
 import {
   E2E_MODE,
@@ -48,15 +50,15 @@ async function expectNoCriticalOrSeriousViolations(
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();
   const blocking = results.violations.filter(
-    (v) => v.impact === 'critical' || v.impact === 'serious',
+    (v: any) => v.impact === 'critical' || v.impact === 'serious',
   );
   if (blocking.length > 0) {
     const summary = blocking
       .map(
-        (v) =>
+        (v: any) =>
           `[${v.impact}] ${v.id} — ${v.help}\n        ${v.nodes
             .slice(0, 3)
-            .map((n) => n.target.join(' '))
+            .map((n: any) => n.target.join(' '))
             .join('\n        ')}`,
       )
       .join('\n');
@@ -68,7 +70,7 @@ async function expectNoCriticalOrSeriousViolations(
     test.info().annotations.push({
       type: `a11y-non-blocking[${context}]`,
       description: `${results.violations.length} non-blocking violation(s): ${results.violations
-        .map((v) => `${v.impact ?? 'minor'} ${v.id}`)
+        .map((v: any) => `${v.impact ?? 'minor'} ${v.id}`)
         .join(', ')}`,
     });
   }
@@ -81,18 +83,18 @@ test.describe('R-PORT-5 — WCAG 2.1 AA smoke', () => {
   // assertions can't catch from the rendered DOM.
   test.skip(E2E_MODE === 'live', 'a11y smoke is mocked-only');
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }: { page: Page }) => {
     await lockLocaleToFrench(page);
   });
 
-  test('wizard step 1 — Entity — clean against WCAG AA', async ({ page }) => {
+  test('wizard step 1 — Entity — clean against WCAG AA', async ({ page }: { page: Page }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
     await page.getByTestId('wizard-step-1').waitFor({ state: 'visible' });
     await expectNoCriticalOrSeriousViolations(page, 'wizard-step-1');
   });
 
-  test('wizard step 2 — Owners — clean against WCAG AA', async ({ page }) => {
+  test('wizard step 2 — Owners — clean against WCAG AA', async ({ page }: { page: Page }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
     await page.getByTestId('wizard-step-1').waitFor({ state: 'visible' });
@@ -104,7 +106,7 @@ test.describe('R-PORT-5 — WCAG 2.1 AA smoke', () => {
     await expectNoCriticalOrSeriousViolations(page, 'wizard-step-2');
   });
 
-  test('wizard step 3 — Review — clean against WCAG AA', async ({ page }) => {
+  test('wizard step 3 — Review — clean against WCAG AA', async ({ page }: { page: Page }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
     await fillDeclarationForm(page);
@@ -118,6 +120,8 @@ test.describe('R-PORT-5 — WCAG 2.1 AA smoke', () => {
 
   test('wizard step 4 — Sign + Submit — clean against WCAG AA', async ({
     page,
+  }: {
+    page: Page;
   }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
@@ -126,7 +130,7 @@ test.describe('R-PORT-5 — WCAG 2.1 AA smoke', () => {
     await expectNoCriticalOrSeriousViolations(page, 'wizard-step-4');
   });
 
-  test('VerificationStatus panel — clean against WCAG AA', async ({ page }) => {
+  test('VerificationStatus panel — clean against WCAG AA', async ({ page }: { page: Page }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
     await fillDeclarationForm(page);
@@ -137,7 +141,7 @@ test.describe('R-PORT-5 — WCAG 2.1 AA smoke', () => {
     await expectNoCriticalOrSeriousViolations(page, 'verification-status');
   });
 
-  test('validation error state — clean against WCAG AA', async ({ page }) => {
+  test('validation error state — clean against WCAG AA', async ({ page }: { page: Page }) => {
     await installApiRoutes(page, { trajectory: ACCEPTED_TRAJECTORY });
     await page.goto('/');
     await page.getByTestId('wizard-step-1').waitFor({ state: 'visible' });

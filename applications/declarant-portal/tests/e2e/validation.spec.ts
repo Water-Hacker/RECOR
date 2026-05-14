@@ -16,7 +16,8 @@
  * not just visual.
  */
 
-import { expect, test } from '@playwright/test';
+// @ts-ignore
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   E2E_MODE,
@@ -25,12 +26,14 @@ import {
 } from './fixtures';
 
 test.describe('R-PORT-6 — validation', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }: { page: Page }) => {
     await lockLocaleToFrench(page);
   });
 
   test('invalid entity_id surfaces a UUID error and forward gate refuses to advance', async ({
     page,
+  }: {
+    page: Page;
   }) => {
     // Track POSTs to /v1/declarations. An accidental advance through
     // the wizard would surface here.
@@ -40,7 +43,7 @@ test.describe('R-PORT-6 — validation', () => {
         trajectory: [{ verification_state: 'pending' }],
       });
     }
-    page.on('request', (req) => {
+    page.on('request', (req: any) => {
       if (
         req.method() === 'POST' &&
         req.url().endsWith('/v1/declarations')

@@ -24,6 +24,7 @@
  * provision (D19 reproducible everything).
  */
 
+// @ts-ignore
 import type { Page, Route } from '@playwright/test';
 
 // `process` is a Node global injected by Playwright's test runner; we

@@ -24,7 +24,8 @@
  * mode regardless of `E2E_MODE`.
  */
 
-import { expect, test } from '@playwright/test';
+// @ts-ignore
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   clickSubmit,
@@ -34,12 +35,14 @@ import {
 } from './fixtures';
 
 test.describe('R-PORT-6 — polling stops on terminal state', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }: { page: Page }) => {
     await lockLocaleToFrench(page);
   });
 
   test('no GET fires after the declaration reaches accepted', async ({
     page,
+  }: {
+    page: Page;
   }) => {
     const state = await installApiRoutes(page, {
       trajectory: [

@@ -19,7 +19,8 @@
  * leaving `UNSEEDED_PERSON_ID` deliberately absent.
  */
 
-import { expect, test } from '@playwright/test';
+// @ts-ignore
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   E2E_MODE,
@@ -31,11 +32,11 @@ import {
 } from './fixtures';
 
 test.describe('R-PORT-6 — verification rejected (red lane)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }: { page: Page }) => {
     await lockLocaleToFrench(page);
   });
 
-  test('unseeded person yields a red-lane rejected status', async ({ page }) => {
+  test('unseeded person yields a red-lane rejected status', async ({ page }: { page: Page }) => {
     if (E2E_MODE === 'mocked') {
       await installApiRoutes(page, {
         // Walk to rejected. Two intermediate frames mirror what the
