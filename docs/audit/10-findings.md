@@ -7,10 +7,10 @@ the audit ([`00-orientation.md`](00-orientation.md) through
 severity by `cheap → expensive` so the architect reads the
 cheapest critical fixes first.
 
-**Counts:** 6 critical · 14 high · ~52 medium · ~28 low. The
-critical / high tier is exhaustively enumerated below. Medium and
-low findings appear in a compact table pointing to the source pass
-document.
+**Counts:** 6 critical (**6 closed**, 0 open) · 14 high · ~52
+medium · ~28 low. The critical / high tier is exhaustively
+enumerated below. Medium and low findings appear in a compact
+table pointing to the source pass document.
 
 **Calibration.** A finding is **critical** if it permits an
 unauthorised actor to read, write, or impersonate at scale, OR if
@@ -23,9 +23,10 @@ production deployment. **Medium** is worth fixing in normal course.
 
 ## CRITICAL findings
 
-### FIND-001 — Audit verifier is unauthenticated and discloses full declaration payloads by UUID
+### FIND-001 — Audit verifier is unauthenticated and discloses full declaration payloads by UUID — **CLOSED (Sprint 0)**
 
 - **Severity:** CRITICAL
+- **Status:** CLOSED by audit Sprint 0 — `apps/audit-verifier` now ships an OIDC bearer + dev-header middleware on `GET /v1/audit/verify/{declaration_id}`; probes (`/healthz`, `/readyz`) stay public.
 - **Location:** `apps/audit-verifier/src/` — the route handler for `GET /v1/audit/verify/{declaration_id}`
 - **Source:** Pass A surfaces walkthrough; `08-audit-chain.md` § "Critical observation"
 - **Evidence:** Pass A `02-surfaces.md` § A.13 (audit-verifier)
@@ -36,9 +37,10 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** cheap (1-2 days for option A; 3-5 days for option B with the docs/UX changes)
 - **Cost class:** code-only
 
-### FIND-002 — `POST /v1/verifications` admits arbitrary snapshots from any authenticated declarant
+### FIND-002 — `POST /v1/verifications` admits arbitrary snapshots from any authenticated declarant — **CLOSED (Sprint 0)**
 
 - **Severity:** CRITICAL
+- **Status:** CLOSED by audit Sprint 0 — `submit_verification` is gated on `ADMIN_PRINCIPALS` (empty allowlist ⇒ 503 D14 fail-closed; non-admin ⇒ 403). The legitimate path is the HMAC-authenticated `/v1/internal/declaration-events` webhook / Kafka consumer.
 - **Location:** `services/verification-engine/src/api/rest.rs:228-257`
 - **Source:** Pass B § 7 (`05-permissions.md` PRM-3); `CRITICAL-INTERRUPT.md`
 - **Evidence:** the handler extracts `axum::Extension(_principal)` — the underscore is the language signal the value is intentionally unused
@@ -47,9 +49,10 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** cheap (~1 day)
 - **Cost class:** code-only
 
-### FIND-003 — `ENVIRONMENT=dev` + configured OIDC accepts BOTH auth paths simultaneously
+### FIND-003 — `ENVIRONMENT=dev` + configured OIDC accepts BOTH auth paths simultaneously — **CLOSED (Sprint 0)**
 
 - **Severity:** CRITICAL
+- **Status:** CLOSED by audit Sprint 0 — every service's `Config::from_env` now refuses to start when `ENVIRONMENT=dev` AND `OIDC_ISSUER_URL` is non-empty (new `ConfigError::DevWithOidcIsIncoherent` across declaration / verification-engine / person-service / entity-service / audit-verifier).
 - **Location:** `services/declaration/src/config.rs:282-300` (mirror in V-engine)
 - **Source:** Pass B § 6 + § 7 (`05-permissions.md` PRM-6 / `04-failure-modes.md` FM-11); `CRITICAL-INTERRUPT.md`
 - **Evidence:** the config startup gate refuses to start only when `environment != "dev" AND oidc_issuer_url.is_empty()`. It does NOT refuse when `environment == "dev" AND oidc_issuer_url` is set
@@ -58,16 +61,17 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** cheap (~1 day across the four services)
 - **Cost class:** code-only
 
-### FIND-004 — V-engine submit/get accept any authenticated principal — cross-tenant case read
+### FIND-004 — V-engine submit/get accept any authenticated principal — cross-tenant case read — **CLOSED (Sprint 1)**
 
 - **Severity:** CRITICAL
-- **Location:** `services/verification-engine/src/api/rest.rs` — `submit_verification` (~228-257) and `get_verification` (~260-280)
+- **Status:** CLOSED by audit Sprint 1 (per-case tenancy predicate). Sprint 0 shipped an interim admin-only gate while the per-case story was unresolved; Sprint 1 replaces it with the real predicate.
+- **Location:** `services/verification-engine/src/api/rest.rs` — `submit_verification` and `get_verification`
 - **Source:** Pass A § A.10 (verification-engine surfaces)
-- **Evidence:** both handlers use `axum::Extension(_principal)` with no authorisation check; any authenticated bearer can read any verification case by `case_id`
-- **Impact:** Cross-tenant disclosure of fusion belief, lane, stage details, AND any PII the V-engine stamped onto the case. An authenticated declarant can read every other declarant's verification trajectory
-- **Remediation:** Add a per-case `declarant_principal` column (or join through to `declaration_events`) and gate `get_verification` on `principal == case.declarant_principal OR principal IN admin_allowlist`. `submit_verification` is FIND-002 — fix together
-- **Effort:** medium (3-5 days — needs a migration to denormalise the declarant_principal onto `verification_cases` for the gate)
-- **Cost class:** code + migration
+- **Evidence:** both handlers used `axum::Extension(_principal)` with no authorisation check; any authenticated bearer could read any verification case by `case_id`
+- **Impact:** Cross-tenant disclosure of fusion belief, lane, stage details, AND any PII the V-engine stamped onto the case. An authenticated declarant could read every other declarant's verification trajectory
+- **Remediation shipped:** `verification_cases.declarant_principal` has been on the table since migration 0001 (denormalised onto the row from the inbound `DeclarationSnapshot`) — what was missing was the runtime check. `get_verification` now loads the case, then enforces `principal == declaration.declarant_principal OR principal IN admin_allowlist`. Denial returns **404** (mirrors person-service `get_person`, FIND-005): non-owners cannot enumerate case_ids by inferring existence from the response code. `submit_verification` remains admin-only — the legitimate verification-submission path is the HMAC-authenticated internal webhook (FIND-002).
+- **Tests:** `api::rest::rbac_tests::{declarant_can_read_own_case, cross_tenant_read_is_denied_even_when_admin_allowlist_is_empty, admin_can_read_any_case, non_admin_non_owner_is_denied}` plus the existing FIND-002 admin-gate matrix.
+- **No migration required** — the column has been on `verification_cases` since v1; Sprint 1 wires the runtime predicate. This closes the last remaining CRITICAL finding from the whole-system audit.
 
 ### FIND-005 — Person-service GET/search grants Sensitive-PII to ANY authenticated principal — **CLOSED (Sprint 1)**
 

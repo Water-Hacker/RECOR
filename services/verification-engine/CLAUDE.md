@@ -67,6 +67,14 @@ case retrieval, DLQ admin, declaration-events writeback) is mapped in
 
 - **D14 fail-closed** — pipeline short-circuits on Stage 1 fail. Lane
   router defaults to Red on total Dempster conflict.
+- **D17 zero trust** — REST `submit_verification` is admin-only
+  (FIND-002 closed in Sprint 0); the legitimate verification-
+  submission path is the HMAC-authenticated internal webhook /
+  Kafka consumer. REST `get_verification` is per-case-gated
+  (FIND-004 closed in Sprint 1): `principal ==
+  declaration.declarant_principal OR principal IN admin_allowlist`;
+  denial returns 404 to avoid case-id enumeration via response
+  codes (mirrors person-service `get_person`).
 - **D15 cryptographic provenance** — declaration's receipt hash +
   attestation hex carry through into the case record. Future ticket
   anchors case records to Fabric audit channel.
