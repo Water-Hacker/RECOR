@@ -63,7 +63,18 @@ pub struct AppState {
     pub admin_principals: Arc<std::collections::HashSet<String>>,
 }
 
-pub fn router(state: AppState, cfg: &Config) -> Router {
+/// Build the main router for the V-engine.
+///
+/// `expose_metrics_on_main`:
+///   - `true` (current default): `/metrics` is mounted on the main
+///     listener alongside the business routes. Backwards-compatible
+///     with single-port deployments (dev, integration tests).
+///   - `false` (FIND-007): `/metrics` is omitted from the main router;
+///     `main.rs` is expected to bind a separate listener via
+///     `metrics_only_router` on a NetworkPolicy-restricted port. This
+///     is the production posture — operators MUST flip this when the
+///     main listener is reachable from outside the cluster.
+pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Router {
     let auth_state = AuthConfig {
         is_dev: state.is_dev,
         oidc: state.oidc.clone(),
@@ -138,16 +149,6 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         .route("/readyz", get(readyz))
         .with_state(state.clone());
 
-    // OBS-1: GET /metrics — Prometheus exposition. No auth; in-cluster
-    // network only (see runbook). Mounted as a sibling router so the
-    // metrics handler reads `State<Arc<Metrics>>` (the typed metrics
-    // state) rather than the full AppState. The request-timing
-    // middleware is NOT applied here so scrape traffic doesn't inflate
-    // the latency histogram.
-    let metrics_router: Router = Router::new()
-        .route("/metrics", get(metrics_handler))
-        .with_state(state.metrics.clone());
-
     let app_routes = protected.merge(admin).merge(internal).merge(public);
 
     // Per-endpoint timing + counter middleware over the app routes
@@ -158,7 +159,23 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         metrics_middleware,
     ));
 
-    app_routes.merge(metrics_router).layer(
+    // OBS-1 / FIND-007: GET /metrics — Prometheus exposition. No auth;
+    // in-cluster network only. When `expose_metrics_on_main` is
+    // `false`, the route is NOT mounted here — `main.rs` is expected
+    // to bind a separate listener via `metrics_only_router` on a
+    // NetworkPolicy-restricted port. The request-timing middleware is
+    // NOT applied to metrics so scrape traffic doesn't inflate the
+    // latency histogram.
+    let with_metrics: Router = if expose_metrics_on_main {
+        let metrics_router: Router = Router::new()
+            .route("/metrics", get(metrics_handler))
+            .with_state(state.metrics.clone());
+        app_routes.merge(metrics_router)
+    } else {
+        app_routes
+    };
+
+    with_metrics.layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -170,6 +187,16 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
             .layer(TraceLayer::new_for_http())
             .layer(TimeoutLayer::new(Duration::from_secs(cfg.http_timeout_seconds))),
     )
+}
+
+/// FIND-007: minimal router that serves ONLY `/metrics`. Bound on a
+/// separate listener by `main.rs` when `METRICS_BIND_ADDR` is set, so
+/// a NetworkPolicy can restrict scrape traffic to the Prometheus pod
+/// CIDR without affecting the business / ingress port.
+pub fn metrics_only_router(metrics: Arc<crate::metrics::Metrics>) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(metrics)
 }
 
 #[tracing::instrument(skip(state))]

@@ -189,7 +189,13 @@ async fn main() -> Result<()> {
         admin_principals: Arc::new(cfg.admin_principals_list().into_iter().collect()),
     };
 
-    let router = recor_verification_engine::api::router(app_state, &cfg);
+    // FIND-007: when METRICS_BIND_ADDR is set, /metrics is bound on a
+    // separate listener and a NetworkPolicy restricts that port to the
+    // Prometheus scraper. Empty preserves the current single-listener
+    // posture (dev / single-port deployments).
+    let expose_metrics_on_main = cfg.metrics_bind_addr.is_empty();
+    let router =
+        recor_verification_engine::api::router(app_state, &cfg, expose_metrics_on_main);
     let addr: SocketAddr = cfg.bind_addr.parse().context("parsing bind addr")?;
     let listener = TcpListener::bind(addr).await.context("binding")?;
     info!(%addr, "listening");
@@ -197,6 +203,35 @@ async fn main() -> Result<()> {
     // Cancellation token shared with the writeback relay so shutdown
     // is coordinated with the HTTP server.
     let cancel = CancellationToken::new();
+
+    // FIND-007: separate metrics listener. Spawned conditionally so a
+    // misconfigured METRICS_BIND_ADDR doesn't crash the main HTTP path.
+    let metrics_handle = if !cfg.metrics_bind_addr.is_empty() {
+        let m_addr: SocketAddr = cfg
+            .metrics_bind_addr
+            .parse()
+            .context("parsing metrics_bind_addr")?;
+        let m_listener = TcpListener::bind(m_addr)
+            .await
+            .with_context(|| format!("binding metrics listener {m_addr}"))?;
+        let m_router =
+            recor_verification_engine::api::metrics_only_router(metrics.clone());
+        let cancel_metrics = cancel.clone();
+        info!(addr = %m_addr, "metrics listener bound (FIND-007 separate-port posture)");
+        Some(tokio::spawn(async move {
+            if let Err(e) = axum::serve(m_listener, m_router)
+                .with_graceful_shutdown(async move {
+                    cancel_metrics.cancelled().await;
+                })
+                .await
+            {
+                tracing::error!(error = ?e, "metrics listener error");
+            }
+        }))
+    } else {
+        info!("metrics listener disabled (METRICS_BIND_ADDR not set) — /metrics is on the main listener");
+        None
+    };
 
     // Writeback relay — optional. Enabled when WRITEBACK_URL is set.
     // When disabled, verification_outbox rows accumulate undispatched.
@@ -312,6 +347,9 @@ async fn main() -> Result<()> {
         let _ = h.await;
     }
     if let Some(h) = kafka_consumer_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = metrics_handle {
         let _ = h.await;
     }
     let _ = retention_handle.await;

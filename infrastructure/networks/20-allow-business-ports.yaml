@@ -1,0 +1,63 @@
+# Allow ingress on the business HTTP ports from:
+#   - the platform ingress controller (external traffic)
+#   - sibling RÉCOR pods (declaration → V-engine writeback, etc.)
+#
+# Business ports per service (matches Cargo workspace BIND_ADDR defaults):
+#   - declaration            8080
+#   - verification-engine    8081
+#   - person-service         8082
+#   - entity-service         8083
+#
+# Note: /metrics is NOT on these ports once FIND-007 closure is
+# operationally applied (METRICS_BIND_ADDR set). The metrics port is
+# covered by `30-allow-metrics-scrape.yaml` and is intentionally NOT
+# reachable from the ingress controller.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-business
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    audit.recor.cm/finding: FIND-007
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: recor
+      recor.cm/role: service
+  policyTypes:
+    - Ingress
+  ingress:
+    # External traffic via the platform ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+        - protocol: TCP
+          port: 8082
+        - protocol: TCP
+          port: 8083
+    # Intra-cluster service-to-service (D ↔ V writeback, etc.).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: recor
+              recor.cm/role: service
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+        - protocol: TCP
+          port: 8082
+        - protocol: TCP
+          port: 8083

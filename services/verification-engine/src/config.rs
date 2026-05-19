@@ -7,6 +7,17 @@ use serde::Deserialize;
 pub struct Config {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
+    /// FIND-007 (audit Sprint 2): bind address for an OPTIONAL separate
+    /// metrics listener. When set, `/metrics` is removed from the main
+    /// listener and mounted exclusively on this listener; a NetworkPolicy
+    /// in `infrastructure/networks/` restricts ingress on this port to
+    /// the Prometheus scraper's pod CIDR. When empty (default),
+    /// `/metrics` stays on the main listener — backwards-compatible for
+    /// dev / single-port deployments. Operators MUST set this in any
+    /// deployment where the main listener is reachable from outside the
+    /// cluster (D17 zero trust at the network boundary).
+    #[serde(default)]
+    pub metrics_bind_addr: String,
     pub database_url: SecretString,
     #[serde(default = "default_pool_size")]
     pub db_pool_max_connections: u32,

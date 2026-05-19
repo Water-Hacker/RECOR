@@ -1,0 +1,29 @@
+# FIND-007 / FIND-008 — default-deny baseline NetworkPolicy.
+#
+# Every pod in the `recor` namespace starts with ingress AND egress
+# denied. Subsequent NetworkPolicies in this directory selectively
+# allow specific flows (DNS, business ports, metrics scrape). This is
+# the fail-closed posture the audit's threat-model assumes; D14 + D17
+# both apply.
+#
+# Apply with:
+#   kubectl apply -f infrastructure/networks/00-default-deny.yaml -n recor
+#
+# Order matters in NetworkPolicy semantics: the empty pod-selector
+# matches every pod, and the absence of `ingress`/`egress` rules below
+# means NO traffic is allowed in those directions until another policy
+# selects the pod with allow rules. NetworkPolicies are additive.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    audit.recor.cm/finding: FIND-007
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
