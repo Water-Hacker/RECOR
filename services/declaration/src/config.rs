@@ -282,6 +282,16 @@ impl Config {
         if cfg.environment != "dev" && cfg.oidc_issuer_url.is_empty() {
             return Err(ConfigError::OidcRequiredOutsideDev);
         }
+        // FIND-003 (audit Sprint 0): environment=dev WITH a configured
+        // OIDC issuer enables BOTH auth paths simultaneously — an
+        // attacker can bypass the OIDC verifier by sending
+        // `X-Recor-Dev-Principal: <victim>`. The combo is incoherent:
+        // either you're in dev (and exercising the dev backdoor) or
+        // you're using OIDC (and you should not also accept the dev
+        // backdoor). Refuse to start.
+        if cfg.environment == "dev" && !cfg.oidc_issuer_url.is_empty() {
+            return Err(ConfigError::DevWithOidcIsIncoherent);
+        }
         if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
             return Err(ConfigError::OidcAudienceRequired);
         }
@@ -343,6 +353,15 @@ pub enum ConfigError {
     Deserialise(#[source] config::ConfigError),
     #[error("OIDC_ISSUER_URL is required outside dev")]
     OidcRequiredOutsideDev,
+    #[error(
+        "ENVIRONMENT=dev with a configured OIDC_ISSUER_URL is incoherent: \
+         the dev-header backdoor (X-Recor-Dev-Principal) is active in dev \
+         mode and would allow bypassing OIDC verification entirely. \
+         Either unset ENVIRONMENT (or set it to staging/prod) so the dev \
+         backdoor is closed, or unset OIDC_ISSUER_URL to run a pure dev \
+         stack. See FIND-003 in docs/audit/10-findings.md."
+    )]
+    DevWithOidcIsIncoherent,
     #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
     OidcAudienceRequired,
     #[error("RELAY_HMAC_SECRET is required when RELAY_WEBHOOK_URL is set")]

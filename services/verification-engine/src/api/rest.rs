@@ -50,6 +50,17 @@ pub struct AppState {
     pub oidc: Option<Arc<OidcVerifier>>,
     /// OBS-1: shared Prometheus metrics handle. See `crate::metrics`.
     pub metrics: Arc<Metrics>,
+    /// FIND-002 (audit Sprint 0): the legitimate caller of
+    /// `POST /v1/verifications` is the declaration service via the
+    /// HMAC-authenticated `/v1/internal/declaration-events` path —
+    /// NOT the public REST submit endpoint. Gate the REST surface
+    /// on the admin allowlist so an authenticated declarant cannot
+    /// drive verification cases (which would spend Anthropic budget
+    /// on Stage 5 and pollute `verification_cases` with no
+    /// corresponding declaration). FIND-004 (cross-tenant case
+    /// reads) is interim-mitigated by also gating GET on this
+    /// allowlist until the per-case tenancy migration lands.
+    pub admin_principals: Arc<std::collections::HashSet<String>>,
 }
 
 pub fn router(state: AppState, cfg: &Config) -> Router {
@@ -228,9 +239,15 @@ impl SubmitVerificationResponse {
 #[tracing::instrument(skip_all)]
 async fn submit_verification(
     State(state): State<AppState>,
-    axum::Extension(_principal): axum::Extension<crate::api::auth::Principal>,
+    axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
     Json(req): Json<SubmitVerificationRequest>,
 ) -> Result<(StatusCode, Json<SubmitVerificationResponse>), ServiceError> {
+    // FIND-002: the legitimate verification-submission path is the
+    // HMAC-authenticated `/v1/internal/declaration-events` webhook
+    // (and, when R-LOOP-2's Kafka transport is active, the
+    // Kafka consumer). The REST surface here is operator-only;
+    // empty admin allowlist disables it entirely (D14 fail-closed).
+    refuse_if_not_admin(&state.admin_principals, &principal)?;
     let case = state.submit_usecase.execute(req.declaration).await?;
     let base_url = std::env::var("RECOR_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:8081".to_string());
@@ -259,9 +276,39 @@ async fn submit_verification(
 #[tracing::instrument(skip(state))]
 async fn get_verification(
     State(state): State<AppState>,
-    axum::Extension(_principal): axum::Extension<crate::api::auth::Principal>,
+    axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
     Path(case_id): Path<Uuid>,
 ) -> Result<Json<VerificationCase>, ServiceError> {
+    // FIND-004 (interim mitigation): the V-engine has no
+    // per-case tenancy column yet, so until the migration lands,
+    // gate GET on the admin allowlist too. Declarant-side polling
+    // happens against the declaration service's
+    // `/v1/declarations/{id}.verification_state`, not here.
+    refuse_if_not_admin(&state.admin_principals, &principal)?;
     let case = state.get_usecase.execute(VerificationCaseId(case_id)).await?;
     Ok(Json(case))
+}
+
+/// FIND-002 + FIND-004 (audit Sprint 0). The legitimate REST callers
+/// of V-engine `submit` + `get_verification` are operators on the
+/// admin allowlist. Non-admin authenticated principals get 403; an
+/// empty allowlist disables the endpoints entirely (D14 fail-closed).
+fn refuse_if_not_admin(
+    admin_principals: &std::collections::HashSet<String>,
+    principal: &crate::api::auth::Principal,
+) -> Result<(), ServiceError> {
+    if admin_principals.is_empty() {
+        tracing::warn!(
+            "V-engine REST endpoint hit but ADMIN_PRINCIPALS is empty — endpoint disabled"
+        );
+        return Err(ServiceError::AdminDisabled);
+    }
+    if !admin_principals.contains(&principal.subject) {
+        tracing::warn!(
+            principal = %principal.subject,
+            "non-admin principal attempted V-engine REST endpoint"
+        );
+        return Err(ServiceError::NotAdmin);
+    }
+    Ok(())
 }

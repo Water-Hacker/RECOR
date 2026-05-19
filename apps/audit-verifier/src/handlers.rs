@@ -12,6 +12,7 @@ use axum::{
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
+use crate::auth::{auth_middleware, AuthConfig};
 use crate::fabric_client::{FabricClient, FabricClientError};
 use crate::projection::ProjectionRepo;
 use crate::report::{build_report, VerificationReport};
@@ -22,12 +23,24 @@ pub struct AppState {
     pub projection: Arc<dyn ProjectionRepo>,
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
+/// Construct the public router. The verify endpoint is gated by the
+/// OIDC auth middleware (FIND-001). Probes are intentionally
+/// unauthenticated — they neither read nor return PII.
+pub fn router(state: AppState, auth: AuthConfig) -> Router {
+    let protected = Router::new()
+        .route("/v1/audit/verify/{declaration_id}", get(verify))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth,
+            auth_middleware,
+        ))
+        .with_state(state.clone());
+
+    let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/v1/audit/verify/{declaration_id}", get(verify))
-        .with_state(state)
+        .with_state(state);
+
+    protected.merge(public)
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -96,6 +109,7 @@ async fn verify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::AuthConfig;
     use crate::fabric_client::{InMemoryFabricClient, OnChainEntry};
     use crate::hashing::derive_receipt_hash;
     use crate::projection::{InMemoryProjectionRepo, ProjectionRow};
@@ -103,6 +117,23 @@ mod tests {
     use http::Request;
     use serde_json::json;
     use tower::ServiceExt;
+
+    /// Dev-mode auth — every test request must carry
+    /// `X-Recor-Dev-Principal` to pass the middleware.
+    fn test_auth() -> AuthConfig {
+        AuthConfig {
+            is_dev: true,
+            oidc: None,
+        }
+    }
+
+    fn req(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header("x-recor-dev-principal", "spiffe://recor.cm/test")
+            .body(Body::empty())
+            .unwrap()
+    }
 
     fn payload(decl: Uuid, ts: &str) -> serde_json::Value {
         json!({
@@ -148,17 +179,15 @@ mod tests {
             )
             .await;
 
-        let app = router(AppState {
-            fabric,
-            projection,
-        });
+        let app = router(
+            AppState {
+                fabric,
+                projection,
+            },
+            test_auth(),
+        );
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/v1/audit/verify/{decl}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(req(&format!("/v1/audit/verify/{decl}")))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -174,17 +203,15 @@ mod tests {
         fabric.set_fail(true).await;
         let projection = Arc::new(InMemoryProjectionRepo::new());
 
-        let app = router(AppState {
-            fabric,
-            projection,
-        });
+        let app = router(
+            AppState {
+                fabric,
+                projection,
+            },
+            test_auth(),
+        );
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/v1/audit/verify/{decl}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(req(&format!("/v1/audit/verify/{decl}")))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -192,17 +219,15 @@ mod tests {
 
     #[tokio::test]
     async fn returns_400_on_malformed_declaration_id() {
-        let app = router(AppState {
-            fabric: Arc::new(InMemoryFabricClient::new()),
-            projection: Arc::new(InMemoryProjectionRepo::new()),
-        });
+        let app = router(
+            AppState {
+                fabric: Arc::new(InMemoryFabricClient::new()),
+                projection: Arc::new(InMemoryProjectionRepo::new()),
+            },
+            test_auth(),
+        );
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/audit/verify/not-a-uuid")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(req("/v1/audit/verify/not-a-uuid"))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -229,10 +254,35 @@ mod tests {
             )
             .await;
 
-        let app = router(AppState {
-            fabric,
-            projection,
-        });
+        let app = router(
+            AppState {
+                fabric,
+                projection,
+            },
+            test_auth(),
+        );
+        let resp = app
+            .oneshot(req(&format!("/v1/audit/verify/{decl}")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["result"], "tampered");
+    }
+
+    /// FIND-001 (audit Sprint 0). The verify endpoint must refuse
+    /// any caller that does not carry a verified principal.
+    #[tokio::test]
+    async fn unauthenticated_call_is_refused_401() {
+        let decl = Uuid::new_v4();
+        let app = router(
+            AppState {
+                fabric: Arc::new(InMemoryFabricClient::new()),
+                projection: Arc::new(InMemoryProjectionRepo::new()),
+            },
+            test_auth(),
+        );
         let resp = app
             .oneshot(
                 Request::builder()
@@ -242,9 +292,30 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["result"], "tampered");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Probes are intentionally unauthenticated — they neither read
+    /// nor return PII.
+    #[tokio::test]
+    async fn probes_are_unauthenticated() {
+        let app = router(
+            AppState {
+                fabric: Arc::new(InMemoryFabricClient::new()),
+                projection: Arc::new(InMemoryProjectionRepo::new()),
+            },
+            test_auth(),
+        );
+        let healthz = app
+            .clone()
+            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(healthz.status(), StatusCode::OK);
+        let readyz = app
+            .oneshot(Request::builder().uri("/readyz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(readyz.status(), StatusCode::OK);
     }
 }

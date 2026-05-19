@@ -186,6 +186,7 @@ async fn main() -> Result<()> {
         is_dev: cfg.is_dev(),
         oidc,
         metrics: metrics.clone(),
+        admin_principals: Arc::new(cfg.admin_principals_list().into_iter().collect()),
     };
 
     let router = recor_verification_engine::api::router(app_state, &cfg);

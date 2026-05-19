@@ -23,11 +23,17 @@
 //!
 //! ## Auth
 //!
-//! Public read. The endpoint is OIDC-gated behind the platform's
-//! identity provider (recor-auth-oidc), but the verification result
-//! itself is not personally identifying (the on-chain entry contains
-//! only IDs + the hash). A future ticket may add anonymisation /
-//! rate-limit-by-IP for fully-public verification.
+//! FIND-001 (audit Sprint 0): the verification report embeds the
+//! declaration's projection payload (declarant name, beneficial-
+//! ownership graph) and is therefore PII-bearing. The verify endpoint
+//! is OIDC-gated behind the platform's identity provider
+//! (recor-auth-oidc). The pre-Sprint-0 deployment had the endpoint
+//! reachable unauthenticated under the (incorrect) framing that the
+//! response was non-identifying; that framing is wrong because the
+//! response includes the projection body. A follow-up ticket may add
+//! a separate anonymised "public-receipt re-derivation" surface that
+//! returns only `{declaration_id, on_chain_hash, derived_hash,
+//! match}` for fully-public verification without PII exposure.
 //!
 //! ## Doctrines
 //!
@@ -38,6 +44,7 @@
 //! - **D15 cryptographic provenance**: this app is the read-side of
 //!   the load-bearing doctrine.
 
+pub mod auth;
 pub mod config;
 pub mod fabric_client;
 pub mod handlers;

@@ -21,6 +21,14 @@ pub enum ServiceError {
     BadRequest(String),
     #[error("internal failure")]
     Internal,
+    /// FIND-002 / FIND-004 (audit Sprint 0): REST endpoints are
+    /// admin-only and the allowlist is empty.
+    #[error("admin endpoints disabled — ADMIN_PRINCIPALS not configured")]
+    AdminDisabled,
+    /// FIND-002 / FIND-004: the authenticated principal is not on
+    /// the admin allowlist.
+    #[error("this principal is not authorised for admin endpoints")]
+    NotAdmin,
 }
 
 impl From<SubmitError> for ServiceError {
@@ -62,6 +70,16 @@ impl IntoResponse for ServiceError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "internal failure".to_string(),
+            ),
+            ServiceError::AdminDisabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admin_disabled",
+                self.to_string(),
+            ),
+            ServiceError::NotAdmin => (
+                StatusCode::FORBIDDEN,
+                "not_admin",
+                self.to_string(),
             ),
         };
         let body = Json(json!({ "error": { "kind": kind, "message": message } }));

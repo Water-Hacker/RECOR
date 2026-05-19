@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use audit_verifier::{
+    auth::AuthConfig,
     config::VerifierConfig,
     fabric_client::HttpFabricClient,
     handlers::{router, AppState},
     projection::PostgresProjectionRepo,
 };
+use recor_auth_oidc::{OidcVerifier, OidcVerifierBuilder};
 use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
@@ -50,6 +52,28 @@ async fn main() -> anyhow::Result<()> {
     );
     let projection = Arc::new(PostgresProjectionRepo::new(pool));
 
+    // FIND-001 (audit Sprint 0): construct the OIDC verifier so the
+    // verify endpoint can authenticate every caller. Outside dev, an
+    // empty issuer is refused at config load — the Option is None only
+    // in dev, where the `X-Recor-Dev-Principal` header is accepted in
+    // its place (and the FIND-003 mutual exclusion ensures both paths
+    // cannot be active simultaneously).
+    let oidc: Option<Arc<OidcVerifier>> = if cfg.oidc_issuer_url.is_empty() {
+        None
+    } else {
+        let builder = OidcVerifierBuilder::new(&cfg.oidc_issuer_url, &cfg.oidc_audience)
+            .subject_claim(&cfg.oidc_subject_claim);
+        Some(
+            OidcVerifier::discover_with_builder(builder)
+                .await
+                .context("OIDC verifier discovery failed")?,
+        )
+    };
+    let auth = AuthConfig {
+        is_dev: cfg.is_dev(),
+        oidc,
+    };
+
     let listener = TcpListener::bind(&cfg.bind_addr)
         .await
         .with_context(|| format!("bind {}", cfg.bind_addr))?;
@@ -58,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         fabric,
         projection,
     };
-    axum::serve(listener, router(app_state))
+    axum::serve(listener, router(app_state, auth))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

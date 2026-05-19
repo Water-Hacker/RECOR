@@ -3,7 +3,7 @@
 # for which version of each toolchain is installed.
 
 [tools]
-rust = "1.84.0"
+rust = "1.88.0"
 go = "1.26.2"
 node = "22.11.0"
 pnpm = "9.12.3"

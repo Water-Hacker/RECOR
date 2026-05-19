@@ -46,9 +46,16 @@ test:
     go test ./...
     pnpm vitest run
 
-# Build the full monorepo via Bazel
+# Build the full monorepo. FIND-019 (audit Sprint 0): the prior
+# `bazel build //...` target was unimplementable — the repo has no
+# BUILD files, no MODULE.bazel, and no BAZEL_BUILDFILE_PATH plumbing.
+# Cargo + pnpm + Go modules are the actual build surfaces; `just test`
+# already drives all three. If Bazel returns it lands behind its own
+# ADR, not as a stub.
 build:
-    bazel build //...
+    cargo build --workspace --release
+    pnpm -r build
+    go build ./...
 
 # Generate code from contracts (proto, openapi, graphql, avro)
 gen:
