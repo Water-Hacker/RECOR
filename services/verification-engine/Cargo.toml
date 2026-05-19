@@ -11,6 +11,12 @@ publish.workspace = true
 name = "recor-verification-engine"
 path = "src/main.rs"
 
+# DOC-1 / FIND-013: prints the OpenAPI 3.1 spec to stdout. Pure (no
+# DB, no network). Consumed by tools/ci/check-openapi-drift.sh.
+[[bin]]
+name = "dump-openapi-verification-engine"
+path = "src/bin/dump-openapi.rs"
+
 [lib]
 name = "recor_verification_engine"
 path = "src/lib.rs"
@@ -35,6 +41,12 @@ axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 http.workspace = true
+
+# DOC-1 / FIND-013: OpenAPI 3.1 spec generation. Mirrors the
+# declaration service's wiring. `axum_extras` lets `#[utoipa::path]`
+# accept axum's `Path<…>` / `State<…>` extractors directly.
+utoipa.workspace = true
+utoipa-scalar.workspace = true
 
 sqlx.workspace = true
 

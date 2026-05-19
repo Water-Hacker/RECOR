@@ -11,7 +11,10 @@ pub mod auth;
 pub mod dlq;
 pub mod internal;
 pub mod oidc;
+pub mod openapi;
 pub mod rest;
+
+pub use openapi::{build_openapi, openapi_routes, ApiDoc};
 
 pub use dlq::{list_dlq, replay_dlq, DlqAdminState};
 pub use internal::{handle_declaration_event, InternalAppState};

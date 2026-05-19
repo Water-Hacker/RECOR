@@ -161,15 +161,15 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** medium (~2-3 days)
 - **Cost class:** code-only
 
-### FIND-013 — V-engine has no committed OpenAPI snapshot (TODO marker only)
+### FIND-013 — V-engine has no committed OpenAPI snapshot (TODO marker only) — **CLOSED (Sprint 2)**
 
 - **Severity:** HIGH
-- **Location:** `services/verification-engine/src/api/rest.rs` (TODO comment)
+- **Status:** CLOSED by audit Sprint 2.
+- **Location:** `services/verification-engine/src/api/rest.rs` (was TODO comment)
 - **Source:** Pass A § A.10
-- **Impact:** Declaration service has DOC-1 OpenAPI + drift check. V-engine does not. Consumer integration (R-PORT-7-VER) is blocked.
-- **Remediation:** Mirror DOC-1's utoipa setup on V-engine; commit `docs/openapi/verification-engine.json`; wire a drift check.
-- **Effort:** medium (~3-5 days)
-- **Cost class:** code-only
+- **Impact:** Declaration service had DOC-1 OpenAPI + drift check; V-engine did not. Consumer integration (R-PORT-7-VER) was blocked.
+- **Remediation shipped:** Wired utoipa across V-engine handlers (`#[utoipa::path]` on `submit_verification`, `get_verification`, `healthz`, `readyz`, `list_dlq`, `replay_dlq`, `handle_declaration_event`); added `ToSchema` derives on the wire DTOs (`SubmitVerificationRequest`, `SubmitVerificationResponse`, `HealthzResponse`, `ReadyzResponse`, `ErrorEnvelope`, `ErrorBody`, `ListDlqResponse`, `DlqItem`, `ReplayDlqResponse`, `InboundResponse`); created `services/verification-engine/src/api/openapi.rs` with the assembled document; committed `docs/openapi/verification-engine.json`; mounted `GET /openapi.json` + `GET /docs` on the V-engine router; extended `tools/ci/check-openapi-drift.sh` to assert the V-engine snapshot alongside declaration's. The Prometheus `/metrics` endpoint is intentionally NOT in the consumer-facing spec (OBS-1; served on a separate listener per FIND-007). Deep nested domain types (`DeclarationSnapshot`, `VerificationCase`) are pinned via `serde_json::Value` shims — the authoritative schema for those bodies lives in `services/declaration`'s OpenAPI document.
+- **Tests:** `api::openapi::tests::{openapi_is_3_1, every_public_path_present, submit_endpoint_declares_request_and_known_responses, get_endpoint_documents_404_for_cross_tenant_denial, security_schemes_are_registered, internal_endpoints_carry_internal_tag, metrics_endpoint_is_intentionally_absent}`.
 
 ### FIND-014 — V-engine has no `tests/*.rs` integration files (only unit tests)
 
