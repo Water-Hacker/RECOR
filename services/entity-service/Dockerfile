@@ -67,7 +67,19 @@ RUN cargo build --release --bin recor-entity-service --quiet \
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update \
+# SECURITY_REFRESH (audit follow-up to PR #111): docker layer cache is
+# keyed on the command string, so a successful prior build pins this
+# layer to whatever debian-security packages existed at build time.
+# Trivy then flags HIGH/CRITICAL CVEs (libc, libcap, systemd, …) that
+# Debian has already published fixes for. The publish-images workflow
+# passes the current date as `SECURITY_REFRESH=YYYY-MM-DD`, busting
+# the cache once per day so the apt-get upgrade below re-runs and
+# pulls newly-published fixes. First build of each day re-runs apt;
+# same-day rebuilds stay cached.
+ARG SECURITY_REFRESH=local-build
+RUN echo "SECURITY_REFRESH=${SECURITY_REFRESH}" \
+    && apt-get update \
+    && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends ca-certificates curl tini \
     && rm -rf /var/lib/apt/lists/*
 
