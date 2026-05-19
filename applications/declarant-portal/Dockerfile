@@ -25,7 +25,18 @@ FROM nginx:1.29-alpine AS runtime
 # dependencies (e.g. nghttp2-libs HIGH CVE-2026-27135) that already
 # have fixes available in the Alpine repo but haven't propagated
 # into the nginx:1.29-alpine base image yet.
-RUN apk add --no-cache gettext \
+#
+# SECURITY_REFRESH (audit Sprint 0 follow-up): the docker layer cache
+# is keyed on the command string, so a successful prior build pins
+# this layer to whatever Alpine packages existed at that build time —
+# new HIGH/CRITICAL fixes published to Alpine repos afterwards are
+# silently ignored. The publish-images workflow passes the current
+# date as `SECURITY_REFRESH=YYYY-MM-DD`, busting the cache once per
+# day. First build of each day re-runs `apk upgrade` and picks up
+# whatever Alpine shipped overnight; same-day rebuilds stay cached.
+ARG SECURITY_REFRESH=local-build
+RUN echo "SECURITY_REFRESH=${SECURITY_REFRESH}" \
+    && apk add --no-cache gettext \
     && apk upgrade --no-cache
 
 COPY --from=builder /build/dist /usr/share/nginx/html

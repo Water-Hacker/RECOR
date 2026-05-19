@@ -118,6 +118,15 @@ jobs:
         id: start
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: compute security-refresh stamp
+        id: refresh
+        # The portal Dockerfile carries an ARG SECURITY_REFRESH that
+        # busts the `apk upgrade` layer cache once per day so newly
+        # published Alpine fixes get pulled in. Service images that
+        # don't declare this ARG ignore it (Docker accepts undeclared
+        # build-args silently).
+        run: echo "date=$(date +%F)" >> "$GITHUB_OUTPUT"
+
       - name: build + push image
         id: build
         uses: docker/build-push-action@v6
@@ -127,6 +136,8 @@ jobs:
           push: true
           provenance: true
           sbom: false
+          build-args: |
+            SECURITY_REFRESH=${{ steps.refresh.outputs.date }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}:${{ github.sha }}

@@ -234,20 +234,15 @@ mod tests {
         })
     }
 
-    fn make_processor(behaviour: &str) -> (EventProcessor, Arc<InMemoryDlqRepo>) {
+    async fn make_processor(behaviour: &str) -> (EventProcessor, Arc<InMemoryDlqRepo>) {
         let transport = Arc::new(InMemoryTransport::new());
-        // Synchronously apply behaviour pre-construction using a tokio
-        // current-thread runtime spawn.
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        rt.block_on(async {
-            match behaviour {
-                "ok" => transport.set_always_ok().await,
-                "already" => transport.set_already_committed().await,
-                "retryable" => transport.set_always_retryable().await,
-                "non_retryable" => transport.set_non_retryable().await,
-                _ => unreachable!(),
-            }
-        });
+        match behaviour {
+            "ok" => transport.set_always_ok().await,
+            "already" => transport.set_already_committed().await,
+            "retryable" => transport.set_always_retryable().await,
+            "non_retryable" => transport.set_non_retryable().await,
+            _ => unreachable!(),
+        }
         let cfg = BridgeConfig {
             backoff_base: Duration::from_millis(1),
             max_attempts: 2,
@@ -261,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_non_anchorable_event() {
-        let (p, dlq) = make_processor("ok");
+        let (p, dlq) = make_processor("ok").await;
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
             event_type: "declaration.verified.v1".to_string(),
@@ -276,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn anchors_submitted_event() {
-        let (p, dlq) = make_processor("ok");
+        let (p, dlq) = make_processor("ok").await;
         let decl_id = Uuid::new_v4();
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
@@ -292,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn idempotent_replay_succeeds_without_dlq() {
-        let (p, dlq) = make_processor("already");
+        let (p, dlq) = make_processor("already").await;
         let decl_id = Uuid::new_v4();
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
@@ -308,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn permanent_failure_writes_to_dlq() {
-        let (p, dlq) = make_processor("retryable");
+        let (p, dlq) = make_processor("retryable").await;
         let decl_id = Uuid::new_v4();
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
@@ -327,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_retryable_writes_to_dlq_with_correct_cause() {
-        let (p, dlq) = make_processor("non_retryable");
+        let (p, dlq) = make_processor("non_retryable").await;
         let decl_id = Uuid::new_v4();
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
@@ -349,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_payload_dead_letters_without_bridge_call() {
-        let (p, dlq) = make_processor("ok");
+        let (p, dlq) = make_processor("ok").await;
         let env = EventEnvelope {
             event_id: Uuid::new_v4(),
             event_type: "declaration.submitted.v1".into(),
