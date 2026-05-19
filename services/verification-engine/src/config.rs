@@ -182,6 +182,12 @@ impl Config {
         if cfg.environment != "dev" && cfg.oidc_issuer_url.is_empty() {
             return Err(ConfigError::OidcRequiredOutsideDev);
         }
+        // FIND-003 (audit Sprint 0): refuse dev+oidc co-existence. See
+        // services/declaration/src/config.rs for the rationale and the
+        // audit finding.
+        if cfg.environment == "dev" && !cfg.oidc_issuer_url.is_empty() {
+            return Err(ConfigError::DevWithOidcIsIncoherent);
+        }
         if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
             return Err(ConfigError::OidcAudienceRequired);
         }
@@ -228,6 +234,12 @@ pub enum ConfigError {
     Deserialise(#[source] config::ConfigError),
     #[error("OIDC_ISSUER_URL is required outside dev")]
     OidcRequiredOutsideDev,
+    #[error(
+        "ENVIRONMENT=dev with a configured OIDC_ISSUER_URL is incoherent: \
+         the dev-header backdoor would bypass OIDC verification entirely. \
+         See FIND-003 in docs/audit/10-findings.md."
+    )]
+    DevWithOidcIsIncoherent,
     #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
     OidcAudienceRequired,
     #[error("AUTH_TRANSPORT must be one of: hmac, mtls, mtls-only (got `{0}`)")]

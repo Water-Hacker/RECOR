@@ -21,6 +21,13 @@ pub struct WorkerConfig {
     /// start without it (D18: no secrets in code, but the *requirement*
     /// is enforced here).
     pub hmac_secret: SecretString,
+    /// FIND-015 (audit Sprint 0) / ADR-005: previous-generation HMAC
+    /// secret accepted alongside `hmac_secret` during a rotation
+    /// window. Empty string ⇒ no rotation in progress (the default).
+    /// Pattern matches `services/verification-engine`'s
+    /// `inbound_hmac_secret_old` slot so operators have one rotation
+    /// playbook across the platform.
+    pub hmac_secret_old: SecretString,
     /// Bridge tuning.
     pub max_attempts: u32,
     pub request_timeout: Duration,
@@ -73,6 +80,14 @@ impl WorkerConfig {
             hmac_secret: SecretString::new(
                 std::env::var("RECOR_FABRIC_BRIDGE_HMAC")
                     .map_err(|_| ConfigError::Missing("RECOR_FABRIC_BRIDGE_HMAC"))?
+                    .into(),
+            ),
+            // FIND-015 / ADR-005 dual-secret rotation slot. Empty is
+            // the steady-state value; operators set this to the
+            // outgoing secret for the duration of a rotation.
+            hmac_secret_old: SecretString::new(
+                std::env::var("RECOR_FABRIC_BRIDGE_HMAC_OLD")
+                    .unwrap_or_default()
                     .into(),
             ),
             max_attempts: parse_u32("FABRIC_BRIDGE_MAX_ATTEMPTS", 5)?,

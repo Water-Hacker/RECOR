@@ -89,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
         processor,
         metrics,
         hmac_secret: cfg.hmac_secret,
+        hmac_secret_old: cfg.hmac_secret_old,
     };
 
     let listener = TcpListener::bind(&cfg.bind_addr)

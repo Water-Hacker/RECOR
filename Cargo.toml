@@ -35,7 +35,8 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+# Aligned to rust-toolchain.toml + mise.toml (FIND-011).
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
 

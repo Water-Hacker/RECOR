@@ -25,6 +25,10 @@ pub struct AppState {
     pub processor: Arc<EventProcessor>,
     pub metrics: Arc<WorkerMetrics>,
     pub hmac_secret: secrecy::SecretString,
+    /// FIND-015 / ADR-005: previous-generation HMAC secret accepted
+    /// alongside `hmac_secret` during a rotation window. Empty ⇒ no
+    /// rotation in progress; only `hmac_secret` is checked.
+    pub hmac_secret_old: secrecy::SecretString,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -74,7 +78,14 @@ async fn receive(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
 
-    if !verify_hmac(state.hmac_secret.expose_secret(), &body, signature) {
+    let primary = state.hmac_secret.expose_secret();
+    let old = state.hmac_secret_old.expose_secret();
+    // FIND-015 / ADR-005: accept either the active secret OR the
+    // outgoing secret during a rotation window. The `!old.is_empty()`
+    // guard ensures the empty default never matches in steady state.
+    let accepted = verify_hmac(primary, &body, signature)
+        || (!old.is_empty() && verify_hmac(old, &body, signature));
+    if !accepted {
         warn!("rejected relay request: HMAC mismatch");
         return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
     }
@@ -154,5 +165,34 @@ mod tests {
     #[test]
     fn hmac_rejects_malformed_hex() {
         assert!(!verify_hmac("secret", b"hello", "zzzz"));
+    }
+
+    /// FIND-015 / ADR-005: during a rotation window, requests signed
+    /// with the previous-generation secret must still verify.
+    #[test]
+    fn dual_secret_rotation_accepts_old_secret() {
+        let new = "new-secret";
+        let old = "old-secret";
+        // Signed with the OUTGOING secret — should still verify when
+        // operator sets both slots during the rotation window.
+        let sig = hmac_hex(old, b"payload");
+        let primary_ok = verify_hmac(new, b"payload", &sig);
+        let old_ok = verify_hmac(old, b"payload", &sig);
+        assert!(!primary_ok);
+        assert!(old_ok);
+    }
+
+    /// Empty `hmac_secret_old` is the steady-state default — it must
+    /// never match (otherwise an empty secret would accept any
+    /// payload signed with the empty key).
+    #[test]
+    fn dual_secret_empty_old_does_not_match() {
+        let sig = hmac_hex("", b"payload");
+        // The signature exists but the receiver guards `!old.is_empty()`
+        // before checking the old secret. Verify that guard behaviour
+        // here by simulating it directly.
+        let old = "";
+        let accepted = !old.is_empty() && verify_hmac(old, b"payload", &sig);
+        assert!(!accepted);
     }
 }
