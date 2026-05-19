@@ -50,10 +50,18 @@ pub trait PersonRepository: Send + Sync {
     /// pg_trgm) — see `search_persons::SearchPersonsUseCase` docs and
     /// the TODO marker in the Postgres adapter for the fuzzy upgrade.
     /// Caller supplies the page size via `limit`.
+    ///
+    /// FIND-005 RBAC scope: when `created_by_filter` is `Some(principal)`
+    /// the repository restricts the result set to rows that principal
+    /// registered (an extra `AND created_by_principal = $N` predicate).
+    /// `None` is the admin path — every row is in scope. The HTTP
+    /// handler decides which path applies based on the admin allowlist;
+    /// the repository does not consult the allowlist itself.
     async fn search(
         &self,
         query: &str,
         nationality_filter: Option<&str>,
+        created_by_filter: Option<&str>,
         limit: i64,
     ) -> Result<Vec<crate::application::PersonProjection>, RepositoryError>;
 }

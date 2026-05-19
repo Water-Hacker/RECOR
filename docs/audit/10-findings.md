@@ -69,27 +69,29 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** medium (3-5 days — needs a migration to denormalise the declarant_principal onto `verification_cases` for the gate)
 - **Cost class:** code + migration
 
-### FIND-005 — Person-service GET/search grants Sensitive-PII to ANY authenticated principal
+### FIND-005 — Person-service GET/search grants Sensitive-PII to ANY authenticated principal — **CLOSED (Sprint 1)**
 
 - **Severity:** CRITICAL
+- **Status:** CLOSED by audit Sprint 1 (per-row RBAC).
 - **Location:** `services/person-service/src/api/rest.rs` — `get_person` and `search_persons` handlers
 - **Source:** Pass A § A.11 (person-service surfaces)
-- **Evidence:** both handlers use `let _ = principal` to discard the authenticated identity and return full person projections including `primary_id_document`, `nationality`, `date_of_birth`, `biometric_reference_hash`
-- **Impact:** Per `docs/compliance/data-classification.md`, `primary_id_document` and `biometric_reference_hash` are **Sensitive-PII**. The service serves them to any authenticated bearer. Direct violation of D17 (zero trust) + D18 (no secrets / PII protection). Regulatory violation under GDPR Art. 32 + OHADA AML/CFT.
-- **Remediation:** Gate on `principal == person.created_by OR principal IN admin_allowlist OR principal == person.id_owner_principal` (latter requires a new column linking person to its owning principal). Search must filter or refuse entirely until a permissions model lands.
-- **Effort:** medium (3-5 days)
-- **Cost class:** code + potentially a new column + migration
+- **Evidence:** both handlers used `let _ = principal` to discard the authenticated identity and return full person projections including `primary_id_document`, `nationality`, `date_of_birth`, `biometric_reference_hash`
+- **Impact:** Per `docs/compliance/data-classification.md`, `primary_id_document` and `biometric_reference_hash` are **Sensitive-PII**. The service served them to any authenticated bearer. Direct violation of D17 (zero trust) + D18 (no secrets / PII protection). Regulatory violation under GDPR Art. 32 + OHADA AML/CFT.
+- **Remediation shipped:** Migration `0002_person_rbac.sql` adds a `created_by_principal` column (backfilled from `person_events.event_payload->>actor_principal`). `get_person` enforces `principal == created_by_principal OR principal IN admin_allowlist`; denial returns `404 not_found` so non-owners cannot enumerate person_ids. `search_persons` propagates the caller as `created_by_filter` to the repository for non-admin callers, who see only rows they themselves registered. Admin callers see every row matching the textual filters.
+- **Tests:** `domain::aggregate::tests::created_by_principal_is_immutable_across_update_and_merge`; `domain::aggregate::tests::replay_preserves_created_by_principal`; `application::search_persons::tests::created_by_filter_propagates_to_repository`; `api::rest::rbac_tests::{is_admin_*, refuse_unless_admin_*}`.
+- **Follow-up:** per-field redaction (R-PERSON-RBAC follow-up) layers on top once a documented field-level permissions model exists.
 
-### FIND-006 — Person-service POST lets any caller inject Sensitive-PII rows
+### FIND-006 — Person-service POST lets any caller inject Sensitive-PII rows — **CLOSED (Sprint 1, interim)**
 
 - **Severity:** CRITICAL
+- **Status:** CLOSED by audit Sprint 1 (admin-allowlist interim mitigation). Full closure requires NDI integration (R-DECL-4 follow-up) and is tracked as a separate ticket.
 - **Location:** `services/person-service/src/api/rest.rs` — `register_person` handler
 - **Source:** Pass A § A.11 (person-service surfaces)
-- **Evidence:** the handler accepts the principal but does not check authorisation; any registered declarant can create person rows with Sensitive-PII contents
-- **Impact:** Identity injection — an attacker can mint person rows naming victims, then reference those `person_id`s in declarations. Pollutes the registry. Creates phishing-by-impersonation pathways.
-- **Remediation:** Gate on admin-allowlist initially; relax to "any authenticated principal" only once the verification engine can validate the person against an authoritative external register (BUNEC for entities, NDI for persons — R-DECL-4 NDI integration is `TODO`)
-- **Effort:** cheap (~1 day for admin-gate) + expensive (NDI integration, partner agreement required)
-- **Cost class:** code + requires-external-action for full closure
+- **Evidence:** the handler accepted the principal but did not check authorisation; any registered declarant could create person rows with Sensitive-PII contents
+- **Impact:** Identity injection — an attacker could mint person rows naming victims, then reference those `person_id`s in declarations. Pollutes the registry. Creates phishing-by-impersonation pathways.
+- **Remediation shipped (interim):** `register_person` is now gated on the same admin allowlist as `merge_persons`. Empty `ADMIN_PRINCIPALS` ⇒ 503 (D14 fail-closed). Non-admin authenticated principal ⇒ 403. Closure path is operator-only person registration until NDI lands.
+- **Tests:** `api::rest::rbac_tests::{refuse_unless_admin_503_on_empty_allowlist, refuse_unless_admin_403_on_non_admin, refuse_unless_admin_ok_for_listed_principal}`.
+- **Follow-up:** NDI integration relaxes the gate to "any authenticated declarant whose claimed person passes the authoritative external check". Separate ticket; requires partner agreement.
 
 ---
 

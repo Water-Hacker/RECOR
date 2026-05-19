@@ -175,8 +175,10 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
         (status = 200, description = "Idempotent replay", body = RegisterPersonResponse),
         (status = 400, description = "Malformed request body / invariant violation", body = ErrorEnvelope),
         (status = 401, description = "Missing/invalid bearer token", body = ErrorEnvelope),
+        (status = 403, description = "Caller is not in the admin allowlist (FIND-006)", body = ErrorEnvelope),
         (status = 409, description = "Idempotency conflict OR person already registered", body = ErrorEnvelope),
         (status = 500, description = "Internal failure", body = ErrorEnvelope),
+        (status = 503, description = "Endpoint disabled — ADMIN_PRINCIPALS empty (FIND-006)", body = ErrorEnvelope),
     ),
     security(
         ("bearerAuth" = []),
@@ -197,6 +199,14 @@ pub(crate) async fn register_person(
     headers: HeaderMap,
     Json(req): Json<RegisterPersonRequest>,
 ) -> Result<(StatusCode, Json<RegisterPersonResponse>), ServiceError> {
+    // FIND-006 (audit Sprint 1 interim mitigation): person rows carry
+    // Sensitive-PII (primary_id_document, biometric_reference_hash).
+    // Until NDI integration lands (R-DECL-4 follow-up), the legitimate
+    // creator of a Person row is an operator on the admin allowlist
+    // (declarant-driven creation re-enables once an external authority
+    // can validate the identity). Empty allowlist disables the endpoint
+    // entirely (D14 fail-closed); non-admin principals get 403.
+    refuse_unless_admin(&state.admin_principals, &principal)?;
     let correlation_id = Uuid::now_v7();
 
     // Stable canonical bytes for the idempotency hash. The actor_principal
@@ -298,12 +308,24 @@ pub(crate) async fn get_person(
     axum::Extension(principal): axum::Extension<Principal>,
     Path(person_id): Path<Uuid>,
 ) -> Result<Json<GetPersonResponse>, ServiceError> {
-    // Reserved for future ABAC; v1 grants any authenticated principal
-    // read access (the Person service holds Sensitive-PII so this MUST
-    // be tightened before the Sensitive-PII columns are surfaced to
-    // non-operator principals. The follow-up ticket is R-PERSON-RBAC).
-    let _ = principal;
+    // FIND-005: per-row RBAC. Load the projection, then enforce
+    // `principal == created_by_principal OR principal IN admin_allowlist`.
+    // On denial, return 404 (not 403) so non-owners cannot enumerate
+    // person_ids by inferring existence from the response code.
     let projection = state.get_usecase.execute(PersonId(person_id)).await?;
+    if !is_admin(&state.admin_principals, &principal)
+        && projection.created_by_principal != principal.subject
+    {
+        // Log loud enough for forensics but do not leak existence to
+        // the caller — the response shape mirrors a true not-found.
+        tracing::warn!(
+            actor = %principal.subject,
+            owner = %projection.created_by_principal,
+            person_id = %person_id,
+            "GET person projection refused — non-owner, non-admin"
+        );
+        return Err(ServiceError::NotFound(person_id.to_string()));
+    }
     Ok(Json(projection.into()))
 }
 
@@ -339,14 +361,27 @@ pub(crate) async fn search_persons(
     axum::Extension(principal): axum::Extension<Principal>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchPersonsResponse>, ServiceError> {
-    let _ = principal;
+    // FIND-005 RBAC scope: admin callers see every row matching the
+    // textual filters; non-admin callers see only rows they
+    // themselves registered. The filter is computed once here and
+    // propagated through the use case to the repository's WHERE
+    // clause — never materialising the full result set then trimming
+    // it in Rust (D14 fail-closed; no PII transit even briefly).
     let nationality_label = if query.nationality.is_some() { "yes" } else { "no" };
     state
         .metrics
         .persons_search_total
         .with_label_values(&[nationality_label])
         .inc();
-    let rows = state.search_usecase.execute(query).await?;
+    let created_by_filter = if is_admin(&state.admin_principals, &principal) {
+        None
+    } else {
+        Some(principal.subject.as_str())
+    };
+    let rows = state
+        .search_usecase
+        .execute(query, created_by_filter)
+        .await?;
     Ok(Json(SearchPersonsResponse::from_projections(rows)))
 }
 
@@ -417,6 +452,46 @@ pub(crate) async fn merge_persons(
     Ok(Json(receipt.into()))
 }
 
+/// FIND-005 / FIND-006: shared admin-gate helper used by
+/// `register_person`. Mirrors the inline check in `merge_persons` so
+/// the two surfaces stay byte-identical when the admin posture is
+/// updated. Empty allowlist ⇒ 503 (`AdminDisabled`); authenticated
+/// non-admin ⇒ 403 (`AuthorizationDenied`).
+fn refuse_unless_admin(
+    admin_principals: &std::collections::HashSet<String>,
+    principal: &Principal,
+) -> Result<(), ServiceError> {
+    if admin_principals.is_empty() {
+        tracing::warn!(
+            "person-service admin endpoint hit but ADMIN_PRINCIPALS is empty — \
+             endpoint disabled (D14 fail-closed)"
+        );
+        return Err(ServiceError::AdminDisabled);
+    }
+    if !admin_principals.contains(&principal.subject) {
+        tracing::warn!(
+            principal = %principal.subject,
+            "non-admin principal attempted person-service admin endpoint"
+        );
+        return Err(ServiceError::AuthorizationDenied(
+            "principal is not in the admin allowlist",
+        ));
+    }
+    Ok(())
+}
+
+/// FIND-005: cheap admin-membership probe used by `get_person` and
+/// `search_persons` to decide whether to apply the per-row RBAC
+/// predicate. Empty allowlist always returns `false`, mirroring the
+/// fail-closed semantics of `refuse_unless_admin`.
+fn is_admin(
+    admin_principals: &std::collections::HashSet<String>,
+    principal: &Principal,
+) -> bool {
+    !admin_principals.is_empty()
+        && admin_principals.contains(&principal.subject)
+}
+
 fn idempotency_key_field(headers: &HeaderMap) -> String {
     headers
         .get("idempotency-key")
@@ -446,4 +521,75 @@ fn canonical_request_hash(
     let mut h = Hasher::new();
     h.update(&bytes);
     Ok(hex::encode(h.finalize().as_bytes()))
+}
+
+#[cfg(test)]
+mod rbac_tests {
+    //! Unit tests for the FIND-005 / FIND-006 RBAC helpers
+    //! (`refuse_unless_admin` and `is_admin`). Handler-level
+    //! integration is exercised via the application-layer
+    //! `SearchPersonsUseCase` test in
+    //! `crate::application::search_persons::tests::created_by_filter_propagates_to_repository`.
+
+    use std::collections::HashSet;
+
+    use crate::api::auth::{Principal, PrincipalSource};
+
+    use super::*;
+
+    fn principal(subject: &str) -> Principal {
+        Principal {
+            subject: subject.to_string(),
+            source: PrincipalSource::DevHeader,
+        }
+    }
+
+    fn allowlist(subjects: &[&str]) -> HashSet<String> {
+        subjects.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn refuse_unless_admin_503_on_empty_allowlist() {
+        let res = refuse_unless_admin(&HashSet::new(), &principal("anyone"));
+        assert!(matches!(res, Err(ServiceError::AdminDisabled)));
+    }
+
+    #[test]
+    fn refuse_unless_admin_403_on_non_admin() {
+        let res = refuse_unless_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/declarant-7"),
+        );
+        assert!(matches!(res, Err(ServiceError::AuthorizationDenied(_))));
+    }
+
+    #[test]
+    fn refuse_unless_admin_ok_for_listed_principal() {
+        let res = refuse_unless_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/ops-1"),
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn is_admin_false_on_empty_allowlist() {
+        assert!(!is_admin(&HashSet::new(), &principal("anyone")));
+    }
+
+    #[test]
+    fn is_admin_false_on_non_admin() {
+        assert!(!is_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/declarant-7"),
+        ));
+    }
+
+    #[test]
+    fn is_admin_true_for_listed_principal() {
+        assert!(is_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/ops-1"),
+        ));
+    }
 }

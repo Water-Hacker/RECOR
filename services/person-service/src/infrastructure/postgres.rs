@@ -123,7 +123,8 @@ impl PersonRepository for PostgresPersonRepository {
         let row_opt = sqlx::query(
             "SELECT person_id, canonical_full_name, nationality, date_of_birth, \
                     primary_id_document, biometric_reference_hash, \
-                    aggregate_version, created_at, updated_at, merged_into \
+                    aggregate_version, created_at, updated_at, merged_into, \
+                    created_by_principal \
              FROM persons \
              WHERE person_id = $1",
         )
@@ -145,6 +146,7 @@ impl PersonRepository for PostgresPersonRepository {
         let created_at: OffsetDateTime = row.try_get("created_at")?;
         let updated_at: OffsetDateTime = row.try_get("updated_at")?;
         let merged_into: Option<Uuid> = row.try_get("merged_into")?;
+        let created_by_principal: String = row.try_get("created_by_principal")?;
         // TODO(NDI-1): Cameroonian national ID integration; requires
         // gov agreement. Once the NDI API ships, this is the row-shape
         // we cross-reference against the issuer's authoritative
@@ -166,14 +168,20 @@ impl PersonRepository for PostgresPersonRepository {
             created_at,
             updated_at,
             merged_into: merged_into.map(PersonId),
+            created_by_principal,
         }))
     }
 
-    #[instrument(skip(self, query), fields(query_len = query.len(), nationality = ?nationality_filter))]
+    #[instrument(skip(self, query), fields(
+        query_len = query.len(),
+        nationality = ?nationality_filter,
+        created_by_scope = if created_by_filter.is_some() { "self" } else { "admin" },
+    ))]
     async fn search(
         &self,
         query: &str,
         nationality_filter: Option<&str>,
+        created_by_filter: Option<&str>,
         limit: i64,
     ) -> Result<Vec<PersonProjection>, RepositoryError> {
         // v1: ILIKE on canonical_full_name + optional exact-match nationality.
@@ -183,12 +191,39 @@ impl PersonRepository for PostgresPersonRepository {
         // the WHERE clause becomes `canonical_full_name % $1 OR
         // canonical_full_name ILIKE $2` with the similarity score
         // returned for ORDER BY.
+        //
+        // FIND-005 RBAC scope: `created_by_filter` adds an extra
+        // `AND created_by_principal = $N` predicate when the caller
+        // is non-admin. Admin callers pass `None` and see every row
+        // matching the textual filters. The combinations are
+        // (nationality, created_by) ∈ {(Some, Some), (Some, None),
+        // (None, Some), (None, None)} — four parameter-shape variants
+        // so sqlx binds the right number of $N placeholders.
         let like_pattern = format!("%{}%", query);
-        let rows = match nationality_filter {
-            Some(nat) => sqlx::query(
+        let rows = match (nationality_filter, created_by_filter) {
+            (Some(nat), Some(actor)) => sqlx::query(
                 "SELECT person_id, canonical_full_name, nationality, date_of_birth, \
                         primary_id_document, biometric_reference_hash, \
-                        aggregate_version, created_at, updated_at, merged_into \
+                        aggregate_version, created_at, updated_at, merged_into, \
+                        created_by_principal \
+                 FROM persons \
+                 WHERE canonical_full_name ILIKE $1 AND nationality = $2 \
+                   AND created_by_principal = $3 \
+                   AND merged_into IS NULL \
+                 ORDER BY canonical_full_name ASC \
+                 LIMIT $4",
+            )
+            .bind(&like_pattern)
+            .bind(nat)
+            .bind(actor)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?,
+            (Some(nat), None) => sqlx::query(
+                "SELECT person_id, canonical_full_name, nationality, date_of_birth, \
+                        primary_id_document, biometric_reference_hash, \
+                        aggregate_version, created_at, updated_at, merged_into, \
+                        created_by_principal \
                  FROM persons \
                  WHERE canonical_full_name ILIKE $1 AND nationality = $2 \
                    AND merged_into IS NULL \
@@ -200,10 +235,28 @@ impl PersonRepository for PostgresPersonRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?,
-            None => sqlx::query(
+            (None, Some(actor)) => sqlx::query(
                 "SELECT person_id, canonical_full_name, nationality, date_of_birth, \
                         primary_id_document, biometric_reference_hash, \
-                        aggregate_version, created_at, updated_at, merged_into \
+                        aggregate_version, created_at, updated_at, merged_into, \
+                        created_by_principal \
+                 FROM persons \
+                 WHERE canonical_full_name ILIKE $1 \
+                   AND created_by_principal = $2 \
+                   AND merged_into IS NULL \
+                 ORDER BY canonical_full_name ASC \
+                 LIMIT $3",
+            )
+            .bind(&like_pattern)
+            .bind(actor)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?,
+            (None, None) => sqlx::query(
+                "SELECT person_id, canonical_full_name, nationality, date_of_birth, \
+                        primary_id_document, biometric_reference_hash, \
+                        aggregate_version, created_at, updated_at, merged_into, \
+                        created_by_principal \
                  FROM persons \
                  WHERE canonical_full_name ILIKE $1 \
                    AND merged_into IS NULL \
@@ -229,6 +282,7 @@ impl PersonRepository for PostgresPersonRepository {
             let updated_at: OffsetDateTime = row.try_get("updated_at")?;
             let merged_into: Option<Uuid> = row.try_get("merged_into")?;
             let person_id: Uuid = row.try_get("person_id")?;
+            let created_by_principal: String = row.try_get("created_by_principal")?;
             let attributes = decode_attributes(
                 canonical_full_name,
                 nationality,
@@ -243,6 +297,7 @@ impl PersonRepository for PostgresPersonRepository {
                 created_at,
                 updated_at,
                 merged_into: merged_into.map(PersonId),
+                created_by_principal,
             });
         }
         Ok(out)
@@ -346,12 +401,17 @@ async fn upsert_projection(
     match event {
         PersonEvent::Registered(p) => {
             let primary_id_doc = serde_json::to_value(&p.attributes.primary_id_document)?;
+            // FIND-005/006: persist the creating principal on INSERT.
+            // The column is immutable on subsequent UPDATE paths — the
+            // Updated/Merged branches below do NOT touch
+            // created_by_principal, mirroring the aggregate's invariant
+            // that creation attribution survives every state transition.
             sqlx::query(
                 "INSERT INTO persons ( \
                      person_id, canonical_full_name, nationality, date_of_birth, \
                      primary_id_document, biometric_reference_hash, \
-                     aggregate_version \
-                 ) VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                     created_by_principal, aggregate_version \
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                  ON CONFLICT (person_id) DO UPDATE SET \
                      canonical_full_name      = EXCLUDED.canonical_full_name, \
                      nationality              = EXCLUDED.nationality, \
@@ -367,6 +427,7 @@ async fn upsert_projection(
             .bind(p.attributes.date_of_birth)
             .bind(primary_id_doc)
             .bind(p.attributes.biometric_reference_hash.as_deref())
+            .bind(p.actor_principal.as_str())
             .bind(new_version)
             .execute(&mut **tx)
             .await?;

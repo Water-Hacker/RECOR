@@ -119,9 +119,13 @@ operational traffic.
     macros + committed `.sqlx/` cache.
   - **R-PERSON-FUZZY** — pg_trgm trigram similarity on
     `canonical_full_name`.
-  - **R-PERSON-RBAC** — per-field ABAC so non-operator principals get
-    a redacted projection on `GET /v1/persons/{id}` (Sensitive-PII
-    columns currently flow uniformly to any authenticated reader).
+  - **R-PERSON-RBAC** — per-field ABAC for refining what *which* row a
+    caller can read. The per-ROW gate already lands as part of the
+    audit Sprint 1 follow-up (FIND-005 + FIND-006, migration 0002 +
+    `created_by_principal` column + handler enforcement): admin sees
+    every row; non-admin sees only rows they themselves registered.
+    The ABAC follow-up tightens this further with per-field
+    redaction once a documented permissions model exists.
   - **R-PERSON-ATTEST** — per-event Ed25519 attestation by the actor.
   - **R-ENC-FIELD-LEVEL** — field-level encryption-at-rest on the
     Sensitive-PII columns (`primary_id_document`,
