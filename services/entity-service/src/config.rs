@@ -13,6 +13,13 @@ pub struct Config {
     /// reserved for the (planned) Person service, 8083 is Entity.
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
+    /// FIND-007 (audit Sprint 2): bind address for an OPTIONAL separate
+    /// `/metrics` listener. When set, `/metrics` is removed from the
+    /// main listener; a NetworkPolicy restricts ingress on this port to
+    /// the Prometheus scraper. Empty (default) keeps `/metrics` on the
+    /// main listener — single-port dev posture.
+    #[serde(default)]
+    pub metrics_bind_addr: String,
 
     /// Postgres connection string.
     pub database_url: SecretString,

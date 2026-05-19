@@ -1,0 +1,53 @@
+# FIND-007 closure — allow ingress on the SEPARATE metrics ports
+# (9080-9083) ONLY from the Prometheus scraper. Combined with
+# `METRICS_BIND_ADDR` set on each service:
+#   - declaration            METRICS_BIND_ADDR=0.0.0.0:9080
+#   - verification-engine    METRICS_BIND_ADDR=0.0.0.0:9081
+#   - person-service         METRICS_BIND_ADDR=0.0.0.0:9082
+#   - entity-service         METRICS_BIND_ADDR=0.0.0.0:9083
+#
+# `/metrics` is bound on the metrics port and removed from the
+# business listener. This policy then makes the metrics port
+# reachable only from the Prometheus scraper pod — even an attacker
+# with intra-cluster lateral movement to a non-scraper pod cannot
+# scrape the metrics surface.
+#
+# D14 fail-closed: an empty `from:` would allow everything — we keep
+# the selector explicit so a future copy-paste regression doesn't
+# silently widen the policy.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-metrics-scrape
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    audit.recor.cm/finding: FIND-007
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: recor
+      recor.cm/role: service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Adjust the namespace label to match where Prometheus actually
+        # runs in your cluster (commonly `observability` or `monitoring`).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/component: metrics-scraper
+      ports:
+        - protocol: TCP
+          port: 9080
+        - protocol: TCP
+          port: 9081
+        - protocol: TCP
+          port: 9082
+        - protocol: TCP
+          port: 9083

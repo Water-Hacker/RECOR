@@ -53,7 +53,14 @@ pub struct AppState {
     pub admin_principals: Arc<HashSet<String>>,
 }
 
-pub fn router(state: AppState, cfg: &Config) -> Router {
+/// Build the main router for the person service.
+///
+/// `expose_metrics_on_main`:
+///   - `true` (current default): `/metrics` is mounted on the main
+///     listener alongside the business routes. Backwards-compatible.
+///   - `false` (FIND-007): `/metrics` is omitted; `main.rs` is expected
+///     to bind a separate listener via `metrics_only_router`.
+pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Router {
     let auth_state = AuthConfig {
         is_dev: state.is_dev,
         oidc: state.oidc.clone(),
@@ -81,10 +88,6 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
 
     let openapi = crate::api::openapi::openapi_routes();
 
-    let metrics_router: Router = Router::new()
-        .route("/metrics", get(metrics_handler))
-        .with_state(state.metrics.clone());
-
     let app_routes = protected.merge(public).merge(openapi);
 
     let metrics_state = state.metrics.clone();
@@ -93,7 +96,17 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
         metrics_middleware,
     ));
 
-    app_routes.merge(metrics_router).layer(
+    // FIND-007: /metrics is conditionally mounted. See router doc-comment.
+    let with_metrics: Router = if expose_metrics_on_main {
+        let metrics_router: Router = Router::new()
+            .route("/metrics", get(metrics_handler))
+            .with_state(state.metrics.clone());
+        app_routes.merge(metrics_router)
+    } else {
+        app_routes
+    };
+
+    with_metrics.layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -105,6 +118,14 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
             .layer(TraceLayer::new_for_http())
             .layer(TimeoutLayer::new(Duration::from_secs(cfg.http_timeout_seconds))),
     )
+}
+
+/// FIND-007: minimal router that serves ONLY `/metrics`. Bound on a
+/// separate listener by `main.rs` when `METRICS_BIND_ADDR` is set.
+pub fn metrics_only_router(metrics: Arc<Metrics>) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(metrics)
 }
 
 #[utoipa::path(

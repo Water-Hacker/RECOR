@@ -13,6 +13,14 @@ pub struct Config {
     /// Bind address for the HTTP server, e.g. "0.0.0.0:8082".
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
+    /// FIND-007 (audit Sprint 2): bind address for an OPTIONAL separate
+    /// `/metrics` listener. When set, `/metrics` is removed from the
+    /// main listener; a NetworkPolicy in `infrastructure/networks/`
+    /// restricts ingress on this port to the Prometheus scraper. Empty
+    /// (default) keeps `/metrics` on the main listener — single-port
+    /// dev posture.
+    #[serde(default)]
+    pub metrics_bind_addr: String,
 
     /// Postgres connection string.
     pub database_url: SecretString,

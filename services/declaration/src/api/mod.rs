@@ -15,4 +15,4 @@ pub use grpc::{DeclarationGrpcService, GrpcAuthConfig};
 pub use internal::{handle_verification_outcome, InternalAppState};
 pub use oidc::{OidcVerifier, OidcVerifierBuilder, VerificationError};
 pub use openapi::{build_openapi, openapi_routes, ApiDoc};
-pub use rest::{router, AppState};
+pub use rest::{metrics_only_router, router, AppState};

@@ -71,7 +71,14 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
 }
 
-pub fn router(state: AppState, cfg: &Config) -> Router {
+/// Build the main router for the declaration service.
+///
+/// `expose_metrics_on_main`:
+///   - `true` (current default): `/metrics` is mounted on the main
+///     listener alongside the business routes. Backwards-compatible.
+///   - `false` (FIND-007): `/metrics` is omitted; `main.rs` is expected
+///     to bind a separate listener via `metrics_only_router`.
+pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Router {
     let auth_state = AuthConfig {
         is_dev: state.is_dev,
         oidc: state.oidc.clone(),
@@ -206,18 +213,6 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     // these routes do not change state; they describe the surface.
     let openapi = crate::api::openapi::openapi_routes();
 
-    // OBS-1: GET /metrics — Prometheus exposition. Intentionally NOT
-    // documented in the OpenAPI spec (see `api::openapi`). No auth — the
-    // deployment expectation is in-cluster network only (D17 — see the
-    // runbook for the network policy). Mounted as its own sub-router so
-    // the metrics handler reads `State<Arc<Metrics>>` rather than the
-    // full AppState; this also keeps `/metrics` exempt from the
-    // request-timing middleware (we don't want scrape traffic to inflate
-    // the latency histogram).
-    let metrics_router: Router = Router::new()
-        .route("/metrics", get(metrics_handler))
-        .with_state(state.metrics.clone());
-
     let app_routes = protected
         .merge(admin)
         .merge(internal)
@@ -243,7 +238,21 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
     // empty disables CORS entirely (production default).
     let cors_layer = cors_layer_from_csv(&cfg.cors_allowed_origins);
 
-    app_routes.merge(metrics_router).layer(
+    // FIND-007: /metrics is conditionally mounted. See router doc-comment.
+    // Mounted as its own sub-router so the metrics handler reads
+    // `State<Arc<Metrics>>` rather than the full AppState; the
+    // request-timing middleware does NOT apply so scrape traffic
+    // doesn't inflate the latency histogram.
+    let with_metrics: Router = if expose_metrics_on_main {
+        let metrics_router: Router = Router::new()
+            .route("/metrics", get(metrics_handler))
+            .with_state(state.metrics.clone());
+        app_routes.merge(metrics_router)
+    } else {
+        app_routes
+    };
+
+    with_metrics.layer(
         ServiceBuilder::new()
             .layer(SetRequestIdLayer::new(
                 http::HeaderName::from_static("x-request-id"),
@@ -256,6 +265,14 @@ pub fn router(state: AppState, cfg: &Config) -> Router {
             .layer(cors_layer)
             .layer(TimeoutLayer::new(Duration::from_secs(cfg.http_timeout_seconds))),
     )
+}
+
+/// FIND-007: minimal router serving ONLY `/metrics`. Bound on a
+/// separate listener by `main.rs` when `METRICS_BIND_ADDR` is set.
+pub fn metrics_only_router(metrics: Arc<Metrics>) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics_handler))
+        .with_state(metrics)
 }
 
 fn cors_layer_from_csv(allowed: &str) -> CorsLayer {

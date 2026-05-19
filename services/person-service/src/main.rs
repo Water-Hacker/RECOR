@@ -106,7 +106,12 @@ async fn main() -> Result<()> {
         admin_principals: Arc::new(admin_principals),
     };
 
-    let router = recor_person_service::api::router(app_state, &cfg);
+    // FIND-007: separate `/metrics` listener when METRICS_BIND_ADDR set.
+    let expose_metrics_on_main = cfg.metrics_bind_addr.is_empty();
+    let metrics_for_separate_listener = metrics.clone();
+    let metrics_bind_addr = cfg.metrics_bind_addr.clone();
+    let router =
+        recor_person_service::api::router(app_state, &cfg, expose_metrics_on_main);
 
     let addr: SocketAddr = cfg.bind_addr.parse().context("parsing bind address")?;
     let listener = TcpListener::bind(addr)
@@ -114,11 +119,37 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding to {addr}"))?;
     info!(%addr, "listening");
 
+    let metrics_handle = if !metrics_bind_addr.is_empty() {
+        let m_addr: SocketAddr = metrics_bind_addr
+            .parse()
+            .context("parsing metrics_bind_addr")?;
+        let m_listener = TcpListener::bind(m_addr)
+            .await
+            .with_context(|| format!("binding metrics listener {m_addr}"))?;
+        let m_router =
+            recor_person_service::api::metrics_only_router(metrics_for_separate_listener);
+        info!(addr = %m_addr, "metrics listener bound (FIND-007 separate-port posture)");
+        Some(tokio::spawn(async move {
+            if let Err(e) = axum::serve(m_listener, m_router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+            {
+                tracing::error!(error = ?e, "metrics listener error");
+            }
+        }))
+    } else {
+        info!("metrics listener disabled (METRICS_BIND_ADDR not set) — /metrics is on the main listener");
+        None
+    };
+
     let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
 
     if let Err(e) = serve.await {
         error!(error = ?e, "server error");
         return Err(anyhow::anyhow!(e));
+    }
+    if let Some(h) = metrics_handle {
+        let _ = h.await;
     }
     info!("recor-person-service stopped");
     Ok(())
