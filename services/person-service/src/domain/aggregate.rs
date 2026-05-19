@@ -33,6 +33,13 @@ pub struct PersonAggregate {
     /// If this person has been merged into another, the target id.
     /// `None` for a live aggregate.
     pub merged_into: Option<PersonId>,
+    /// FIND-005/006: the authenticated principal that registered this
+    /// person. Drives the per-row RBAC predicate at the API layer.
+    /// `None` until the first Registered event has been applied;
+    /// immutable thereafter (subsequent Updated/Merged events carry
+    /// their own `actor_principal` but do NOT shift creation
+    /// attribution).
+    pub created_by_principal: Option<String>,
 }
 
 impl PersonAggregate {
@@ -43,6 +50,7 @@ impl PersonAggregate {
             version: 0,
             attributes: None,
             merged_into: None,
+            created_by_principal: None,
         }
     }
 
@@ -61,6 +69,12 @@ impl PersonAggregate {
             PersonEvent::Registered(p) => {
                 self.attributes = Some(p.attributes.clone());
                 self.merged_into = None;
+                // FIND-005/006: capture creator once at Registered; the
+                // attribution is immutable across subsequent Updated /
+                // Merged events.
+                if self.created_by_principal.is_none() {
+                    self.created_by_principal = Some(p.actor_principal.clone());
+                }
             }
             PersonEvent::Updated(p) => {
                 self.attributes = Some(p.after.clone());
@@ -418,5 +432,74 @@ mod tests {
             err,
             crate::domain::value_object::ValueObjectError::InvalidNationality { .. }
         ));
+    }
+
+    /// FIND-005/006 invariant: the registering principal is captured
+    /// on the first `Registered` event and stays put for every later
+    /// state transition. An attacker should not be able to "launder"
+    /// creator attribution by issuing an Updated or Merged event
+    /// with a different `actor_principal`.
+    #[test]
+    fn created_by_principal_is_immutable_across_update_and_merge() {
+        let id = PersonId::new();
+        let target = PersonId::new();
+        let original_actor = "spiffe://recor.cm/registrar-1";
+        let later_actor = "spiffe://recor.cm/registrar-2";
+
+        let mut agg = PersonAggregate::fresh(id);
+
+        let mut reg_cmd = register_command(id, "Mvondo");
+        reg_cmd.actor_principal = original_actor.to_string();
+        let reg = agg.handle_register(reg_cmd).unwrap();
+        agg.apply(&reg);
+        assert_eq!(
+            agg.created_by_principal.as_deref(),
+            Some(original_actor),
+            "registered actor seeds created_by_principal"
+        );
+
+        let mut upd_cmd = update_command(id, "Mvondo Renamed");
+        upd_cmd.actor_principal = later_actor.to_string();
+        let upd = agg.handle_update(upd_cmd).unwrap();
+        agg.apply(&upd);
+        assert_eq!(
+            agg.created_by_principal.as_deref(),
+            Some(original_actor),
+            "Update event MUST NOT shift the creator"
+        );
+
+        // Build a separate target so the merge command resolves to a
+        // valid live aggregate id; the merge target's own state is
+        // out of scope for this invariant.
+        let mut from_agg = agg;
+        let mut merge_cmd = merge_command(id, target);
+        merge_cmd.actor_principal = later_actor.to_string();
+        let merge = from_agg.handle_merge(merge_cmd, false).unwrap();
+        from_agg.apply(&merge);
+        assert_eq!(
+            from_agg.created_by_principal.as_deref(),
+            Some(original_actor),
+            "Merge event MUST NOT shift the creator"
+        );
+    }
+
+    /// FIND-005 replay invariant: a fresh aggregate hydrated from the
+    /// event stream surfaces the same `created_by_principal` value as
+    /// the live aggregate did at the time the events were appended.
+    #[test]
+    fn replay_preserves_created_by_principal() {
+        let id = PersonId::new();
+        let original_actor = "spiffe://recor.cm/registrar-1";
+
+        let mut agg = PersonAggregate::fresh(id);
+        let mut reg_cmd = register_command(id, "Mvondo");
+        reg_cmd.actor_principal = original_actor.to_string();
+        let reg = agg.handle_register(reg_cmd).unwrap();
+        agg.apply(&reg);
+        let upd = agg.handle_update(update_command(id, "Mvondo II")).unwrap();
+        agg.apply(&upd);
+
+        let replayed = PersonAggregate::from_events(id, &[reg, upd]);
+        assert_eq!(replayed.created_by_principal.as_deref(), Some(original_actor));
     }
 }

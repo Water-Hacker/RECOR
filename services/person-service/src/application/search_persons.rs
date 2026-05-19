@@ -61,13 +61,22 @@ impl SearchPersonsUseCase {
         Self { repository }
     }
 
+    /// FIND-005 RBAC: when `created_by_filter` is `Some(principal)` the
+    /// use case restricts the search to rows that principal registered.
+    /// Admin callers pass `None`. The handler decides which based on
+    /// the admin allowlist; this use case is agnostic to the policy.
     #[tracing::instrument(
         skip(self),
-        fields(query_len = query.q.len(), nationality = ?query.nationality)
+        fields(
+            query_len = query.q.len(),
+            nationality = ?query.nationality,
+            scoped_to_caller = created_by_filter.is_some(),
+        )
     )]
     pub async fn execute(
         &self,
         query: SearchQuery,
+        created_by_filter: Option<&str>,
     ) -> Result<Vec<PersonProjection>, SearchError> {
         let trimmed = query.q.trim();
         if trimmed.is_empty() {
@@ -87,7 +96,7 @@ impl SearchPersonsUseCase {
 
         let rows = self
             .repository
-            .search(trimmed, nationality_filter, limit)
+            .search(trimmed, nationality_filter, created_by_filter, limit)
             .await?;
         Ok(rows)
     }
@@ -107,7 +116,9 @@ mod tests {
 
     #[derive(Default)]
     struct StubRepo {
-        last_query: std::sync::Mutex<Option<(String, Option<String>, i64)>>,
+        last_query: std::sync::Mutex<
+            Option<(String, Option<String>, Option<String>, i64)>,
+        >,
     }
 
     #[async_trait]
@@ -142,10 +153,15 @@ mod tests {
             &self,
             query: &str,
             nationality_filter: Option<&str>,
+            created_by_filter: Option<&str>,
             limit: i64,
         ) -> Result<Vec<PersonProjection>, RepositoryError> {
-            *self.last_query.lock().unwrap() =
-                Some((query.into(), nationality_filter.map(str::to_string), limit));
+            *self.last_query.lock().unwrap() = Some((
+                query.into(),
+                nationality_filter.map(str::to_string),
+                created_by_filter.map(str::to_string),
+                limit,
+            ));
             Ok(Vec::new())
         }
     }
@@ -155,11 +171,14 @@ mod tests {
         let repo: Arc<dyn PersonRepository> = Arc::new(StubRepo::default());
         let usecase = SearchPersonsUseCase::new(repo);
         let err = usecase
-            .execute(SearchQuery {
-                q: "   ".into(),
-                nationality: None,
-                limit: 10,
-            })
+            .execute(
+                SearchQuery {
+                    q: "   ".into(),
+                    nationality: None,
+                    limit: 10,
+                },
+                None,
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, SearchError::EmptyQuery));
@@ -170,17 +189,20 @@ mod tests {
         let stub = Arc::new(StubRepo::default());
         let usecase = SearchPersonsUseCase::new(stub.clone());
         let _ = usecase
-            .execute(SearchQuery {
-                q: "Ngono".into(),
-                nationality: Some("CM".into()),
-                limit: 9_999,
-            })
+            .execute(
+                SearchQuery {
+                    q: "Ngono".into(),
+                    nationality: Some("CM".into()),
+                    limit: 9_999,
+                },
+                None,
+            )
             .await
             .unwrap();
         let captured = stub.last_query.lock().unwrap().clone().unwrap();
         assert_eq!(captured.0, "Ngono");
         assert_eq!(captured.1.as_deref(), Some("CM"));
-        assert_eq!(captured.2, 50, "limit must clamp to 50");
+        assert_eq!(captured.3, 50, "limit must clamp to 50");
     }
 
     #[tokio::test]
@@ -188,14 +210,42 @@ mod tests {
         let stub = Arc::new(StubRepo::default());
         let usecase = SearchPersonsUseCase::new(stub.clone());
         let _ = usecase
-            .execute(SearchQuery {
-                q: "Ngono".into(),
-                nationality: Some("   ".into()),
-                limit: 5,
-            })
+            .execute(
+                SearchQuery {
+                    q: "Ngono".into(),
+                    nationality: Some("   ".into()),
+                    limit: 5,
+                },
+                None,
+            )
             .await
             .unwrap();
         let captured = stub.last_query.lock().unwrap().clone().unwrap();
         assert!(captured.1.is_none());
+    }
+
+    /// FIND-005 RBAC scope. When the caller is non-admin the handler
+    /// passes the caller's subject as `created_by_filter`; the use
+    /// case must propagate it verbatim to the repository.
+    #[tokio::test]
+    async fn created_by_filter_propagates_to_repository() {
+        let stub = Arc::new(StubRepo::default());
+        let usecase = SearchPersonsUseCase::new(stub.clone());
+        let _ = usecase
+            .execute(
+                SearchQuery {
+                    q: "Ngono".into(),
+                    nationality: None,
+                    limit: 10,
+                },
+                Some("spiffe://recor.cm/declarant-42"),
+            )
+            .await
+            .unwrap();
+        let captured = stub.last_query.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            captured.2.as_deref(),
+            Some("spiffe://recor.cm/declarant-42")
+        );
     }
 }

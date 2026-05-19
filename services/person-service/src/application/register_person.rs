@@ -159,6 +159,7 @@ pub(crate) mod tests {
             &self,
             _query: &str,
             _nationality_filter: Option<&str>,
+            _created_by_filter: Option<&str>,
             _limit: i64,
         ) -> Result<Vec<PersonProjection>, RepositoryError> {
             Ok(Vec::new())

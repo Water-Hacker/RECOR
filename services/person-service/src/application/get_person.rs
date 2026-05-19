@@ -37,6 +37,14 @@ pub struct PersonProjection {
     /// target's projection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merged_into: Option<PersonId>,
+    /// FIND-005/006 RBAC predicate input — the authenticated principal
+    /// that registered this row. The API layer compares this against the
+    /// caller's `principal.subject` (plus the admin allowlist) before
+    /// returning the projection. Internal field; not surfaced to the
+    /// wire — the REST DTO `PersonRecord` deliberately omits it (no
+    /// information leak on cross-principal queries).
+    #[serde(skip)]
+    pub created_by_principal: String,
 }
 
 #[derive(Debug, Error)]
