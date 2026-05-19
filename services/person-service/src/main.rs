@@ -92,6 +92,11 @@ async fn main() -> Result<()> {
         info!(count = admin_principals.len(), "admin allowlist loaded");
     }
 
+    // FIND-007: clone the metrics Arc BEFORE moving it into AppState so
+    // we can hand a copy to the separate metrics listener below.
+    let metrics_for_separate_listener = metrics.clone();
+    let metrics_bind_addr = cfg.metrics_bind_addr.clone();
+
     let app_state = AppState {
         register_usecase: register,
         get_usecase: get,
@@ -107,9 +112,7 @@ async fn main() -> Result<()> {
     };
 
     // FIND-007: separate `/metrics` listener when METRICS_BIND_ADDR set.
-    let expose_metrics_on_main = cfg.metrics_bind_addr.is_empty();
-    let metrics_for_separate_listener = metrics.clone();
-    let metrics_bind_addr = cfg.metrics_bind_addr.clone();
+    let expose_metrics_on_main = metrics_bind_addr.is_empty();
     let router =
         recor_person_service::api::router(app_state, &cfg, expose_metrics_on_main);
 

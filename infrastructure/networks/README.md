@@ -81,7 +81,7 @@ when `infrastructure/argocd/` gains a `networks` application).
 ## Audit cross-ref
 
 - **FIND-007** (HIGH): closed by the combination of `METRICS_BIND_ADDR`
-  + `30-allow-metrics-scrape.yaml`.
+  and `30-allow-metrics-scrape.yaml`.
 - **FIND-008** (HIGH): partially closed — this directory is no
   longer empty. Full closure of FIND-008 requires the Helm charts,
   Terraform, and OPA policy stack to land alongside (multi-week
