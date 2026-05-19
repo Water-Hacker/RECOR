@@ -179,19 +179,37 @@ note "seeded declaration_id=$DECL_ID"
 
 # ─── Phase 3: capture pre-loss GET body ──────────────────────────────────
 banner "3/10: capturing pre-loss declaration body"
-# Poll once briefly to make sure the projection is queryable.
-for i in {1..15}; do
+# The declaration projection is mutated asynchronously by the V-engine
+# writeback (the internal `/v1/internal/declaration-events` webhook
+# bumps aggregate_version + writes the verification_state /
+# verification_lane / verified_at fields). If we snapshot at
+# verification_state="pending" the post-restore GET will land on the
+# terminal state and the byte-equality assertion will spuriously fail
+# even though the backup is honest. Wait for a terminal verification
+# state — `accepted` or `rejected` — before snapshotting so the
+# captured body is what an operator at the moment-of-disaster would
+# actually see.
+TERMINAL_STATES_RE='^(accepted|rejected)$'
+PRE_TIMEOUT=120
+PRE_STATE=""
+for ((i = 0; i < PRE_TIMEOUT; i++)); do
     if curl -fsS "${DECL_BASE}/v1/declarations/${DECL_ID}" \
         -H "X-Recor-Dev-Principal: $PRINCIPAL" > "$SNAPSHOT_DIR/declaration.pre.json" 2>/dev/null; then
-        break
+        PRE_STATE="$(jq -r '.verification_state // ""' "$SNAPSHOT_DIR/declaration.pre.json")"
+        if [[ "$PRE_STATE" =~ $TERMINAL_STATES_RE ]]; then
+            break
+        fi
     fi
     sleep 1
 done
 [ -s "$SNAPSHOT_DIR/declaration.pre.json" ] || fail "could not GET seeded declaration before loss"
+if [[ ! "$PRE_STATE" =~ $TERMINAL_STATES_RE ]]; then
+    fail "verification_state never reached a terminal value within ${PRE_TIMEOUT}s (last seen: '$PRE_STATE')"
+fi
 # Canonicalise for byte-equality comparison; the platform doesn't
 # guarantee key order across reads from a recovered DB.
 jq -S . "$SNAPSHOT_DIR/declaration.pre.json" > "$SNAPSHOT_DIR/declaration.pre.canon.json"
-note "pre-loss body captured ($(wc -c < "$SNAPSHOT_DIR/declaration.pre.canon.json") bytes)"
+note "pre-loss body captured at verification_state=$PRE_STATE ($(wc -c < "$SNAPSHOT_DIR/declaration.pre.canon.json") bytes)"
 
 # ─── Phase 4: snapshot both DBs via pg_dump ──────────────────────────────
 banner "4/10: snapshotting both Postgres databases via pg_dump"
