@@ -525,7 +525,8 @@ Vite-plugin-pwa generates `sw.js`. `registerType: 'autoUpdate'` silently updates
 
 ## J. Findings recap (severity-ranked)
 
-**HIGH**
+### HIGH
+
 1. V-engine REST `submit_verification` and `get_verification` have no authorisation — any authenticated principal can read or trigger any case.
 2. V-engine REST `/v1/verifications` has no rate limit; Anthropic-spend DoS via unbounded calls.
 3. person-service `GET /v1/persons/{id}`, `GET /v1/persons/search` — any authenticated principal reads Sensitive-PII. Deferred to R-PERSON-RBAC.
@@ -533,18 +534,20 @@ Vite-plugin-pwa generates `sw.js`. `registerType: 'autoUpdate'` silently updates
 5. audit-verifier `GET /v1/audit/verify/{declaration_id}` — **unauthenticated**; returns full declaration payload by UUID.
 6. `/metrics` endpoints unauthenticated + no NetworkPolicy committed (`infrastructure/networks/` empty). Applies to all 4 services + 1 worker.
 
-**MEDIUM**
-7. R-LOOP-3 mTLS peer-SPIFFE-ID check lives in the outer tower layer; if mis-wired in any composition root the handlers silently accept. No unit test asserts the layer is present.
-8. entity-service has an `outbox` table but no relay drain.
-9. worker-fabric-bridge HMAC has no rotation slot (single secret only).
-10. worker-fabric-bridge `/v1/relay` has no rate limit.
-11. entity-service update/dissolve handlers not deeply audited in this pass — gating to verify downstream.
-12. V-engine has no committed OpenAPI snapshot (`TODO(R-VER-OPENAPI)`).
-13. Portal proxy-mediated OIDC is implicit — no committed proxy config or token-refresh story.
+### MEDIUM
 
-**LOW**
-14. `GET /v1/declarations/{id}` returns 403 for non-owner (vs 404) — minor existence side-channel.
-15. gRPC surface lacks COMP-1 by-principal RPC; gRPC consumers cannot exercise the data-subject access right.
-16. Portal `vite-plugin-pwa` `autoUpdate` SW without SRI / cosign on static assets.
+1. R-LOOP-3 mTLS peer-SPIFFE-ID check lives in the outer tower layer; if mis-wired in any composition root the handlers silently accept. No unit test asserts the layer is present.
+2. entity-service has an `outbox` table but no relay drain.
+3. worker-fabric-bridge HMAC has no rotation slot (single secret only).
+4. worker-fabric-bridge `/v1/relay` has no rate limit.
+5. entity-service update/dissolve handlers not deeply audited in this pass — gating to verify downstream.
+6. V-engine has no committed OpenAPI snapshot (`TODO(R-VER-OPENAPI)`).
+7. Portal proxy-mediated OIDC is implicit — no committed proxy config or token-refresh story.
+
+### LOW
+
+1. `GET /v1/declarations/{id}` returns 403 for non-owner (vs 404) — minor existence side-channel.
+2. gRPC surface lacks COMP-1 by-principal RPC; gRPC consumers cannot exercise the data-subject access right.
+3. Portal `vite-plugin-pwa` `autoUpdate` SW without SRI / cosign on static assets.
 
 End of Section 02 (Surfaces).

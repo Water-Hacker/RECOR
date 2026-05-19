@@ -315,7 +315,7 @@ undocumented production vars; flag unused documented vars; flag
 secret-named vars logged anywhere.
 
 **Substitute.** Static analysis of `.env.example` in each service
-+ grep across `src/` for `std::env::var` and `dotenvy::var`:
+plus grep across `src/` for `std::env::var` and `dotenvy::var`:
 
 - All env reads route through `Config::from_env` (typed `config`
   crate) — no scattered `env::var` calls outside that

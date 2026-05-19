@@ -727,20 +727,23 @@ None observed in this pass (domain stays pure; infrastructure does not reach int
 
 These will be aggregated into `10-findings.md` downstream:
 
-**HIGH**
+### HIGH
+
 - `infrastructure/{ansible,kubernetes,networks,terraform}/` and `policies/` are empty shells; D17/D19/D20 are partially honoured.
 - 5 of 7 verification-engine pipeline stages are stubs in production wiring; the "real" implementations are present but unreachable.
 - `services/verification-engine/tests/*.rs` integration tests missing.
 - `tests/chaos`, `tests/performance`, `tests/e2e` all empty.
 
-**MEDIUM**
+### MEDIUM
+
 - Person-service + entity-service have no Vault bridge, no SPIFFE wiring, no internal HMAC surface, no outbox drain (entity has the table; nothing reads it).
 - Stale per-service `Cargo.lock` files; "real" stage and BUNEC files present alongside stubs (potential dead code).
 - `services/verification-engine/src/api/rest.rs:3` `TODO(R-VER-OPENAPI)` — V-engine has no OpenAPI snapshot.
 - `apps/worker-fabric-bridge` does not implement Kafka transport — if the upstream is on Kafka, the bridge is unreachable.
 - `audit-verifier` reads `declaration_projection` from V-engine DB; cross-DB coupling undocumented.
 
-**LOW**
+### LOW
+
 - justfile references several empty / non-existent paths (`tools/cli/recor-cli`, `tools/codegen/*`, `libraries/ts/recor-api-client/`, `contracts/rest/declaration.openapi.yaml`).
 - Top-level `alerts/`, `dashboards/`, `scripts/`, `libraries/*/` are misleading empty shells.
 - `pnpm vitest run` at repo root has no `pnpm-workspace.yaml`.

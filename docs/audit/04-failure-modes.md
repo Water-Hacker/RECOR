@@ -40,9 +40,9 @@ are sized via `DB_POOL_MAX_CONNECTIONS`
 | **Total outage** (DB down) | `/readyz` 503; `RecorHttp5xxRateHigh` alert | k8s LB drains the pod | no partial writes — every state-changing operation runs in a single tx (`services/declaration/src/infrastructure/postgres.rs:87-148`) | page (k8s probe); operator → `docs/runbooks/restore-database-from-backup.md` | tested in `services/*/tests/` (db-down integration); ✓ | HIGH |
 | **Pool exhausted** | sqlx pool-timeout errors → 500; latency p99 climbs | per-request axum timeout (`HTTP_TIMEOUT_SECONDS=10`) caps the wait; tracker threat-model row "pool exhaustion under load" (`docs/security/threat-model.md:160`) | requests time out and 500; pool refills | warn — `RecorHttp5xxRateHigh` if sustained | partial — load test exists for declaration but not chained | MEDIUM |
 | **Replica lag** (read-replica behind) | gap between expected and observed projection state | currently NO read-replica is used — all reads go to primary | no inconsistency | n/a | n/a — feature not in v1 | LOW (not yet applicable) |
-| **Disk full** | sqlx insert returns `disk full`; rises as 500 | k8s readiness probe should flip when writes fail | last successful tx persisted; subsequent rolled back | page via 5xx alert | runbook gap — `docs/runbooks/restore-database-from-backup.md` does not cover disk-pressure recovery | FINDING-FM-1 | MEDIUM |
+| **Disk full** | sqlx insert returns `disk full`; rises as 500 | k8s readiness probe should flip when writes fail | last successful tx persisted; subsequent rolled back | page via 5xx alert | runbook gap (FINDING-FM-1) — `docs/runbooks/restore-database-from-backup.md` does not cover disk-pressure recovery | MEDIUM |
 | **Connection failure mid-tx** | sqlx error; tx aborted | transaction rolled back; idempotency on retry | safe | log warn | covered by sqlx semantics | LOW |
-| **Migration partial-apply** | startup migration crash partway | sqlx-migrate uses single-tx where DDL allows; otherwise the migration is a checkpoint and operator must complete | DB possibly in transitional schema | startup logs; pod restarts; alerts fire on 5xx | runbook gap — no migration-rollback runbook (see FINDING-FM-2) | FINDING-FM-2 | HIGH |
+| **Migration partial-apply** | startup migration crash partway | sqlx-migrate uses single-tx where DDL allows; otherwise the migration is a checkpoint and operator must complete | DB possibly in transitional schema | startup logs; pod restarts; alerts fire on 5xx | runbook gap (FINDING-FM-2) — no migration-rollback runbook | HIGH |
 
 ### 6.1.2 Kafka (R-LOOP-2; not yet default transport)
 
@@ -135,7 +135,7 @@ documents the future state).
 
 | Failure mode | Detection | Mitigation | State | Notification | Tested? | Severity |
 |---|---|---|---|---|---|---|
-| **Real BUNEC down (future)** | circuit breaker opens; `recor_bunec_calls_total{outcome=error}` rate | `BUNEC_FAIL_POLICY=fail_open | fail_closed` lever (interface defined; not wired in v1) | depends on policy | runbook exists for future state | partial — runbook ahead of implementation | MEDIUM-future |
+| **Real BUNEC down (future)** | circuit breaker opens; `recor_bunec_calls_total{outcome=error}` rate | `BUNEC_FAIL_POLICY=fail_open` / `fail_closed` lever (interface defined; not wired in v1) | depends on policy | runbook exists for future state | partial — runbook ahead of implementation | MEDIUM-future |
 | **Mock BUNEC down** (v1) | stage 2 stage error; lane Red | Postgres-style outage handling | safe | same as Postgres outage | partial | MEDIUM |
 | **Mock fixture drift** | mock data does not match real-world expectations | accepted-risk in v1 (mock); will move to fixture-tests after R-VER-1 | safe | none | partial | LOW |
 
@@ -243,7 +243,7 @@ rows whose `dispatched_at` is older than `OUTBOX_RETENTION_DAYS`.
 | **`OUTBOX_RETENTION_DAYS=0` (default)** | no pruning happens | safe default — operator must explicitly opt in; comment at config:163-168 documents | safe — table grows | LOW |
 | **Retention worker too aggressive** (deletes undispatched rows) | code defends — WHERE clause checks `dispatched_at IS NOT NULL` (`services/declaration/src/infrastructure/retention.rs`) | invariant tested | safe | LOW |
 | **Retention worker deletes DLQ rows** | accident | code explicitly excludes `outbox_dlq` (config doc:166-168) | safe | LOW |
-| **Retention worker fails silently** | metric: `recor_retention_pruned_total` zero for > 24h | warn → operator investigation | safe; rows accumulate but service still works | partial | MEDIUM — FINDING-FM-9 (no alert on retention-worker silence) |
+| **Retention worker fails silently** | metric: `recor_retention_pruned_total` zero for > 24h | warn → operator investigation | safe; rows accumulate but service still works (test coverage partial) | MEDIUM — FINDING-FM-9 (no alert on retention-worker silence) |
 
 ### 6.2.6 AI hallucination / safety chokepoint bypass
 
@@ -270,8 +270,8 @@ inside a transaction.
 | Failure mode | Detection | Mitigation | State | Severity |
 |---|---|---|---|---|
 | **Migration crash mid-transaction** | sqlx-migrate aborts; pod CrashLoopBackoff | next pod starts; migration rolled back (in-tx case) | safe | LOW |
-| **Migration crash AFTER `CREATE INDEX CONCURRENTLY`** | partial schema state | NO automatic recovery; DBA must clean up the `INVALID` index | DB schema in transitional state | manual | HIGH — FINDING-FM-2 (no runbook for partial migration cleanup) |
-| **Migration version collision** | startup migrate refuses | service refuses to start | safe — fail-closed | runbook gap | MEDIUM |
+| **Migration crash AFTER `CREATE INDEX CONCURRENTLY`** | partial schema state | NO automatic recovery; DBA must clean up the `INVALID` index | DB schema in transitional state (manual recovery) | HIGH — FINDING-FM-2 (no runbook for partial migration cleanup) |
+| **Migration version collision** | startup migrate refuses | service refuses to start | safe — fail-closed (runbook gap) | MEDIUM |
 | **Schema cache stale** (`.sqlx/` not regenerated) | build error in CI | `docs/runbooks/sqlx-cache-regeneration.md` exists | safe | LOW |
 
 ### 6.2.8 Chaincode bytecode hash mismatch
@@ -288,17 +288,17 @@ Already covered in 6.1.3 with the dual-secret pattern at
 
 | Failure mode | Detection | Mitigation | State | Severity |
 |---|---|---|---|---|
-| **`ENVIRONMENT=dev` set in prod accidentally** | dev-header `X-Recor-Dev-Principal` becomes accepted; OIDC bypass | `Config::from_env` refuses to start when `oidc_issuer_url` is empty and environment != dev (`services/declaration/src/config.rs:282-284`); does NOT refuse when `environment=dev` AND `oidc_issuer_url` is set | depends — if both env=dev AND OIDC configured, both auth paths accepted; this is a HIGH risk | none | HIGH — FINDING-FM-11 (no startup refusal when environment=dev BUT a prod-style OIDC issuer is configured) |
-| **`PERSON_SERVICE_URL` empty in prod** | submission silently skips Person-registry cross-check (R-DECL-4) | the `SubmitDeclarationUseCase` builder makes `person_registry` optional (`services/declaration/src/application/submit_declaration.rs:60-64`); empty URL → `None` adapter → no check | submission accepts unknown person ids | warn at startup? (verify) | partial | HIGH — FINDING-FM-12 (verify and gate) |
-| **`AUTH_TRANSPORT=hmac` in prod when intent was mtls-only** | service starts with HMAC only — mTLS layer absent | log info on chosen path (`services/verification-engine/src/main.rs:147-176`) | safe in isolation; misconfig | startup log only; should be alerted | partial | MEDIUM |
+| **`ENVIRONMENT=dev` set in prod accidentally** | dev-header `X-Recor-Dev-Principal` becomes accepted; OIDC bypass | `Config::from_env` refuses to start when `oidc_issuer_url` is empty and environment != dev (`services/declaration/src/config.rs:282-284`); does NOT refuse when `environment=dev` AND `oidc_issuer_url` is set | depends — if both env=dev AND OIDC configured, both auth paths accepted; this is a HIGH risk; no notification today | HIGH — FINDING-FM-11 (no startup refusal when environment=dev BUT a prod-style OIDC issuer is configured) |
+| **`PERSON_SERVICE_URL` empty in prod** | submission silently skips Person-registry cross-check (R-DECL-4) | the `SubmitDeclarationUseCase` builder makes `person_registry` optional (`services/declaration/src/application/submit_declaration.rs:60-64`); empty URL → `None` adapter → no check | submission accepts unknown person ids; warn at startup unverified; test coverage partial | HIGH — FINDING-FM-12 (verify and gate) |
+| **`AUTH_TRANSPORT=hmac` in prod when intent was mtls-only** | service starts with HMAC only — mTLS layer absent | log info on chosen path (`services/verification-engine/src/main.rs:147-176`) | safe in isolation; misconfig; startup log only — should be alerted; test coverage partial | MEDIUM |
 
 ### 6.2.11 Clock skew
 
 | Failure mode | Detection | Mitigation | State | Severity |
 |---|---|---|---|---|
-| **Pod clock behind** | NBF claim rejects valid tokens | NTP via host; k8s pods inherit host clock | safe — fail-closed (401) | metric label `invalid` | LOW |
-| **Pod clock ahead** | EXP claim treats valid tokens as expired | NTP | safe — fail-closed | metric | LOW |
-| **Cross-service skew** (D and V at different times) | event ordering anomalies in `submitted_at` | not currently bounded — relies on host NTP | safe at v1 traffic | none | MEDIUM — FINDING-FM-13 (no clock-skew probe between pods) |
+| **Pod clock behind** | NBF claim rejects valid tokens | NTP via host; k8s pods inherit host clock | safe — fail-closed (401); metric label `invalid` | LOW |
+| **Pod clock ahead** | EXP claim treats valid tokens as expired | NTP | safe — fail-closed; metric | LOW |
+| **Cross-service skew** (D and V at different times) | event ordering anomalies in `submitted_at` | not currently bounded — relies on host NTP | safe at v1 traffic; no notification | MEDIUM — FINDING-FM-13 (no clock-skew probe between pods) |
 
 ---
 

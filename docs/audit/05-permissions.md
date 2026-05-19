@@ -526,8 +526,8 @@ principal field in any RPC body.
 
 **Action.** Spot-check `auth_interceptor` and the
 `SubmitDeclarationRequest` proto message in
-`contracts/declaration.proto`; this audit pass was scoped to REST
-+ s2s. Move to Pass C or follow-up.
+`contracts/declaration.proto`; this audit pass was scoped to REST and
+s2s. Move to Pass C or follow-up.
 
 ### 7.4.4 Race conditions
 

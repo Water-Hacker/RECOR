@@ -156,7 +156,7 @@ production logs.
 
 **Verdict.** Sound. The forensic chain is: failed dispatch →
 outbox_dlq → operator-triggered replay → audit-event in tracing
-+ row reappearance in outbox.
+plus row reappearance in outbox.
 
 ---
 
@@ -194,9 +194,9 @@ See [`10-findings.md`](10-findings.md) FIND-001.
 
 **Live experiments deferred to production verification:**
 
-5. End-to-end submission → outbox → bridge → chaincode → verifier round-trip; persist artifact bundle with TxId
-6. Witness failure: take down worker-fabric-bridge → submit event → confirm event persists to outbox/event log; bring bridge back → confirm DLQ-replay job picks up + writes to chaincode
-7. Detection job for divergence (event_log has entries chaincode doesn't): document the reconciliation cadence
+1. End-to-end submission → outbox → bridge → chaincode → verifier round-trip; persist artifact bundle with TxId
+2. Witness failure: take down worker-fabric-bridge → submit event → confirm event persists to outbox/event log; bring bridge back → confirm DLQ-replay job picks up + writes to chaincode
+3. Detection job for divergence (event_log has entries chaincode doesn't): document the reconciliation cadence
 
 **Reconciliation job status.** No `fabric-reconciliation` cron is
 currently committed. The bridge's DLQ + manual `worker-fabric-bridge --replay-dlq` covers operator-initiated recovery; an automated

@@ -992,8 +992,8 @@ data-flow doc; flagged for security-review in 04-failure-modes.md.)
 
 ### Failure analysis
 
-| Step | Failure | Result |
-|------|---|---|
+| Step | Failure | Result | Observability |
+|------|---------|--------|---------------|
 | ICIJ adapter unavailable | DB transient | stage emits InsufficientEvidence | logged |
 | Name resolver returns empty | person not in registry | stage emits InsufficientEvidence | logged |
 | Gateway 429 sustained | Anthropic rate limit | verdict = insufficient_evidence; vacuous BPA | **no dedicated alert / runbook — see DF-3** |
@@ -1036,8 +1036,8 @@ clearing the IndexedDB (the portal does so on 201).
 
 ### Failure analysis
 
-| Step | Failure | Result |
-|------|---|---|
+| Step | Failure | Result | Notes |
+|------|---------|--------|-------|
 | IndexedDB unavailable (private mode / disabled) | autosave throws | autosave fails silently — user sees no save; submit still works | should surface to user; currently logs to console only |
 | Locale bundle 404 | static asset misdeploy | falls back to default (`fr`) | catch at build time via CI bundle check |
 | Browser language detection fails | private mode | falls back to `fr` | acceptable for Cameroonian primary audience |

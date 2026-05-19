@@ -265,7 +265,7 @@ the same standard. Doctrine satisfied.
   honestly document that.
 - **Telemetry coverage.** Every meaningful state transition emits
   OBS-1 counters. The V-engine `recor_verification_cases_total`
-  + per-lane counter + per-stage latency histograms cover the
+  with per-lane counter and per-stage latency histograms covers the
   pipeline.
 - **Operator ergonomics.** Every runbook in `docs/runbooks/`
   documents the operator-action steps. The on-call triage tree
