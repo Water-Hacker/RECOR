@@ -279,20 +279,40 @@ async fn get_verification(
     axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
     Path(case_id): Path<Uuid>,
 ) -> Result<Json<VerificationCase>, ServiceError> {
-    // FIND-004 (interim mitigation): the V-engine has no
-    // per-case tenancy column yet, so until the migration lands,
-    // gate GET on the admin allowlist too. Declarant-side polling
-    // happens against the declaration service's
-    // `/v1/declarations/{id}.verification_state`, not here.
-    refuse_if_not_admin(&state.admin_principals, &principal)?;
+    // FIND-004 (audit Sprint 1 full closure). Sprint 0 shipped an
+    // interim admin-only gate while the per-case tenancy story was
+    // unresolved. The V-engine schema has carried
+    // `verification_cases.declarant_principal` (denormalised onto
+    // the row from the inbound DeclarationSnapshot) since migration
+    // 0001 — what was missing was the runtime check.
+    //
+    // Load the case, then enforce `principal == declarant_principal
+    // OR principal IN admin_allowlist`. Denial returns 404 (mirrors
+    // person-service get_person semantics, FIND-005): non-owners
+    // cannot enumerate case_ids by inferring existence from the
+    // response code. This restores the Sprint 0 capability for
+    // legitimate declarants to read their own cases without
+    // depending on operator intervention.
     let case = state.get_usecase.execute(VerificationCaseId(case_id)).await?;
+    if !is_admin(&state.admin_principals, &principal)
+        && case.declaration.declarant_principal != principal.subject
+    {
+        tracing::warn!(
+            actor = %principal.subject,
+            owner = %case.declaration.declarant_principal,
+            case_id = %case_id,
+            "GET verification case refused — non-owner, non-admin"
+        );
+        return Err(ServiceError::NotFound(case_id.to_string()));
+    }
     Ok(Json(case))
 }
 
-/// FIND-002 + FIND-004 (audit Sprint 0). The legitimate REST callers
-/// of V-engine `submit` + `get_verification` are operators on the
-/// admin allowlist. Non-admin authenticated principals get 403; an
-/// empty allowlist disables the endpoints entirely (D14 fail-closed).
+/// FIND-002 (audit Sprint 0). `submit_verification` is operator-only.
+/// The legitimate verification-submission path is the
+/// HMAC-authenticated `/v1/internal/declaration-events` webhook (and,
+/// when R-LOOP-2's Kafka transport is active, the Kafka consumer).
+/// Empty allowlist ⇒ 503 (D14 fail-closed); non-admin ⇒ 403.
 fn refuse_if_not_admin(
     admin_principals: &std::collections::HashSet<String>,
     principal: &crate::api::auth::Principal,
@@ -311,4 +331,154 @@ fn refuse_if_not_admin(
         return Err(ServiceError::NotAdmin);
     }
     Ok(())
+}
+
+/// FIND-004: cheap admin-membership probe used by `get_verification`
+/// to decide whether to apply the per-case tenancy predicate. Empty
+/// allowlist always returns `false`, mirroring the fail-closed
+/// semantics of `refuse_if_not_admin`.
+fn is_admin(
+    admin_principals: &std::collections::HashSet<String>,
+    principal: &crate::api::auth::Principal,
+) -> bool {
+    !admin_principals.is_empty()
+        && admin_principals.contains(&principal.subject)
+}
+
+#[cfg(test)]
+mod rbac_tests {
+    //! Unit tests for the FIND-004 per-case RBAC predicate and the
+    //! FIND-002 admin-allowlist gate. The full handler is exercised
+    //! by the integration suite; these tests lock the policy logic
+    //! at the helper-function boundary so a regression on either
+    //! gate fails at the unit level before the handler is hit.
+
+    use std::collections::HashSet;
+
+    use crate::api::auth::Principal;
+
+    use super::*;
+
+    fn principal(subject: &str) -> Principal {
+        Principal {
+            subject: subject.to_string(),
+        }
+    }
+
+    fn allowlist(subjects: &[&str]) -> HashSet<String> {
+        subjects.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ─── FIND-002: refuse_if_not_admin ────────────────────────────────
+
+    #[test]
+    fn refuse_if_not_admin_503_on_empty_allowlist() {
+        let res = refuse_if_not_admin(&HashSet::new(), &principal("anyone"));
+        assert!(matches!(res, Err(ServiceError::AdminDisabled)));
+    }
+
+    #[test]
+    fn refuse_if_not_admin_403_on_non_admin() {
+        let res = refuse_if_not_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/declarant-7"),
+        );
+        assert!(matches!(res, Err(ServiceError::NotAdmin)));
+    }
+
+    #[test]
+    fn refuse_if_not_admin_ok_for_listed_principal() {
+        let res = refuse_if_not_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/ops-1"),
+        );
+        assert!(res.is_ok());
+    }
+
+    // ─── FIND-004: is_admin ───────────────────────────────────────────
+
+    #[test]
+    fn is_admin_false_on_empty_allowlist() {
+        assert!(!is_admin(&HashSet::new(), &principal("anyone")));
+    }
+
+    #[test]
+    fn is_admin_false_on_non_admin() {
+        assert!(!is_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/declarant-7"),
+        ));
+    }
+
+    #[test]
+    fn is_admin_true_for_listed_principal() {
+        assert!(is_admin(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/ops-1"),
+        ));
+    }
+
+    // ─── FIND-004: the per-case tenancy predicate itself ──────────────
+    //
+    // The handler's policy is: `principal == declarant_principal OR
+    // principal IN admin`. The handler shape doesn't expose a pure
+    // helper for the full predicate — `is_admin` covers the admin
+    // half, and these tests describe the equality half with
+    // table-driven cases so a regression on the comparison logic
+    // surfaces before the handler is reached.
+
+    fn decision(
+        admin_principals: &HashSet<String>,
+        principal: &Principal,
+        declarant_principal: &str,
+    ) -> Result<(), ()> {
+        // Mirrors the handler condition exactly.
+        if !is_admin(admin_principals, principal)
+            && declarant_principal != principal.subject
+        {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn declarant_can_read_own_case() {
+        let res = decision(
+            &HashSet::new(),
+            &principal("spiffe://recor.cm/declarant-7"),
+            "spiffe://recor.cm/declarant-7",
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn cross_tenant_read_is_denied_even_when_admin_allowlist_is_empty() {
+        let res = decision(
+            &HashSet::new(),
+            &principal("spiffe://recor.cm/declarant-attacker"),
+            "spiffe://recor.cm/declarant-victim",
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn admin_can_read_any_case() {
+        let res = decision(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/ops-1"),
+            "spiffe://recor.cm/some-declarant",
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn non_admin_non_owner_is_denied() {
+        let res = decision(
+            &allowlist(&["spiffe://recor.cm/ops-1"]),
+            &principal("spiffe://recor.cm/declarant-attacker"),
+            "spiffe://recor.cm/declarant-victim",
+        );
+        assert!(res.is_err());
+    }
 }
