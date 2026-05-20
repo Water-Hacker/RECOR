@@ -83,6 +83,19 @@ pub struct BeneficialOwnerWire {
     pub person_id: Uuid,
     pub ownership_basis_points: u32,
     pub interest_kind: String,
+    /// PR-FATF-2.B — FATF R.24 cascade fields on the Kafka transport.
+    /// Optional for back-compat with messages produced by pre-FATF
+    /// declaration-side deploys.
+    #[serde(default)]
+    pub cascade_tier: Option<String>,
+    #[serde(default)]
+    pub control_basis: Option<String>,
+    #[serde(default)]
+    pub cascade_tier_b_ruled_out_evidence: Option<String>,
+    #[serde(default)]
+    pub is_nominee: Option<bool>,
+    #[serde(default)]
+    pub nominator_person_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +139,11 @@ pub fn snapshot_from_wire(payload: DeclarationSubmittedV1Wire) -> DeclarationSna
                 person_id: o.person_id,
                 ownership_basis_points: o.ownership_basis_points,
                 interest_kind: o.interest_kind,
+                cascade_tier: o.cascade_tier,
+                control_basis: o.control_basis,
+                cascade_tier_b_ruled_out_evidence: o.cascade_tier_b_ruled_out_evidence,
+                is_nominee: o.is_nominee,
+                nominator_person_id: o.nominator_person_id,
             })
             .collect(),
         attestation_signed_by: payload.attestation.signed_by,
@@ -134,6 +152,7 @@ pub fn snapshot_from_wire(payload: DeclarationSubmittedV1Wire) -> DeclarationSna
         receipt_hash_hex: payload.receipt_hash_hex,
         correlation_id: payload.correlation_id,
         submitted_at: payload.submitted_at,
+        adequacy_claims: None,
     }
 }
 

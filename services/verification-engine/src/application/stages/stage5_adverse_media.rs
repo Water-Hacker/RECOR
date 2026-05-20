@@ -459,7 +459,12 @@ mod tests {
                     person_id: id,
                     ownership_basis_points: 10_000,
                     interest_kind: "equity".into(),
-                })
+                                    cascade_tier: None,
+                    control_basis: None,
+                    cascade_tier_b_ruled_out_evidence: None,
+                    is_nominee: None,
+                    nominator_person_id: None,
+})
                 .collect(),
             attestation_signed_by: "spiffe://recor.cm/test".into(),
             attestation_signature_hex: hex::encode([0u8; 64]),
@@ -467,6 +472,7 @@ mod tests {
             receipt_hash_hex: hex::encode([0u8; 32]),
             correlation_id: Uuid::now_v7(),
             submitted_at: time::OffsetDateTime::now_utc(),
+            adequacy_claims: None,
         }
     }
 

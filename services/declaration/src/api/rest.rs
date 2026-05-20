@@ -408,6 +408,13 @@ pub(crate) async fn submit_declaration(
 
     // 3. Build the command BEFORE consulting idempotency so we have a
     // stable declaration_id for the receipt body.
+    //
+    // PR-FATF-2.B: strict cascade_tier + adequacy_claims enforcement is
+    // available via `into_command_strict` but is OPT-IN at the moment
+    // because the declarant-portal UI does not yet populate the new
+    // fields (form update is PR-FATF-2.C). Until then we accept the
+    // legacy shape; aggregate-side validators still enforce the
+    // structural invariants when the fields ARE present.
     let cmd = req.into_command(principal.subject.clone(), correlation_id);
     let declaration_id = cmd.declaration_id;
     // Capture the declaration kind for the OBS-1 counter. Bounded enum
@@ -554,6 +561,17 @@ fn canonical_payload_bytes(
     // the date encoding with the wire format the declarant signs.
     // Field names and serialised representation MUST match what the
     // declarant signs — anything else is a signature mismatch.
+    //
+    // PR-FATF-2.B: adequacy_claims is included as the second-to-last
+    // field, just before `nonce_hex`, ONLY WHEN PRESENT. We use
+    // `skip_serializing_if = "Option::is_none"` so the canonical bytes
+    // for legacy clients (no adequacy_claims) are byte-identical to
+    // what they signed pre-FATF-cascade. New clients that opt into
+    // the FATF-required shape sign the same bytes that include the
+    // block. The strict DTO constructor refuses None on the *write*
+    // path once PR-FATF-2.C ships, so production traffic eventually
+    // always carries the block — but the *canonical-bytes shape* must
+    // remain back-compat for the rollover window.
     #[derive(Serialize)]
     struct Canonical<'a> {
         entity_id: &'a crate::domain::EntityId,
@@ -563,6 +581,8 @@ fn canonical_payload_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
     let canonical = Canonical {
@@ -572,6 +592,7 @@ fn canonical_payload_bytes(
         kind: req.kind.as_str(),
         effective_from: req.effective_from,
         beneficial_owners: &req.beneficial_owners,
+        adequacy_claims: &req.adequacy_claims,
         nonce_hex: &req.attestation.nonce_hex,
     };
     serde_json::to_vec(&canonical)
@@ -631,6 +652,8 @@ pub(crate) async fn supersede_declaration(
         .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
 
     let correlation_id = Uuid::now_v7();
+    // PR-FATF-2.B strict-cascade enforcement is opt-in pending the
+    // portal form update — see submit handler for context.
     let new_command = req.into_command(principal.subject.clone(), correlation_id);
 
     let receipt = state
@@ -658,6 +681,10 @@ fn canonical_amend_bytes(
     entity_id: &crate::domain::EntityId,
 ) -> Result<Vec<u8>, ServiceError> {
     use serde::Serialize;
+    // PR-FATF-2.B: adequacy_claims is part of the amended canonical
+    // bytes for the same reason it's part of the submit canonical
+    // bytes — declarant re-asserts the FATF c.24.8 properties for
+    // the amended values.
     #[derive(Serialize)]
     struct Canonical<'a> {
         entity_id: &'a crate::domain::EntityId,
@@ -667,6 +694,8 @@ fn canonical_amend_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
     let canonical = Canonical {
@@ -676,6 +705,7 @@ fn canonical_amend_bytes(
         kind: "amendment",
         effective_from: req.effective_from,
         beneficial_owners: &req.beneficial_owners,
+        adequacy_claims: &req.adequacy_claims,
         nonce_hex: &req.attestation.nonce_hex,
     };
     serde_json::to_vec(&canonical)
@@ -779,6 +809,7 @@ pub(crate) async fn amend_declaration(
 
     // 3. Build the command and execute.
     let correlation_id = Uuid::now_v7();
+    // Strict cascade enforcement opt-in — see submit handler.
     let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
     let receipt = state.amend_usecase.execute(cmd).await?;
     let response = AmendDeclarationResponse::from_receipt(receipt, &state.base_url);

@@ -145,6 +145,7 @@ mod tests {
             receipt_hash_hex: hex::encode([0u8; 32]),
             correlation_id: Uuid::now_v7(),
             submitted_at: OffsetDateTime::now_utc(),
+            adequacy_claims: None,
         }
     }
 
@@ -153,6 +154,11 @@ mod tests {
             person_id: Uuid::now_v7(),
             ownership_basis_points: percent_basis_points,
             interest_kind: "equity".into(),
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
         }
     }
 
@@ -189,7 +195,12 @@ mod tests {
             person_id: person,
             ownership_basis_points: bp,
             interest_kind: "equity".into(),
-        };
+                    cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
+};
         let s = make_snapshot(vec![dup(5_000), dup(5_000)]);
         let outcome = stage.run(&s).await;
         assert_eq!(outcome.kind, StageOutcomeKind::ShortCircuitFailClosed);
