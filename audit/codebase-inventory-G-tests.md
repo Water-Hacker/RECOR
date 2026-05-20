@@ -303,19 +303,19 @@
 
 ### P1 — Availability
 
-4. **Kafka reliability scenarios**
+1. **Kafka reliability scenarios**
    - Add retry + DLQ path tests to `infrastructure/kafka_producer.rs` + consumer
    - Cover: broker unavailability, serialization errors, consumer lag
    - Target: Event loss detection
 
-5. **Audit reconciler integration**
+2. **Audit reconciler integration**
    - Add Fabric Gateway timeout + divergence-detection scenario tests
    - Cover: stuck detector, false-negative prevention
    - Target: Reconciliation pipeline validated
 
 ### P2 — Coverage Baseline
 
-6. **Frontend test harness**
+1. **Frontend test harness**
    - Enforce >70% line coverage on declarant-portal submit flow (Playwright + Jest)
    - Target: End-to-end + unit test coverage enforced
 
@@ -371,4 +371,3 @@ The RECOR platform's **domain logic and cryptographic security boundaries are we
 - Fabric bridge integration failures could go undetected for hours.
 
 **Recommendation:** Treat P0 items as pre-production requirements. The platform currently relies on human code review to catch persistence + API boundary regressions, which is insufficient for a regulatory/audit system.
-
