@@ -145,22 +145,22 @@ mod tests {
             receipt_hash_hex: hex::encode([0u8; 32]),
             correlation_id: Uuid::now_v7(),
             submitted_at: OffsetDateTime::now_utc(),
-        }
             adequacy_claims: None,
-}
+        }
+    }
 
     fn owner(percent_basis_points: u32) -> OwnerSnapshot {
         OwnerSnapshot {
             person_id: Uuid::now_v7(),
             ownership_basis_points: percent_basis_points,
             interest_kind: "equity".into(),
-        }
             cascade_tier: None,
-        control_basis: None,
-        cascade_tier_b_ruled_out_evidence: None,
-        is_nominee: None,
-        nominator_person_id: None,
-}
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
+        }
+    }
 
     #[tokio::test]
     async fn valid_declaration_passes() {

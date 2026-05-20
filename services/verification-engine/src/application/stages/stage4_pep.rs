@@ -321,9 +321,9 @@ mod tests {
             receipt_hash_hex: hex::encode([0u8; 32]),
             correlation_id: Uuid::now_v7(),
             submitted_at: time::OffsetDateTime::now_utc(),
-        }
             adequacy_claims: None,
-}
+        }
+    }
 
     #[tokio::test]
     async fn confirmed_pep_emits_bpa_02_05_03() {
