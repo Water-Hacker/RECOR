@@ -1026,9 +1026,20 @@
           "attestation"
         ],
         "properties": {
+          "adequacy_claims": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AdequacyClaims",
+                "description": "PR-FATF-2.B / TODO-021 — required on new amendments. The\ndeclarant re-asserts adequate / accurate / up-to-date for the\namended values."
+              }
+            ]
+          },
           "attestation": {
             "$ref": "#/components/schemas/CryptographicAttestation",
-            "description": "Fresh attestation signed by the declarant over the AMENDED\ncanonical payload (entity_id, declarant_principal,\ndeclarant_role, kind, effective_from, beneficial_owners,\nnonce_hex). Verified at the API boundary before the command\nreaches the aggregate."
+            "description": "Fresh attestation signed by the declarant over the AMENDED\ncanonical payload (entity_id, declarant_principal,\ndeclarant_role, kind, effective_from, beneficial_owners,\nadequacy_claims, nonce_hex). Verified at the API boundary\nbefore the command reaches the aggregate."
           },
           "beneficial_owners": {
             "type": "array",
@@ -1741,6 +1752,17 @@
           "attestation"
         ],
         "properties": {
+          "adequacy_claims": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AdequacyClaims",
+                "description": "PR-FATF-2.B / TODO-021 — FATF R.24 c.24.8 adequacy claims.\nREQUIRED for new submissions. The aggregate-side accepts None\n(back-compat with historical replay); the API DTO layer\nrefuses None on the *write* path — see the DtoError::AdequacyClaimsRequired\ntranslation in `into_command_strict`."
+              }
+            ]
+          },
           "attestation": {
             "$ref": "#/components/schemas/CryptographicAttestation"
           },
