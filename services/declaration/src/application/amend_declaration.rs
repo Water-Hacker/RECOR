@@ -213,6 +213,11 @@ mod tests {
             person_id: PersonId(Uuid::now_v7()),
             ownership_basis_points: OwnershipBasisPoints::try_from_basis_points(bp).unwrap(),
             interest_kind: InterestKind::Equity,
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
         }
     }
 
@@ -228,6 +233,7 @@ mod tests {
             attestation: attestation_for(PRINCIPAL),
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
+            adequacy_claims: None,
         }
     }
 
@@ -247,6 +253,7 @@ mod tests {
             beneficial_owners: vec![owner(6_000), owner(4_000)],
             effective_from: date!(2026 - 02 - 01),
             declarant_role: DeclarantRole::AuthorisedAgent,
+            adequacy_claims: None,
         }
     }
 

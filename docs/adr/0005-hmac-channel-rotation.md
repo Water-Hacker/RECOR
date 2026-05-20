@@ -200,3 +200,7 @@ primitive precisely because it has no maintenance window.
   retires this ADR's primitive)
 - Doctrines D14 (fail-closed), D17 (zero trust), D18 (no secrets
   in code/logs)
+
+## Linked from
+
+- [ADR-0010 — FATF R.24 BO cascade, bearer-share + nominee disclosure, adequacy claims](0010-fatf-bo-cascade-and-adequacy.md) — references this ADR in its "Related" section.

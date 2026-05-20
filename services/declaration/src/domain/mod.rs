@@ -29,6 +29,7 @@ pub use event::{
     DeclarationSupersededV1, DeclarationVerifiedV1,
 };
 pub use value_object::{
-    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarantRole, DeclarationId,
-    DeclarationKind, DeclarationState, EntityId, OwnershipBasisPoints, PersonId, VerificationLane,
+    AmendmentSet, BeneficialOwnerClaim, BoCascadeTier, BoControlBasis, CorrectionSet,
+    DeclarantRole, DeclarationId, DeclarationKind, DeclarationState, EntityId,
+    OwnershipBasisPoints, PersonId, VerificationLane,
 };

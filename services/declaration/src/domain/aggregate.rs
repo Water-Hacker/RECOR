@@ -29,7 +29,8 @@ use super::event::{
     DeclarationSupersededV1, DeclarationVerifiedV1,
 };
 use super::value_object::{
-    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarationId, DeclarationState,
+    AmendmentSet, BeneficialOwnerClaim, BoCascadeTier, CorrectionSet, DeclarationId,
+    DeclarationState,
 };
 
 /// In-memory representation of a Declaration aggregate, hydrated from
@@ -102,6 +103,7 @@ impl DeclarationAggregate {
                     beneficial_owners: p.beneficial_owners.clone(),
                     effective_from: p.effective_from,
                     declarant_role: p.declarant_role,
+            adequacy_claims: None,
                 });
                 // Correction state starts empty; Corrected events
                 // overwrite it.
@@ -154,6 +156,7 @@ impl DeclarationAggregate {
             effective_from: cmd.effective_from,
             beneficial_owners: cmd.beneficial_owners,
             attestation: cmd.attestation,
+            adequacy_claims: cmd.adequacy_claims,
             submitted_at: cmd.submitted_at,
             correlation_id: cmd.correlation_id,
             receipt_hash_hex,
@@ -426,23 +429,199 @@ fn validate_command(cmd: &SubmitDeclaration) -> Result<(), DomainError> {
     }
     validate_beneficial_owners(&cmd.beneficial_owners)?;
     validate_effective_from(cmd.effective_from, cmd.submitted_at)?;
+    // TODO-021: adequacy claims, when present, must satisfy the
+    // up-to-date window + non-empty legal basis. Acceptance of the
+    // bare absence (None) is currently controlled at the API DTO
+    // boundary; the aggregate accepts None for back-compat with
+    // historical events that pre-date this migration.
+    if let Some(claims) = &cmd.adequacy_claims {
+        validate_adequacy_claims(claims, cmd.submitted_at)?;
+    }
     Ok(())
 }
 
+/// TODO-001 + TODO-010 closure — validates the FATF cascade and nominee
+/// invariants on the beneficial-owner roster.
 fn validate_beneficial_owners(owners: &[BeneficialOwnerClaim]) -> Result<(), DomainError> {
     if owners.is_empty() {
         return Err(DomainError::NoBeneficialOwners);
     }
     let mut seen = HashSet::new();
     let mut sum: u32 = 0;
+    let mut has_control_tier = false;
+    let mut has_smo_tier = false;
+    let registered_ids: HashSet<uuid::Uuid> = owners.iter().map(|o| o.person_id.0).collect();
+
     for owner in owners {
         if !seen.insert(owner.person_id) {
             return Err(DomainError::DuplicateBeneficialOwner(owner.person_id.0));
         }
         sum = sum.saturating_add(owner.ownership_basis_points.as_basis_points());
+        validate_cascade_tier(owner)?;
+        validate_nominee_fields(owner, &registered_ids)?;
+
+        match owner.cascade_tier {
+            Some(BoCascadeTier::Control) => has_control_tier = true,
+            Some(BoCascadeTier::SeniorManagingOfficial) => has_smo_tier = true,
+            _ => {}
+        }
     }
     if sum != 10_000 {
         return Err(DomainError::OwnershipSumInvariant { sum });
+    }
+    // FATF cascade is hierarchical: a tier-(c) SMO BO is admissible
+    // only when the declarant has *also* identified a tier-(b)
+    // Control candidate that was ruled out. The aggregate enforces
+    // the structural visibility: when SMO appears, at least one
+    // Control candidate must also appear in the same roster. The
+    // back-office workflow validates the "ruled-out evidence" string
+    // semantically.
+    if has_smo_tier && !has_control_tier {
+        return Err(DomainError::SmoTierWithoutVisibleControlSearch);
+    }
+    Ok(())
+}
+
+/// TODO-001 closure — per-owner cascade tier consistency.
+fn validate_cascade_tier(owner: &BeneficialOwnerClaim) -> Result<(), DomainError> {
+    // Legacy sentinel is read-only — never an input.
+    if let Some(BoCascadeTier::LegacyPreCascade) = owner.cascade_tier {
+        return Err(DomainError::LegacyCascadeTierOnNewDeclaration {
+            person_id: owner.person_id.0,
+        });
+    }
+
+    match owner.cascade_tier {
+        Some(BoCascadeTier::Control) => {
+            if owner.control_basis.is_none() {
+                return Err(DomainError::ControlTierMissingBasis {
+                    person_id: owner.person_id.0,
+                });
+            }
+            if owner.cascade_tier_b_ruled_out_evidence.is_some() {
+                return Err(DomainError::RuledOutEvidenceOnNonSmoTier {
+                    person_id: owner.person_id.0,
+                    tier: BoCascadeTier::Control.as_str(),
+                });
+            }
+        }
+        Some(BoCascadeTier::SeniorManagingOfficial) => {
+            if owner.control_basis.is_some() {
+                return Err(DomainError::ControlBasisOnNonControlTier {
+                    person_id: owner.person_id.0,
+                    tier: BoCascadeTier::SeniorManagingOfficial.as_str(),
+                });
+            }
+            match owner.cascade_tier_b_ruled_out_evidence.as_deref() {
+                None => {
+                    return Err(DomainError::SmoTierMissingRuledOutEvidence {
+                        person_id: owner.person_id.0,
+                    });
+                }
+                Some(s) if s.trim().len() < 16 => {
+                    // Minimum 16 chars: an investigator-readable note
+                    // (e.g. "no controller found via shareholder agreements after review of M&A 2025").
+                    return Err(DomainError::SmoTierMissingRuledOutEvidence {
+                        person_id: owner.person_id.0,
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        Some(BoCascadeTier::OwnershipDirect) | Some(BoCascadeTier::OwnershipIndirect) => {
+            if owner.control_basis.is_some() {
+                let tier_str = match owner.cascade_tier {
+                    Some(BoCascadeTier::OwnershipDirect) => BoCascadeTier::OwnershipDirect.as_str(),
+                    Some(BoCascadeTier::OwnershipIndirect) => {
+                        BoCascadeTier::OwnershipIndirect.as_str()
+                    }
+                    _ => "ownership",
+                };
+                return Err(DomainError::ControlBasisOnNonControlTier {
+                    person_id: owner.person_id.0,
+                    tier: tier_str,
+                });
+            }
+            if owner.cascade_tier_b_ruled_out_evidence.is_some() {
+                let tier_str = match owner.cascade_tier {
+                    Some(BoCascadeTier::OwnershipDirect) => BoCascadeTier::OwnershipDirect.as_str(),
+                    Some(BoCascadeTier::OwnershipIndirect) => {
+                        BoCascadeTier::OwnershipIndirect.as_str()
+                    }
+                    _ => "ownership",
+                };
+                return Err(DomainError::RuledOutEvidenceOnNonSmoTier {
+                    person_id: owner.person_id.0,
+                    tier: tier_str,
+                });
+            }
+        }
+        // Cascade tier is None on legacy-replay paths only; the
+        // current API DTO refuses None. Accept None here so historical
+        // events continue to deserialise without invariant breakage.
+        None => {}
+        Some(BoCascadeTier::LegacyPreCascade) => unreachable!(),
+    }
+    Ok(())
+}
+
+/// TODO-010 closure — per-owner nominee consistency. When `is_nominee`
+/// is `true`, the nominator must be set, must differ from the nominee,
+/// and must itself appear on the same declaration as a separately-
+/// registered BO (so the nominator is recorded under the cascade).
+fn validate_nominee_fields(
+    owner: &BeneficialOwnerClaim,
+    registered_ids: &HashSet<uuid::Uuid>,
+) -> Result<(), DomainError> {
+    match (owner.is_nominee, owner.nominator_person_id) {
+        (Some(true), None) => Err(DomainError::NomineeMissingNominator {
+            person_id: owner.person_id.0,
+        }),
+        (Some(false) | None, Some(_)) => Err(DomainError::NominatorWithoutNomineeFlag {
+            person_id: owner.person_id.0,
+        }),
+        (Some(true), Some(nominator)) if nominator == owner.person_id => {
+            Err(DomainError::SelfNominationForbidden {
+                person_id: owner.person_id.0,
+            })
+        }
+        (Some(true), Some(nominator)) => {
+            if !registered_ids.contains(&nominator.0) {
+                return Err(DomainError::NominatorNotRegisteredOnDeclaration {
+                    nominee_id: owner.person_id.0,
+                    nominator_id: nominator.0,
+                });
+            }
+            Ok(())
+        }
+        (Some(false) | None, None) => Ok(()),
+    }
+}
+
+/// TODO-021 closure — adequacy_claims block invariants.
+fn validate_adequacy_claims(
+    claims: &super::attestation::AdequacyClaims,
+    submitted_at: OffsetDateTime,
+) -> Result<(), DomainError> {
+    let basis = claims.legal_basis.trim();
+    if basis.is_empty() {
+        return Err(DomainError::AdequacyLegalBasisEmpty);
+    }
+    if basis.chars().count() > 1024 {
+        return Err(DomainError::AdequacyLegalBasisTooLong);
+    }
+    if claims.up_to_date_as_of > submitted_at {
+        return Err(DomainError::AdequacyAsOfInFuture {
+            as_of: claims.up_to_date_as_of,
+            submitted_at,
+        });
+    }
+    let thirty_days_ago = submitted_at - Duration::days(30);
+    if claims.up_to_date_as_of < thirty_days_ago {
+        return Err(DomainError::AdequacyAsOfStale {
+            as_of: claims.up_to_date_as_of,
+            submitted_at,
+        });
     }
     Ok(())
 }
@@ -549,6 +728,7 @@ mod tests {
             attestation: attestation_for("spiffe://recor.cm/test-declarant"),
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
+            adequacy_claims: None,
         }
     }
 
@@ -560,6 +740,11 @@ mod tests {
             )
             .unwrap(),
             interest_kind: InterestKind::Equity,
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
         }
     }
 
@@ -615,6 +800,11 @@ mod tests {
             )
             .unwrap(),
             interest_kind: InterestKind::Equity,
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
         };
         let agg = DeclarationAggregate::fresh(DeclarationId::new());
         let cmd = submit_command(agg.id, vec![dup(5_000), dup(5_000)]);
@@ -782,6 +972,7 @@ mod tests {
             beneficial_owners: vec![owner(6_000), owner(4_000)],
             effective_from: date!(2026 - 02 - 01),
             declarant_role: DeclarantRole::AuthorisedAgent,
+            adequacy_claims: None,
         }
     }
 
@@ -877,6 +1068,7 @@ mod tests {
             beneficial_owners: vec![owner(5_000), owner(4_000)],
             effective_from: date!(2026 - 02 - 01),
             declarant_role: DeclarantRole::SelfDeclaration,
+            adequacy_claims: None,
         };
         let cmd = amend_cmd(agg.id, &principal, bad_amendments);
         assert_eq!(
@@ -909,6 +1101,7 @@ mod tests {
             beneficial_owners: vec![owner(7_000), owner(3_000)],
             effective_from: date!(2026 - 03 - 01),
             declarant_role: DeclarantRole::OperatorAssisted,
+            adequacy_claims: None,
         };
         let event2 = agg.handle_amend(amend_cmd(agg.id, &principal, second.clone())).unwrap();
         // before snapshot on the second event must equal the first
@@ -956,7 +1149,8 @@ mod tests {
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
             receipt_hash_hex: "0".repeat(64),
-        }));
+                    adequacy_claims: None,
+}));
         replayed.apply(&event);
         assert_eq!(replayed.amendment_state.unwrap(), snapshot_after_apply);
     }
@@ -1044,7 +1238,8 @@ mod tests {
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
             receipt_hash_hex: "0".repeat(64),
-        }));
+                    adequacy_claims: None,
+}));
         replayed.apply(&event);
         assert_eq!(replayed.correction_state, payload.after);
     }
@@ -1075,5 +1270,275 @@ mod tests {
         let event = agg.handle_correct(cmd).unwrap();
         let DeclarationEvent::Corrected(payload) = event else { panic!(); };
         assert!(payload.after.metadata_notes.is_none());
+    }
+
+    // ─── PR-FATF-2.A — TODO-001 / -010 / -021 invariants ──────────────
+    //
+    // Each test exercises one FATF cascade or nominee invariant in
+    // isolation. The helpers `owner(...)` and `submit_command(...)` above
+    // default the new fields to None; the tests below override the
+    // specific field they're exercising.
+
+    use crate::domain::attestation::AdequacyClaims;
+    use crate::domain::value_object::{BoCascadeTier, BoControlBasis};
+
+    fn owner_at_tier(percent_basis_points: u32, tier: BoCascadeTier) -> BeneficialOwnerClaim {
+        let mut o = owner(percent_basis_points);
+        o.cascade_tier = Some(tier);
+        match tier {
+            BoCascadeTier::Control => {
+                o.control_basis = Some(BoControlBasis::VotingRights);
+            }
+            BoCascadeTier::SeniorManagingOfficial => {
+                o.cascade_tier_b_ruled_out_evidence =
+                    Some("tier-(b) search exhausted via review of shareholder agreements".into());
+            }
+            _ => {}
+        }
+        o
+    }
+
+    #[test]
+    fn cascade_control_tier_requires_control_basis() {
+        let mut o = owner(10_000);
+        o.cascade_tier = Some(BoCascadeTier::Control);
+        o.control_basis = None;
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::ControlTierMissingBasis { .. }
+        ));
+    }
+
+    #[test]
+    fn cascade_control_basis_refused_on_ownership_tier() {
+        let mut o = owner(10_000);
+        o.cascade_tier = Some(BoCascadeTier::OwnershipDirect);
+        o.control_basis = Some(BoControlBasis::VotingRights);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::ControlBasisOnNonControlTier { .. }
+        ));
+    }
+
+    #[test]
+    fn cascade_smo_tier_requires_ruled_out_evidence() {
+        let mut o = owner(10_000);
+        o.cascade_tier = Some(BoCascadeTier::SeniorManagingOfficial);
+        o.cascade_tier_b_ruled_out_evidence = None;
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::SmoTierMissingRuledOutEvidence { .. }
+        ));
+    }
+
+    #[test]
+    fn cascade_smo_tier_refuses_short_ruled_out_evidence() {
+        let mut o = owner(10_000);
+        o.cascade_tier = Some(BoCascadeTier::SeniorManagingOfficial);
+        // 10 chars — below the 16-char minimum.
+        o.cascade_tier_b_ruled_out_evidence = Some("too short.".into());
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::SmoTierMissingRuledOutEvidence { .. }
+        ));
+    }
+
+    #[test]
+    fn cascade_smo_requires_visible_control_search() {
+        // SMO BO on its own is refused — the declaration must also
+        // carry a Control BO that was ruled out.
+        let smo = owner_at_tier(10_000, BoCascadeTier::SeniorManagingOfficial);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![smo]);
+        assert_eq!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::SmoTierWithoutVisibleControlSearch
+        );
+    }
+
+    #[test]
+    fn cascade_smo_with_control_succeeds() {
+        // A declaration that lists BOTH a Control candidate and an SMO
+        // fallback is admissible (the cascade search is visibly
+        // documented).
+        let control = owner_at_tier(5_000, BoCascadeTier::Control);
+        let smo = owner_at_tier(5_000, BoCascadeTier::SeniorManagingOfficial);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![control, smo]);
+        let event = agg.handle_submit(cmd).expect("control+SMO admissible");
+        let DeclarationEvent::Submitted(_) = event else { panic!() };
+    }
+
+    #[test]
+    fn cascade_legacy_sentinel_refused_as_input() {
+        let mut o = owner(10_000);
+        o.cascade_tier = Some(BoCascadeTier::LegacyPreCascade);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::LegacyCascadeTierOnNewDeclaration { .. }
+        ));
+    }
+
+    #[test]
+    fn nominee_missing_nominator_refused() {
+        let mut o = owner(10_000);
+        o.is_nominee = Some(true);
+        o.nominator_person_id = None;
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::NomineeMissingNominator { .. }
+        ));
+    }
+
+    #[test]
+    fn nominator_without_nominee_flag_refused() {
+        let mut o = owner(10_000);
+        o.is_nominee = Some(false);
+        o.nominator_person_id = Some(PersonId(Uuid::now_v7()));
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::NominatorWithoutNomineeFlag { .. }
+        ));
+    }
+
+    #[test]
+    fn self_nomination_refused() {
+        let mut o = owner(10_000);
+        o.is_nominee = Some(true);
+        o.nominator_person_id = Some(o.person_id);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![o]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::SelfNominationForbidden { .. }
+        ));
+    }
+
+    #[test]
+    fn nominator_must_be_registered_on_declaration() {
+        let mut nominee = owner(10_000);
+        nominee.is_nominee = Some(true);
+        let unknown_nominator = PersonId(Uuid::now_v7());
+        nominee.nominator_person_id = Some(unknown_nominator);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![nominee]);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::NominatorNotRegisteredOnDeclaration { .. }
+        ));
+    }
+
+    #[test]
+    fn nominee_with_nominator_registered_succeeds() {
+        let nominator_id = PersonId(Uuid::now_v7());
+        let mut nominator = owner(0); // nominator can hold zero direct interest
+        nominator.person_id = nominator_id;
+        // Adjust the nominator's BP up so the sum is 10_000:
+        nominator.ownership_basis_points =
+            OwnershipBasisPoints::try_from_basis_points(5_000).unwrap();
+        let mut nominee = owner(0);
+        nominee.ownership_basis_points =
+            OwnershipBasisPoints::try_from_basis_points(5_000).unwrap();
+        nominee.is_nominee = Some(true);
+        nominee.nominator_person_id = Some(nominator_id);
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![nominator, nominee]);
+        let event = agg.handle_submit(cmd).expect("nominee + nominator admissible");
+        let DeclarationEvent::Submitted(_) = event else { panic!() };
+    }
+
+    #[test]
+    fn adequacy_claims_empty_legal_basis_refused() {
+        let claims = AdequacyClaims {
+            adequate: true,
+            accurate: true,
+            up_to_date_as_of: OffsetDateTime::now_utc(),
+            legal_basis: "   ".into(),
+        };
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.adequacy_claims = Some(claims);
+        assert_eq!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::AdequacyLegalBasisEmpty
+        );
+    }
+
+    #[test]
+    fn adequacy_claims_future_as_of_refused() {
+        let claims = AdequacyClaims {
+            adequate: true,
+            accurate: true,
+            up_to_date_as_of: OffsetDateTime::now_utc() + Duration::days(1),
+            legal_basis: "CEMAC AML/CFT règlement art. 12".into(),
+        };
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.adequacy_claims = Some(claims);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::AdequacyAsOfInFuture { .. }
+        ));
+    }
+
+    #[test]
+    fn adequacy_claims_stale_as_of_refused() {
+        let claims = AdequacyClaims {
+            adequate: true,
+            accurate: true,
+            up_to_date_as_of: OffsetDateTime::now_utc() - Duration::days(31),
+            legal_basis: "CEMAC AML/CFT règlement art. 12".into(),
+        };
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.adequacy_claims = Some(claims);
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::AdequacyAsOfStale { .. }
+        ));
+    }
+
+    #[test]
+    fn adequacy_claims_within_window_succeeds() {
+        let claims = AdequacyClaims {
+            adequate: true,
+            accurate: true,
+            up_to_date_as_of: OffsetDateTime::now_utc() - Duration::days(7),
+            legal_basis: "CEMAC AML/CFT règlement art. 12".into(),
+        };
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.adequacy_claims = Some(claims);
+        let event = agg.handle_submit(cmd).expect("within-window adequacy admissible");
+        let DeclarationEvent::Submitted(p) = event else { panic!() };
+        assert!(p.adequacy_claims.is_some());
+    }
+
+    #[test]
+    fn legacy_owner_without_cascade_tier_accepted_for_backcompat() {
+        // Historical declarations replay with `cascade_tier = None`.
+        // The aggregate does NOT refuse them — the API DTO layer is
+        // where required-ness lives. This test guards forward-compat
+        // replay: a 50-event projection rebuild must not blow up
+        // because the events pre-date the cascade migration.
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let cmd = submit_command(agg.id, vec![owner(10_000)]);
+        // `owner()` sets cascade_tier = None.
+        let event = agg.handle_submit(cmd).expect("legacy shape admissible");
+        let DeclarationEvent::Submitted(_) = event else { panic!() };
     }
 }

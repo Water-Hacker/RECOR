@@ -205,10 +205,16 @@ mod tests {
                 ownership_basis_points: OwnershipBasisPoints::try_from_basis_points(10_000)
                     .unwrap(),
                 interest_kind: InterestKind::Equity,
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
             }],
             attestation: attestation_for(PRINCIPAL),
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
+            adequacy_claims: None,
         }
     }
 

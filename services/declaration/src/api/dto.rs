@@ -53,6 +53,12 @@ impl SubmitDeclarationRequest {
             effective_from: self.effective_from,
             beneficial_owners: self.beneficial_owners,
             attestation: self.attestation,
+            // PR-FATF-2.A scope intentionally defers the API-DTO surface
+            // for adequacy_claims to PR-FATF-2.B. Until then this path
+            // leaves the field None; aggregate accepts None for
+            // backward-compatible inputs while still enforcing the
+            // structural invariants when Some.
+            adequacy_claims: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
         }
@@ -399,6 +405,8 @@ impl AmendDeclarationRequest {
                 beneficial_owners: self.beneficial_owners,
                 effective_from: self.effective_from,
                 declarant_role: self.declarant_role,
+                // Deferred to PR-FATF-2.B; see SubmitDeclaration note.
+                adequacy_claims: None,
             },
             attestation: self.attestation,
             submitted_at: OffsetDateTime::now_utc(),
