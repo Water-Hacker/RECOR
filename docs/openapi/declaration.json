@@ -987,6 +987,35 @@
   },
   "components": {
     "schemas": {
+      "AdequacyClaims": {
+        "type": "object",
+        "description": "TODO-021 closure — explicit FATF claims block.\n\nFATF R.24 c.24.8 requires BO data to be \"adequate, accurate, and\nup-to-date\". The cryptographic attestation by itself only proves\nauthorship of the bytes; the explicit claims block proves the\ndeclarant *asserts* the three properties, which is the surface a\nsanctions workflow (TODO-004) needs to demonstrate perjury when\na claim is later shown false.\n\nThe block is included in the canonical payload bytes (the bytes\nsigned by Ed25519) so any tampering with claims invalidates the\nsignature. Historical declarations that pre-date this migration\ndeserialise with `None` via `#[serde(default)]`.",
+        "required": [
+          "adequate",
+          "accurate",
+          "up_to_date_as_of",
+          "legal_basis"
+        ],
+        "properties": {
+          "accurate": {
+            "type": "boolean",
+            "description": "The declarant asserts the BO data is *accurate* — verified by\nreliable, independently sourced documents per c.24.8 fn 28."
+          },
+          "adequate": {
+            "type": "boolean",
+            "description": "The declarant asserts the BO data is *adequate* —\nsufficient to identify each natural person per c.24.8 fn 27\n(full name, all nationalities, full DOB + place, residential\naddress, national ID, TIN or equivalent). Required for new\ndeclarations; missing on legacy projections."
+          },
+          "legal_basis": {
+            "type": "string",
+            "description": "Free-text legal basis — typically a citation to the CEMAC\nRèglement, Cameroon AML law, or the obligation under which the\ndeclarant files. The aggregate validates length only; semantic\nreview is the back-office responsibility."
+          },
+          "up_to_date_as_of": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The declarant asserts the BO data is *up-to-date as of* the\ngiven timestamp (c.24.8 fn 29; FATF benchmark: within 1 month\nof any change)."
+          }
+        }
+      },
       "AmendDeclarationRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/declarations/{id}/amend`. Carries the\nfull replacement value for every amendable field plus a fresh\nEd25519 attestation signed over the AMENDED canonical form by the\ndeclarant. The `declarant_principal` is sourced from authentication\nat the API boundary (D17), not from this body.",
@@ -1057,6 +1086,17 @@
           "declarant_role"
         ],
         "properties": {
+          "adequacy_claims": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AdequacyClaims",
+                "description": "TODO-021: replacement adequacy_claims block. The declarant\nre-asserts adequate / accurate / up-to-date for the amended\nvalues. Optional on the type for back-compat with legacy\nAmended events; required at the API DTO boundary for new\namendments."
+              }
+            ]
+          },
           "beneficial_owners": {
             "type": "array",
             "items": {
@@ -1078,16 +1118,63 @@
       },
       "BeneficialOwnerClaim": {
         "type": "object",
-        "description": "One declared beneficial owner with their interest in the entity.",
+        "description": "One declared beneficial owner with their interest in the entity.\n\nFATF cascade (TODO-001 closure): R.24 §c.24.6 fn 25 requires every\nBO to be identified under the explicit cascade ownership → control →\nsenior managing official. The platform records the cascade tier\n(`cascade_tier`) and, for the Control tier, the specific control\nbasis (`control_basis`). Tier (c) — Senior Managing Official — is\nonly admissible when tier (b) has been searched-for-and-ruled-out\n(enforced at the aggregate; declarant submits the ruled-out\ndeclaration in `cascade_tier_b_ruled_out_evidence`).\n\nNominee disclosure (TODO-010 closure): R.24 §c.24.12 requires\nnominee arrangements to disclose the nominator. `is_nominee = true`\nrequires `nominator_person_id` to resolve to a separately-registered\nperson who themselves appears at the appropriate cascade tier.\n\nBackwards-compatibility: every FATF field is `Option<T>` and uses\n`#[serde(default)]` so historical Submitted/Amended/Corrected events\nthat pre-date this migration replay without loss. NEW declarations\nMUST present `cascade_tier` (validated at the API DTO ⇒ command\nboundary; missing → 400). Historical projections report the legacy\n`LegacyPreCascade` tier value on read.",
         "required": [
           "person_id",
           "ownership_basis_points",
           "interest_kind"
         ],
         "properties": {
+          "cascade_tier": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BoCascadeTier",
+                "description": "FATF cascade tier. New declarations MUST set this; historical\ndeclarations (pre-FATF-cascade migration) deserialise with `None`\nand are reported as `LegacyPreCascade` at the projection layer."
+              }
+            ]
+          },
+          "cascade_tier_b_ruled_out_evidence": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For tier (c) Senior Managing Official, free-text evidence that\ntier (b) was searched-for-and-ruled-out. Required when\n`cascade_tier == Some(SeniorManagingOfficial)`. The aggregate\nonly validates presence + length; semantic verification is the\nback-office reviewer's responsibility."
+          },
+          "control_basis": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BoControlBasis",
+                "description": "For tier (b) Control, the specific control basis. Required when\n`cascade_tier == Some(Control)`; refused for other tiers."
+              }
+            ]
+          },
           "interest_kind": {
             "$ref": "#/components/schemas/InterestKind",
             "description": "Nature of the interest — equity, voting-rights, control-without-equity, etc."
+          },
+          "is_nominee": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "TODO-010: is this BO acting on behalf of a nominator?"
+          },
+          "nominator_person_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PersonId",
+                "description": "TODO-010: when `is_nominee = Some(true)`, the person_id of the\nnominator. The nominator MUST appear as a separately-registered\nperson, and the aggregate refuses self-nomination (person_id ==\nnominator_person_id)."
+              }
+            ]
           },
           "ownership_basis_points": {
             "$ref": "#/components/schemas/OwnershipBasisPoints",
@@ -1098,6 +1185,28 @@
             "description": "Canonical person identifier. The declarant supplies this; the\nPerson service is the source of truth that the verification engine\nvalidates against in a later pipeline stage."
           }
         }
+      },
+      "BoCascadeTier": {
+        "type": "string",
+        "description": "FATF R.24 §c.24.6 cascade tiers. The cascade resolves the question\n\"who is the beneficial owner\" in this order:\n\n  (a) Ownership — natural persons who hold ≥ 25% of equity or\n      equivalent direct/indirect interest.\n  (b) Control — natural persons exercising control through other\n      means: voting rights, board-appointment power, contractual\n      arrangements, family aggregation.\n  (c) Senior Managing Official — the residual fallback when (a)\n      and (b) yield no identified BO.\n\n`LegacyPreCascade` is a read-time sentinel for projection rows that\nwere submitted before this migration shipped. It MUST never be the\ntarget of a new declaration; the API DTO ⇒ command path refuses it.",
+        "enum": [
+          "ownership_direct",
+          "ownership_indirect",
+          "control",
+          "senior_managing_official",
+          "legacy_pre_cascade"
+        ]
+      },
+      "BoControlBasis": {
+        "type": "string",
+        "description": "FATF R.24 §c.24.6(b) control bases. Required when\n`BoCascadeTier == Control`; refused otherwise.",
+        "enum": [
+          "voting_rights",
+          "board_appointment",
+          "contractual_control",
+          "family_aggregation",
+          "other_documented"
+        ]
       },
       "CorrectDeclarationRequest": {
         "type": "object",
@@ -1160,7 +1269,7 @@
       },
       "CryptographicAttestation": {
         "type": "object",
-        "description": "A signed attestation submitted with a declaration.\n\nThe signature is over the canonical JSON form of the declaration\npayload (entity_id, declarant_principal, declarant_role,\ndeclaration_kind, effective_from, beneficial_owners, nonce_hex),\nserialised with sorted keys, no whitespace, UTF-8 — i.e. JCS\n(RFC 8785). The nonce protects against replay.",
+        "description": "A signed attestation submitted with a declaration.\n\nThe signature is over the canonical JSON form of the declaration\npayload (entity_id, declarant_principal, declarant_role,\ndeclaration_kind, effective_from, beneficial_owners,\nadequacy_claims, nonce_hex), serialised with sorted keys, no\nwhitespace, UTF-8 — i.e. JCS (RFC 8785). The nonce protects\nagainst replay.",
         "required": [
           "signed_by",
           "signature_algorithm",

@@ -267,9 +267,9 @@ mod tests {
             },
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
-        }
             adequacy_claims: None,
-}
+        }
+    }
 
     #[tokio::test]
     async fn happy_path_submits_and_returns_receipt() {

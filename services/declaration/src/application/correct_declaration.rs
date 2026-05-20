@@ -214,9 +214,9 @@ mod tests {
             attestation: attestation_for(PRINCIPAL),
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
-        }
             adequacy_claims: None,
-}
+        }
+    }
 
     fn correct_cmd(
         id: DeclarationId,

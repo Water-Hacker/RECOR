@@ -215,9 +215,9 @@ mod tests {
             },
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
-        }
             adequacy_claims: None,
-}
+        }
+    }
 
     async fn submitted_aggregate(repo: &Arc<InMemoryRepo>, id: DeclarationId) {
         use crate::application::SubmitDeclarationUseCase;

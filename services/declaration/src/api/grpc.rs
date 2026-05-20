@@ -270,7 +270,6 @@ impl DeclarationService for DeclarationGrpcService {
             adequacy_claims: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
-            adequacy_claims: None,
         };
 
         let receipt = self
@@ -384,7 +383,6 @@ impl DeclarationService for DeclarationGrpcService {
             adequacy_claims: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
-            adequacy_claims: None,
         };
 
         let receipt = self

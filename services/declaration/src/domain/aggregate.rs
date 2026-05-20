@@ -29,7 +29,8 @@ use super::event::{
     DeclarationSupersededV1, DeclarationVerifiedV1,
 };
 use super::value_object::{
-    AmendmentSet, BeneficialOwnerClaim, CorrectionSet, DeclarationId, DeclarationState,
+    AmendmentSet, BeneficialOwnerClaim, BoCascadeTier, CorrectionSet, DeclarationId,
+    DeclarationState,
 };
 
 /// In-memory representation of a Declaration aggregate, hydrated from
