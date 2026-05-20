@@ -92,6 +92,18 @@ pub enum RepositoryError {
     #[error("declaration {0} already has a recorded event with same idempotency key")]
     DuplicateIdempotencyKey(String),
 
+    /// TODO-017 closure: a previously-seen `(signer_public_key, nonce_hex)`
+    /// pair was presented again. The Ed25519 attestation is rejected
+    /// because accepting it would allow a captured signature to be
+    /// replayed against a new declaration (OWASP ASVS V2.5;
+    /// `REQ-asvs-v2-005`). Distinct from `Conflict` (which is about
+    /// optimistic-concurrency on the aggregate version).
+    #[error("attestation nonce already used by this signer (replay rejected)")]
+    NonceCollision {
+        signer_public_key_hex: String,
+        nonce_hex: String,
+    },
+
     #[error("storage backend failure: {0}")]
     Backend(#[from] sqlx::Error),
 

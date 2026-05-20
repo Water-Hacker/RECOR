@@ -926,6 +926,11 @@ fn repository_to_status(e: crate::application::RepositoryError) -> Status {
     use crate::application::RepositoryError;
     match e {
         RepositoryError::Conflict { .. } => Status::failed_precondition(format!("{e}")),
+        // TODO-017 closure: nonce replay is a structural client error
+        // — the signature verifies but the (pubkey, nonce) was already
+        // consumed. Maps to ALREADY_EXISTS so clients distinguish
+        // replay from concurrency.
+        RepositoryError::NonceCollision { .. } => Status::already_exists(format!("{e}")),
         // Generic infrastructure faults: signal with `internal`. Do NOT
         // leak inner error detail — log it server-side, return a
         // boilerplate message (D18 no secrets in errors, D14 fail-closed).
