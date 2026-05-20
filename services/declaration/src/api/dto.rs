@@ -85,6 +85,9 @@ impl SubmitDeclarationRequest {
             beneficial_owners: self.beneficial_owners,
             attestation: self.attestation,
             adequacy_claims: self.adequacy_claims,
+            // PR-FATF-4 / TODO-005 — deferred to PR-FATF-4.B; aggregate
+            // accepts None for back-compat.
+            last_event_observed_at: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
         })
