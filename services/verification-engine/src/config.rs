@@ -215,6 +215,80 @@ pub struct Config {
     /// stub.
     #[serde(default)]
     pub enable_real_patterns: bool,
+
+    /// TODO-013 — Activate the real Stage 7 (cross-source
+    /// triangulation) instead of the stub. The real stage compares
+    /// upstream Stage 3-6 outcomes + the declaration's structural
+    /// claims (cascade tier, nominee disclosure, adequacy_claims)
+    /// and synthesises a triangulated authenticity / risk BPA.
+    /// ADR-0014 documents the decision rules.
+    #[serde(default)]
+    pub enable_real_stage7: bool,
+
+    /// TODO-015 — BUNEC adapter selection.
+    ///
+    /// `mock` (default) — uses `PostgresMockBunec` against the
+    /// `mock_bunec_persons` table seeded by integration smoke tests.
+    /// `real` — uses `RealBunecAdapter` against the BUNEC REST surface
+    /// at `BUNEC_BASE_URL`.
+    ///
+    /// Production manifests MUST set `BUNEC_ADAPTER_KIND=real` once
+    /// the cross-organisational agreement with BUNEC is in place.
+    /// Until then, the mock is the explicit fail-closed default and
+    /// the readiness probe reports the kind in use so operators can
+    /// see at a glance.
+    #[serde(default = "default_bunec_adapter_kind")]
+    pub bunec_adapter_kind: String,
+    /// Base URL for the real BUNEC REST adapter. Empty disables the
+    /// real path. Used only when `bunec_adapter_kind = "real"`.
+    #[serde(default)]
+    pub bunec_base_url: String,
+    /// API key (Bearer) for the BUNEC adapter. Empty disables the
+    /// real path. Loaded via the Vault path
+    /// `recor/v-engine/bunec`.
+    #[serde(default = "default_bunec_api_key")]
+    pub bunec_api_key: secrecy::SecretString,
+    /// Per-call HTTP timeout for the real BUNEC adapter, seconds.
+    #[serde(default = "default_bunec_timeout_secs")]
+    pub bunec_timeout_secs: u64,
+    /// Number of retry attempts inside a single `lookup` call.
+    #[serde(default = "default_bunec_retry_attempts")]
+    pub bunec_retry_attempts: u32,
+    /// Base for exponential backoff between retries, milliseconds.
+    #[serde(default = "default_bunec_retry_backoff_ms")]
+    pub bunec_retry_backoff_ms: u64,
+    /// Open the circuit breaker after this many consecutive failures.
+    #[serde(default = "default_bunec_breaker_failures")]
+    pub bunec_breaker_consecutive_failures: u32,
+    /// Half-open the breaker this long (seconds) after opening.
+    #[serde(default = "default_bunec_breaker_half_open_secs")]
+    pub bunec_breaker_half_open_secs: u64,
+    /// Failure policy. `fail-closed` (production default) | `fail-open`
+    /// (dev default). Empty inherits the environment-default.
+    #[serde(default)]
+    pub bunec_fail_policy: String,
+}
+
+fn default_bunec_adapter_kind() -> String {
+    "mock".to_string()
+}
+fn default_bunec_api_key() -> secrecy::SecretString {
+    secrecy::SecretString::from(String::new())
+}
+fn default_bunec_timeout_secs() -> u64 {
+    2
+}
+fn default_bunec_retry_attempts() -> u32 {
+    3
+}
+fn default_bunec_retry_backoff_ms() -> u64 {
+    200
+}
+fn default_bunec_breaker_failures() -> u32 {
+    5
+}
+fn default_bunec_breaker_half_open_secs() -> u64 {
+    30
 }
 
 impl Config {

@@ -166,6 +166,7 @@ impl StalenessWatcher {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)] // Rust 2024: env::set_var / remove_var are unsafe; tests serialised by the runner.
 mod tests {
     use super::*;
     use std::env;

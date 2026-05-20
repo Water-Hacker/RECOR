@@ -296,6 +296,8 @@ mod tests {
         Principal {
             subject: subject.to_string(),
             source: crate::api::auth::PrincipalSource::DevHeader,
+            assurance_level: crate::api::oidc::AssuranceLevel::Ial3,
+            class: crate::api::auth::PrincipalClass::Admin,
         }
     }
 

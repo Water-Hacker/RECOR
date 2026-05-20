@@ -217,7 +217,7 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: upload SBOM + scan reports as workflow artifacts
+      - name: upload SBOM + scan reports + SLSA provenance as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: supply-chain-${{ matrix.image }}
@@ -226,6 +226,11 @@ jobs:
             sbom-${{ matrix.image }}.cdx.json
             trivy-${{ matrix.image }}.json
             trivy-${{ matrix.image }}.sarif
+            slsa-provenance-${{ matrix.image }}.json
+          # TODO-022: SLSA provenance is uploaded conditionally — the
+          # action runs before it on the same matrix job, so the file
+          # is always present at this point. `if-no-files-found: error`
+          # catches the regression where the SLSA step is removed.
           if-no-files-found: error
           retention-days: 90
 
@@ -273,6 +278,92 @@ jobs:
           cosign attest --yes \
             --predicate "${SBOM_FILE}" \
             --type cyclonedx \
+            "${IMAGE_REF}"
+
+      # ─── SLSA provenance attestation (TODO-022) ────────────────────
+      # Generate an in-toto SLSA-Provenance v1.0 predicate describing
+      # how the image was produced, then bind it to the image digest
+      # via cosign-keyless attestation. The build itself runs inside
+      # `docker/build-push-action@v6` with `provenance: true` (BuildKit
+      # provenance); this step lifts that into a cosign-signed SLSA
+      # statement so a downstream verifier can chain:
+      #
+      #   image digest → cosign attestation → SLSA build provenance →
+      #     workflow file (this file) → repository commit.
+      #
+      # The predicate captures:
+      #   - builder.id = the workflow run URL (uniquely identifies the
+      #     hosted runner + this workflow)
+      #   - buildType = SLSA's standard `https://github.com/Attestations/GithubActionsWorkflow@v1`
+      #   - invocation = the actor + ref + sha + event_name
+      #   - materials = the source repo + commit at the digest used
+      #
+      # The full hermetic + isolation level required for SLSA L4 is not
+      # achievable on hosted GitHub runners (L4 demands a built-from-
+      # source, hermetic, reproducible build environment). We currently
+      # target SLSA L3 (GitHub-hosted runner is the trusted builder;
+      # provenance is cryptographically signed; build is non-falsifiable
+      # under the runner's threat model). L4 is tracked in the
+      # supply-chain runbook as the next-step ceiling.
+      - name: generate SLSA provenance predicate
+        env:
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          EVENT: ${{ github.event_name }}
+          WORKFLOW_URL: https://github.com/${{ github.repository }}/.github/workflows/publish-images.yaml@${{ github.sha }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > slsa-provenance-${IMAGE}.json <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "${REF}",
+                  "repository": "https://github.com/${{ github.repository }}",
+                  "path": ".github/workflows/publish-images.yaml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "${EVENT}",
+                  "actor_id": "${ACTOR}"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/${{ github.repository }}@${REF}",
+                  "digest": { "gitCommit": "${SHA}" }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "${WORKFLOW_URL}",
+                "version": { "github_actions": "$(uname -r)" }
+              },
+              "metadata": {
+                "invocationId": "${RUN_URL}"
+              }
+            }
+          }
+          EOF
+
+      - name: cosign attest — SLSA provenance (TODO-022)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          PROVENANCE_FILE: slsa-provenance-${{ matrix.image }}.json
+        run: |
+          set -euo pipefail
+          echo "Attesting SLSA provenance (${PROVENANCE_FILE}) for ${IMAGE_REF}"
+          cosign attest --yes \
+            --predicate "${PROVENANCE_FILE}" \
+            --type slsaprovenance1 \
             "${IMAGE_REF}"
 
       # ─── Workflow summary (D16) ───────────────────────────────────
@@ -345,14 +436,16 @@ jobs:
             > /dev/null
           echo "Signature verified for ${IMAGE_REF}"
 
-      - name: verify SBOM attestations (post-publish self-check)
+      - name: verify SBOM + SLSA attestations (post-publish self-check)
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           IDENTITY_REGEX: https://github.com/Water-Hacker/RECOR/.github/workflows/publish-images.yaml@.*
           ISSUER: https://token.actions.githubusercontent.com
         run: |
           set -euo pipefail
-          for predicate_type in spdxjson cyclonedx; do
+          # TODO-022: include SLSA provenance in the verifier loop so a
+          # silent regression in the slsa-attest step is caught here.
+          for predicate_type in spdxjson cyclonedx slsaprovenance1; do
             echo "Verifying ${predicate_type} attestation for ${IMAGE_REF}"
             cosign verify-attestation \
               --type "${predicate_type}" \

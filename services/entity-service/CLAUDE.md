@@ -94,6 +94,15 @@ and replays return the original receipt with the original status code.
 
 ## Active development context
 
+- **FATF R.25 arrangements (TODO-002).** Migration 0003 lands the
+  `arrangements` + `arrangement_events` schema (settlor, trustee,
+  protector, named-beneficiary, class-beneficiary, and
+  control-exercise role columns; COMP-2 immutability triggers; 5-year
+  retention_until column). ADR-0015 documents the architectural
+  choice (discriminated section of entity-service, not a separate
+  bounded context). The REST surface (`/v1/arrangements`) + domain
+  invariants land in the `TODO-002-domain` follow-up.
+
 - This is a skeleton in scope of IDENTITY-1. The following are deferred
   to follow-up tickets:
   - **R-VER-1 — BUNEC adapter.** Wire BUNEC as source-of-truth for

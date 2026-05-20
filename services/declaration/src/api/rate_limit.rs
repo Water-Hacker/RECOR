@@ -211,6 +211,8 @@ mod tests {
         req.extensions_mut().insert(Principal {
             subject: subject.to_string(),
             source: PrincipalSource::DevHeader,
+            assurance_level: crate::api::oidc::AssuranceLevel::Ial3,
+            class: crate::api::auth::PrincipalClass::Declarant,
         });
         req
     }

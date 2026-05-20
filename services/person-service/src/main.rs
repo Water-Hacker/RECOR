@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use recor_person_service::api::{AppState, OidcVerifier};
@@ -16,6 +17,9 @@ use recor_person_service::application::{
 use recor_person_service::config::Config;
 use recor_person_service::infrastructure::postgres::{
     IdempotencyStore, PostgresPersonRepository,
+};
+use recor_person_service::infrastructure::retention::{
+    warn_if_misconfigured, OutboxRetention,
 };
 
 #[tokio::main]
@@ -164,6 +168,8 @@ async fn main() -> Result<()> {
     // FIND-007: clone the metrics Arc BEFORE moving it into AppState so
     // we can hand a copy to the separate metrics listener below.
     let metrics_for_separate_listener = metrics.clone();
+    // COMP-2: clone for the outbox retention worker (TODO-016).
+    let state_metrics_for_retention = metrics.clone();
     let metrics_bind_addr = cfg.metrics_bind_addr.clone();
 
     let app_state = AppState {
@@ -191,6 +197,8 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding to {addr}"))?;
     info!(%addr, "listening");
 
+    let cancel = CancellationToken::new();
+
     let metrics_handle = if !metrics_bind_addr.is_empty() {
         let m_addr: SocketAddr = metrics_bind_addr
             .parse()
@@ -200,10 +208,13 @@ async fn main() -> Result<()> {
             .with_context(|| format!("binding metrics listener {m_addr}"))?;
         let m_router =
             recor_person_service::api::metrics_only_router(metrics_for_separate_listener);
+        let cancel_metrics = cancel.clone();
         info!(addr = %m_addr, "metrics listener bound (FIND-007 separate-port posture)");
         Some(tokio::spawn(async move {
             if let Err(e) = axum::serve(m_listener, m_router)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(async move {
+                    cancel_metrics.cancelled().await;
+                })
                 .await
             {
                 tracing::error!(error = ?e, "metrics listener error");
@@ -214,12 +225,43 @@ async fn main() -> Result<()> {
         None
     };
 
-    let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
+    // COMP-2 — outbox retention worker. Always spawned so a single
+    // cancellation surface covers every background task; when
+    // OUTBOX_RETENTION_DAYS=0 (test/dev default) it logs "disabled" and
+    // waits on the cancel token, doing no work. Production operators
+    // opt in by setting the env explicitly.
+    warn_if_misconfigured(
+        cfg.outbox_retention_days,
+        cfg.outbox_retention_interval_seconds,
+    );
+    let retention = OutboxRetention::new(pool.clone())
+        .with_retention_days(cfg.outbox_retention_days)
+        .with_interval(std::time::Duration::from_secs(
+            cfg.outbox_retention_interval_seconds,
+        ))
+        .with_metrics(state_metrics_for_retention.clone());
+    info!(
+        retention_days = cfg.outbox_retention_days,
+        interval_s = cfg.outbox_retention_interval_seconds,
+        "outbox retention worker spawning"
+    );
+    let cancel_retention = cancel.clone();
+    let retention_handle = tokio::spawn(async move {
+        retention.run(cancel_retention).await;
+    });
+
+    let cancel_serve = cancel.clone();
+    let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        cancel_serve.cancel();
+    });
 
     if let Err(e) = serve.await {
         error!(error = ?e, "server error");
+        cancel.cancel();
         return Err(anyhow::anyhow!(e));
     }
+    let _ = retention_handle.await;
     if let Some(h) = metrics_handle {
         let _ = h.await;
     }

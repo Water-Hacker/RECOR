@@ -33,6 +33,13 @@ pub struct Metrics {
     pub oidc_jwks_fetch_latency_seconds: HistogramVec,
     pub oidc_verify_total: IntCounterVec,
 
+    /// COMP-2 outbox retention prune counter. `result=success`
+    /// increments BY rows-pruned per cycle; `result=error` increments
+    /// BY 1 per failed cycle. Mirrors the declaration-service surface
+    /// so a single Prometheus alert rule covers every event-sourced
+    /// service in the platform.
+    pub outbox_retention_pruned_total: IntCounterVec,
+
     pub health_check_duration_seconds: HistogramVec,
 }
 
@@ -94,6 +101,15 @@ impl Metrics {
         )?;
         registry.register(Box::new(persons_search_total.clone()))?;
 
+        let outbox_retention_pruned_total = IntCounterVec::new(
+            Opts::new(
+                "recor_outbox_retention_pruned_total",
+                "COMP-2 outbox retention prune counter. result=success increments BY rows-pruned per cycle; result=error increments BY 1 per failed cycle.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(outbox_retention_pruned_total.clone()))?;
+
         let oidc_jwks_fetch_latency_seconds = HistogramVec::new(
             HistogramOpts::new(
                 "recor_oidc_jwks_fetch_latency_seconds",
@@ -132,6 +148,7 @@ impl Metrics {
             persons_search_total,
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
+            outbox_retention_pruned_total,
             health_check_duration_seconds,
         }))
     }
@@ -224,6 +241,9 @@ mod tests {
         m.persons_merged_total.with_label_values(&["success"]).inc();
         m.persons_search_total.with_label_values(&["yes"]).inc();
         m.oidc_verify_total.with_label_values(&["success"]).inc();
+        m.outbox_retention_pruned_total
+            .with_label_values(&["success"])
+            .inc();
         m.health_check_duration_seconds
             .with_label_values(&["readyz"])
             .observe(0.002);
@@ -237,6 +257,7 @@ mod tests {
             "recor_persons_merged_total",
             "recor_persons_search_total",
             "recor_oidc_verify_total",
+            "recor_outbox_retention_pruned_total",
             "recor_health_check_duration_seconds",
         ] {
             assert!(

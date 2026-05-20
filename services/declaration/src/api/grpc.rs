@@ -156,9 +156,25 @@ fn resolve_principal_blocking(
             if subject.is_empty() {
                 return Err(Status::invalid_argument("empty dev principal header"));
             }
+            // TODO-020 — dev gRPC path mirrors the REST shortcut:
+            // default to IAL3 so existing dev tests keep passing, with
+            // an optional `x-recor-dev-acr` metadata key for tests
+            // that exercise step-up.
+            let assurance_level = metadata
+                .get("x-recor-dev-acr")
+                .and_then(|v| v.to_str().ok())
+                .map(crate::api::oidc::AssuranceLevel::from_acr_claim)
+                .unwrap_or(crate::api::oidc::AssuranceLevel::Ial3);
+            let class = metadata
+                .get("x-recor-dev-class")
+                .and_then(|v| v.to_str().ok())
+                .map(crate::api::auth::PrincipalClass::from_dev_header)
+                .unwrap_or(crate::api::auth::PrincipalClass::Declarant);
             return Ok(Principal {
                 subject,
                 source: PrincipalSource::DevHeader,
+                assurance_level,
+                class,
             });
         }
     }
@@ -198,6 +214,7 @@ fn resolve_principal_blocking(
             | VerificationError::UnsupportedAlgorithm(_)
             | VerificationError::NoUsableKey
             | VerificationError::MissingClaim(_)
+            | VerificationError::InsufficientAssurance { .. }
             | VerificationError::SubjectClaimAbsent { .. } => {
                 Status::unauthenticated("authentication required")
             }
@@ -211,9 +228,22 @@ fn resolve_principal_blocking(
     if claims.sub.trim().is_empty() {
         return Err(Status::unauthenticated("authentication required"));
     }
+    // TODO-020 — surface the IdP-advertised assurance level so the
+    // handler-level `Principal::require_assurance` gates apply on the
+    // gRPC surface too.
+    let assurance_level = claims.assurance_level();
+    // TODO-006 — surface the Sovim class.
+    let class = claims
+        .raw
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .map(crate::api::auth::PrincipalClass::from_scope_claim)
+        .unwrap_or(crate::api::auth::PrincipalClass::Declarant);
     Ok(Principal {
         subject: claims.sub,
         source: PrincipalSource::Bearer,
+        assurance_level,
+        class,
     })
 }
 

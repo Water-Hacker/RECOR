@@ -112,10 +112,11 @@ async fn spawn_service() -> TestService {
         idempotency_ttl_seconds: 3600,
         oidc: None,
         metrics: recor_declaration::metrics::Metrics::new().expect("metrics registry"),
+        admin_principals: std::sync::Arc::new(std::collections::HashSet::new()),
     };
 
     // Spawn REST.
-    let rest_router = recor_declaration::api::router(app_state.clone(), &cfg);
+    let rest_router = recor_declaration::api::router(app_state.clone(), &cfg, true);
     let rest_tcp = tokio::net::TcpListener::bind(&rest_bind_addr)
         .await
         .expect("rest rebind");

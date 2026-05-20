@@ -44,8 +44,35 @@ For pure image-signature verification, use the companion runbook
 | Image | `ghcr.io/water-hacker/recor-*:${sha}` | OCI manifest | cosign keyless |
 | SPDX SBOM | cosign attestation on the image | SPDX-JSON 2.3 | cosign keyless |
 | CycloneDX SBOM | cosign attestation on the image | CycloneDX 1.5 JSON | cosign keyless |
+| SLSA provenance (TODO-022) | cosign attestation on the image | SLSA-Provenance v1.0 in-toto | cosign keyless |
 | Trivy SARIF | GitHub code-scanning (Security tab) | SARIF 2.1 | n/a |
-| Trivy JSON + SARIF + both SBOMs | Workflow run artefact `supply-chain-<image>` | raw files | n/a |
+| Trivy JSON + SARIF + both SBOMs + SLSA provenance | Workflow run artefact `supply-chain-<image>` | raw files | n/a |
+
+### Downstream-consumer verifier — `tools/ci/verify-sbom.sh`
+
+Anyone (a downstream operator, an auditor, a CEMAC reviewer) can
+re-derive the full attestation chain for a published image:
+
+```sh
+tools/ci/verify-sbom.sh ghcr.io/water-hacker/recor-declaration@sha256:<digest>
+```
+
+The script verifies the image signature, both SBOM attestations, and
+the SLSA provenance — all keyless-bound to this workflow's OIDC
+identity — and writes the verified SBOMs + provenance to a local
+directory. Optional `WITH_TRIVY=1` re-runs the GHSA-feed gate. See
+the script header for full options.
+
+### SLSA assurance ceiling
+
+The publish-images workflow targets **SLSA L3**: GitHub-hosted runner
+is the trusted builder, provenance is cryptographically signed by the
+workflow's OIDC identity, and the predicate names the source commit
+plus the workflow file path. **SLSA L4** (hermetic + reproducible
+builds, third-party verifiable build environment) is not achievable
+on hosted GitHub runners; the next-step ceiling — a self-hosted
+hermetic builder with a deterministic Cargo lockfile and a SOURCE_DATE_EPOCH-
+honouring `Dockerfile` — is tracked in the supply-chain backlog.
 
 The two cosign attestations and the image signature all bind to the
 same certificate identity:

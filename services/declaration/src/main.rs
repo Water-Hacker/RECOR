@@ -206,6 +206,12 @@ async fn main() -> Result<()> {
     // bundle that the follow-up step consumes.
     let _spiffe = spiffe_client;
 
+    // TODO-006 — construct the admin allowlist once so both the
+    // DLQ-admin state and the Sovim-tiered get_declaration branch see
+    // the same set.
+    let admin_principals: std::collections::HashSet<String> =
+        cfg.admin_principals_list().into_iter().collect();
+
     let app_state = AppState {
         submit_usecase: submit,
         get_usecase: get,
@@ -221,6 +227,7 @@ async fn main() -> Result<()> {
         idempotency_ttl_seconds: cfg.idempotency_ttl_seconds,
         oidc,
         metrics: metrics.clone(),
+        admin_principals: Arc::new(admin_principals),
     };
 
     // FIND-007: when METRICS_BIND_ADDR is set, /metrics moves to a
@@ -410,7 +417,15 @@ async fn main() -> Result<()> {
     });
 
     let cancel_serve = cancel.clone();
-    let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
+    // TODO-009 — `ConnectInfo<SocketAddr>` extraction in
+    // `api::public_feedback::submit_public_feedback` requires the
+    // ConnectInfo layer; `into_make_service_with_connect_info` is
+    // a no-op cost for the other handlers.
+    let serve = axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
         shutdown_signal().await;
         cancel_serve.cancel();
     });

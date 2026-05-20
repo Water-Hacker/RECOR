@@ -29,9 +29,72 @@ use axum::{
 use recor_auth_oidc::{OidcVerifier, VerificationError};
 use tracing::warn;
 
+/// Post-Sovim authorisation tier.
+///
+/// Sovim (CJEU C-37/20 + C-601/20) struck down the public-by-default
+/// model for beneficial-ownership registries; access must be tiered so
+/// that:
+///
+/// - **Admin** — competent authority, FIU, supervisor. Sees the full
+///   canonical payload including national-ID-numbers, residential
+///   addresses, biometric hashes, and the signer's public key
+///   (REQ-fatf-c24-008-fn-27).
+/// - **ObligedEntity** — regulated counter-party with a supervised
+///   legitimate-interest claim (REQ-amld-iv-005). Sees a reduced
+///   payload: national-ID-numbers, residential addresses, biometric
+///   hashes, and signer-public-key are **never** disclosed.
+/// - **PublicLegitimateInterest** — journalist or civil-society caller
+///   admitted through the Sovim balancing test (REQ-cjeu-sovim-006).
+///   Sees the strict minimum: cryptographic verification outcome,
+///   counts, and entry-level Matched / Mismatch / Missing status. No
+///   timestamps, no transaction IDs, no event types — those constitute
+///   per-event metadata that bulk-scrapers could correlate.
+///
+/// The default tier on any token whose `scope` claim does NOT match a
+/// known scope is **PublicLegitimateInterest** — fail-closed (D14).
+/// TODO-006 will wire the OIDC scope `recor:obliged-entity` against
+/// the supervisor onboarding workflow; the matching is already in
+/// place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationTier {
+    Admin,
+    ObligedEntity,
+    PublicLegitimateInterest,
+}
+
+impl AuthorizationTier {
+    /// Parse a space-delimited OIDC `scope` claim string. Returns the
+    /// most-privileged tier the claim's scopes resolve to — admin
+    /// outranks obliged-entity outranks public.
+    pub fn from_scope_claim(scope: &str) -> Self {
+        let mut found = AuthorizationTier::PublicLegitimateInterest;
+        for s in scope.split_whitespace() {
+            match s {
+                "recor:admin" => return AuthorizationTier::Admin,
+                "recor:obliged-entity" => found = AuthorizationTier::ObligedEntity,
+                _ => {}
+            }
+        }
+        found
+    }
+
+    /// Parse the dev-mode `X-Recor-Dev-Scope` header value. Case-
+    /// insensitive. Unrecognised → PublicLegitimateInterest (D14).
+    pub fn from_dev_header(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "admin" => AuthorizationTier::Admin,
+            "obliged-entity" | "obliged_entity" => AuthorizationTier::ObligedEntity,
+            _ => AuthorizationTier::PublicLegitimateInterest,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Principal {
     pub subject: String,
+    /// Post-Sovim authorisation tier; drives per-tier redaction in the
+    /// verifier response. TODO-007 / TODO-023 / FIND-007.
+    pub tier: AuthorizationTier,
 }
 
 #[derive(Clone)]
@@ -85,7 +148,17 @@ async fn resolve_principal(
             if subject.is_empty() {
                 return Err(AuthError::BadRequest("empty dev principal header"));
             }
-            return Ok(Principal { subject });
+            // Resolve the dev tier from `X-Recor-Dev-Scope`. The
+            // fail-closed default is PublicLegitimateInterest — the
+            // tightest payload subset — so a forgotten header in a
+            // local integration test never accidentally surfaces an
+            // admin response.
+            let tier = headers
+                .get("x-recor-dev-scope")
+                .and_then(|v| v.to_str().ok())
+                .map(AuthorizationTier::from_dev_header)
+                .unwrap_or(AuthorizationTier::PublicLegitimateInterest);
+            return Ok(Principal { subject, tier });
         }
     }
 
@@ -113,6 +186,7 @@ async fn resolve_principal(
             | VerificationError::UnsupportedAlgorithm(_)
             | VerificationError::NoUsableKey
             | VerificationError::MissingClaim(_)
+            | VerificationError::InsufficientAssurance { .. }
             | VerificationError::SubjectClaimAbsent { .. } => {
                 AuthError::AuthenticationRequired
             }
@@ -124,7 +198,83 @@ async fn resolve_principal(
     if claims.sub.trim().is_empty() {
         return Err(AuthError::AuthenticationRequired);
     }
+    // Sovim tier resolution from the verified OIDC `scope` claim
+    // inside `claims.raw`. Empty / absent claim →
+    // PublicLegitimateInterest (the tightest subset) per D14
+    // fail-closed.
+    let tier = claims
+        .raw
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .map(AuthorizationTier::from_scope_claim)
+        .unwrap_or(AuthorizationTier::PublicLegitimateInterest);
     Ok(Principal {
         subject: claims.sub,
+        tier,
     })
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    #[test]
+    fn admin_scope_wins_over_obliged_entity() {
+        assert_eq!(
+            AuthorizationTier::from_scope_claim("recor:obliged-entity recor:admin"),
+            AuthorizationTier::Admin
+        );
+    }
+
+    #[test]
+    fn obliged_entity_when_only_obliged_present() {
+        assert_eq!(
+            AuthorizationTier::from_scope_claim("openid recor:obliged-entity"),
+            AuthorizationTier::ObligedEntity
+        );
+    }
+
+    #[test]
+    fn unknown_scope_defaults_to_public_legitimate_interest() {
+        assert_eq!(
+            AuthorizationTier::from_scope_claim("openid profile"),
+            AuthorizationTier::PublicLegitimateInterest
+        );
+        assert_eq!(
+            AuthorizationTier::from_scope_claim(""),
+            AuthorizationTier::PublicLegitimateInterest
+        );
+    }
+
+    #[test]
+    fn dev_header_admin() {
+        assert_eq!(
+            AuthorizationTier::from_dev_header("admin"),
+            AuthorizationTier::Admin
+        );
+        assert_eq!(
+            AuthorizationTier::from_dev_header("ADMIN"),
+            AuthorizationTier::Admin
+        );
+    }
+
+    #[test]
+    fn dev_header_obliged_entity_either_spelling() {
+        assert_eq!(
+            AuthorizationTier::from_dev_header("obliged-entity"),
+            AuthorizationTier::ObligedEntity
+        );
+        assert_eq!(
+            AuthorizationTier::from_dev_header("obliged_entity"),
+            AuthorizationTier::ObligedEntity
+        );
+    }
+
+    #[test]
+    fn dev_header_unknown_is_public() {
+        assert_eq!(
+            AuthorizationTier::from_dev_header("hacker"),
+            AuthorizationTier::PublicLegitimateInterest
+        );
+    }
 }

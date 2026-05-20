@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 
+use crate::auth::AuthorizationTier;
 use crate::fabric_client::OnChainEntry;
 use crate::hashing::derive_receipt_hash;
 use crate::projection::ProjectionRow;
@@ -83,6 +84,52 @@ pub struct VerificationReport {
     pub on_chain_count: usize,
     /// Total events in the projection that map to this declaration_id.
     pub projection_count: usize,
+}
+
+impl VerificationReport {
+    /// Apply Sovim-driven per-tier redaction (TODO-007 / TODO-023).
+    ///
+    /// The cryptographic verification outcome — `result` and per-entry
+    /// `status` — is always preserved: it is the audit-verifier's load-
+    /// bearing semantic and reveals no PII. The metadata fields that
+    /// expose per-event observability (`tx_id`, `on_chain_ts`,
+    /// `event_type`, hashes) are tiered as follows.
+    ///
+    /// - **Admin** — full payload; nothing redacted. Competent-
+    ///   authority access (REQ-fatf-c24-008-fn-27).
+    /// - **ObligedEntity** — keeps event_type, hashes, timestamps,
+    ///   tx_id. National-ID, residential address, biometric hash,
+    ///   signer_public_key — when ever added to the response — MUST be
+    ///   blank at this tier (REQ-amld-iv-005). Today the report carries
+    ///   none of those fields; the test in
+    ///   `tests/payload_scoping.rs` asserts the field set remains
+    ///   bounded so a future regression fails CI.
+    /// - **PublicLegitimateInterest** — strict minimum: per-entry
+    ///   status and the rolled-up `result` only. tx_id, hashes, times,
+    ///   and event types are stripped (REQ-cjeu-sovim-006). This makes
+    ///   bulk-scraping of per-event metadata useless.
+    pub fn redact_for_tier(&mut self, tier: AuthorizationTier) {
+        match tier {
+            AuthorizationTier::Admin => {}
+            AuthorizationTier::ObligedEntity => {
+                // Reserved hook: when payload fields exist on
+                // EntryReport in the future, strip the PII/biometric/
+                // signer fields here. The integration test in
+                // `tests/payload_scoping.rs` already asserts the
+                // expected field-set per tier; adding a field without
+                // updating the redactor will fail CI.
+            }
+            AuthorizationTier::PublicLegitimateInterest => {
+                for e in &mut self.entries {
+                    e.tx_id = None;
+                    e.on_chain_receipt_hash_hex = None;
+                    e.derived_receipt_hash_hex = None;
+                    e.on_chain_ts = None;
+                    e.event_type = None;
+                }
+            }
+        }
+    }
 }
 
 /// Build a verification report by joining on-chain entries with

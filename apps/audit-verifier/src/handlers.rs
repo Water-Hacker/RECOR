@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
@@ -12,7 +12,7 @@ use axum::{
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
-use crate::auth::{auth_middleware, AuthConfig};
+use crate::auth::{auth_middleware, AuthConfig, Principal};
 use crate::fabric_client::{FabricClient, FabricClientError};
 use crate::projection::ProjectionRepo;
 use crate::report::{build_report, VerificationReport};
@@ -51,9 +51,10 @@ async fn readyz() -> impl IntoResponse {
     (StatusCode::OK, "ready")
 }
 
-#[instrument(skip(state))]
+#[instrument(skip(state, principal), fields(subject = %principal.subject, tier = ?principal.tier))]
 async fn verify(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(declaration_id): Path<String>,
 ) -> impl IntoResponse {
     let decl_uuid = match Uuid::parse_str(&declaration_id) {
@@ -101,8 +102,17 @@ async fn verify(
         }
     }
 
-    let report: VerificationReport = build_report(decl_uuid, on_chain, projection_rows);
-    info!(declaration_id = %decl_uuid, result = ?report.result, "verification complete");
+    let mut report: VerificationReport = build_report(decl_uuid, on_chain, projection_rows);
+    // Sovim per-tier redaction (TODO-007 / TODO-023). The cryptographic
+    // verdict is always preserved; per-event observability metadata is
+    // tiered.
+    report.redact_for_tier(principal.tier);
+    info!(
+        declaration_id = %decl_uuid,
+        result = ?report.result,
+        tier = ?principal.tier,
+        "verification complete"
+    );
     (StatusCode::OK, Json(report)).into_response()
 }
 

@@ -20,6 +20,7 @@ pub mod stage_3_sanctions_stub;
 pub mod stage_4_pep_stub;
 pub mod stage_5_adverse_media_stub;
 pub mod stage_6_pattern_detection_stub;
+pub mod stage_7_cross_source_real;
 pub mod stage_7_cross_source_stub;
 
 pub use name_resolver::BunecNameResolver;
@@ -33,4 +34,5 @@ pub use stage_3_sanctions_stub::SanctionsStub;
 pub use stage_4_pep_stub::PepStub;
 pub use stage_5_adverse_media_stub::AdverseMediaStub;
 pub use stage_6_pattern_detection_stub::PatternDetectionStub;
+pub use stage_7_cross_source_real::CrossSourceTriangulationStage;
 pub use stage_7_cross_source_stub::CrossSourceStub;
