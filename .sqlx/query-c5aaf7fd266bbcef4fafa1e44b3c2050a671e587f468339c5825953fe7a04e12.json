@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, canonical_name, entity_type, jurisdiction,\n                   registration_number_in_jurisdiction,\n                   founded_at, dissolved_at, aggregate_version,\n                   created_at, updated_at\n            FROM entities\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "canonical_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "entity_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "jurisdiction",
+        "type_info": "Bpchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "registration_number_in_jurisdiction",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "founded_at",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 6,
+        "name": "dissolved_at",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 7,
+        "name": "aggregate_version",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c5aaf7fd266bbcef4fafa1e44b3c2050a671e587f468339c5825953fe7a04e12"
+}

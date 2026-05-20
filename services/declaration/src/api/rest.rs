@@ -69,6 +69,13 @@ pub struct AppState {
     /// in `main.rs`; cloned cheaply via `Arc<_>` into every handler
     /// + middleware site.
     pub metrics: Arc<Metrics>,
+    /// TODO-006: the admin-allowlist used by the
+    /// `get_declaration` Sovim-tiering branch. Mirrors the
+    /// DLQ state's `admin_principals`. Empty (the dev default)
+    /// means no principal upgrades to admin via the allowlist; the
+    /// owner-only path still applies, and ObligedEntity-class
+    /// callers see the reduced response.
+    pub admin_principals: Arc<std::collections::HashSet<String>>,
 }
 
 /// Build the main router for the declaration service.
@@ -154,12 +161,12 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
     // the protected routes, but the handlers gate themselves on
     // `Config::admin_principals_list()` so only the listed subjects
     // can list/replay DLQ rows. Empty list ⇒ endpoints return 503.
-    use std::collections::HashSet;
-    let admin_principals: HashSet<String> =
-        cfg.admin_principals_list().into_iter().collect();
+    // TODO-006: the same admin set lives on `AppState.admin_principals`
+    // for the Sovim get_declaration branch — reuse instead of
+    // re-constructing.
     let dlq_admin_state = DlqAdminState {
         store: state.outbox_admin.clone(),
-        admin_principals: Arc::new(admin_principals),
+        admin_principals: state.admin_principals.clone(),
         metrics: state.metrics.clone(),
     };
     let admin = Router::new()
@@ -169,7 +176,7 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
             post(crate::api::dlq::replay_dlq),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            auth_state,
+            auth_state.clone(),
             auth_middleware,
         ))
         .with_state(dlq_admin_state);
@@ -213,11 +220,70 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
     // these routes do not change state; they describe the surface.
     let openapi = crate::api::openapi::openapi_routes();
 
+    // TODO-003: discrepancy intake (obliged-entity-gated). Same auth
+    // middleware as `protected`; the handler enforces the
+    // PrincipalClass::ObligedEntity gate itself.
+    use crate::api::discrepancies::DiscrepancyState;
+    let discrepancy_router = crate::api::discrepancies::router(DiscrepancyState {
+        pool: state.idempotency.pool().clone(),
+    })
+    .route_layer(axum::middleware::from_fn_with_state(
+        auth_state.clone(),
+        auth_middleware,
+    ));
+
+    // TODO-008: FIU disclosure surface. OIDC-gated; handler enforces
+    // the PrincipalClass::FiuAnif gate. Production deployments
+    // additionally enforce mTLS peer-ID + IP allowlist at the
+    // network layer.
+    use crate::api::fiu::FiuState;
+    let fiu_router = crate::api::fiu::router(FiuState {
+        pool: state.idempotency.pool().clone(),
+    })
+    .route_layer(axum::middleware::from_fn_with_state(
+        auth_state.clone(),
+        auth_middleware,
+    ));
+
+    // TODO-009: public-feedback intake. UNAUTHENTICATED at the OIDC
+    // layer — CAPTCHA + per-IP throttle are the access controls.
+    use crate::api::public_feedback::PublicFeedbackState;
+    let public_feedback_router =
+        crate::api::public_feedback::router(PublicFeedbackState {
+            pool: state.idempotency.pool().clone(),
+            metrics: state.metrics.clone(),
+            per_ip_max_per_window: cfg.public_feedback_per_ip_max_per_window,
+            per_ip_window_secs: cfg.public_feedback_per_ip_window_secs as i64,
+            mass_flag_threshold: cfg.public_feedback_mass_flag_threshold as i64,
+            mass_flag_window_secs: cfg.public_feedback_mass_flag_window_secs as i64,
+        });
+
+    // TODO-004: sanctions-for-non-compliance proceedings. Admin
+    // endpoints under the OIDC middleware (handlers enforce the
+    // allowlist gate); the public-listings endpoint is mounted
+    // unauthenticated.
+    use crate::api::sanctions::SanctionsState;
+    let sanctions_state = SanctionsState {
+        pool: state.idempotency.pool().clone(),
+        admin_principals: state.admin_principals.clone(),
+    };
+    let sanctions_admin_router = crate::api::sanctions::router(sanctions_state.clone())
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state.clone(),
+            auth_middleware,
+        ));
+    let sanctions_public_router = crate::api::sanctions::public_router(sanctions_state);
+
     let app_routes = protected
         .merge(admin)
         .merge(internal)
         .merge(public)
-        .merge(openapi);
+        .merge(openapi)
+        .merge(discrepancy_router)
+        .merge(fiu_router)
+        .merge(public_feedback_router)
+        .merge(sanctions_admin_router)
+        .merge(sanctions_public_router);
 
     // Apply the request-timing middleware ONLY to the app routes — not
     // to /metrics. The middleware reads `State<Arc<Metrics>>`, so we use
@@ -395,6 +461,10 @@ pub(crate) async fn submit_declaration(
     headers: HeaderMap,
     Json(req): Json<SubmitDeclarationRequest>,
 ) -> Result<(StatusCode, Json<SubmitDeclarationResponse>), ServiceError> {
+    // TODO-020 — submission is state-changing; require IAL2 minimum
+    // (NIST 800-63A — verified evidence + verified address). FATF
+    // c.24.6 IO.5: "identity verification of the submitter".
+    principal.require_assurance(crate::api::oidc::AssuranceLevel::Ial2)?;
     // 1. Verify the attestation signature against the canonical bytes.
     let canonical_bytes = canonical_payload_bytes(&req, &principal.subject)?;
     req.attestation
@@ -532,16 +602,46 @@ pub(crate) async fn get_declaration(
         .execute(DeclarationId(declaration_id))
         .await?;
 
-    // Authorisation: declarants see their own. Cross-principal visibility
-    // is the job of the (future) Access service; for v1 we enforce
-    // owner-only.
-    if projection.declarant_principal != principal.subject {
-        return Err(ServiceError::AuthorizationDenied(
-            "declaration is owned by a different principal",
-        ));
-    }
+    let is_admin = state.admin_principals.contains(&principal.subject);
 
-    Ok(Json(projection.into()))
+    // TODO-006 — Sovim-tiered authorisation. The owner sees their own
+    // (status quo). Admins see every declaration. ObligedEntity sees
+    // every declaration but the response is reduced. Declarants who
+    // are not the owner are refused with 404 (FIND-004: 404 not 403
+    // to avoid case-id enumeration).
+    let is_owner = projection.declarant_principal == principal.subject;
+    let class = principal.class;
+    match (is_owner, is_admin, class) {
+        (_, true, _) => {
+            // admin: full payload
+            Ok(Json(projection.into()))
+        }
+        (true, false, _) => {
+            // owner declarant: full payload (their own)
+            Ok(Json(projection.into()))
+        }
+        (false, false, crate::api::auth::PrincipalClass::ObligedEntity) => {
+            // obliged-entity: post-Sovim reduced payload
+            let response: GetDeclarationResponse = projection.into();
+            // TODO-006-followup: emit a row to
+            // `obliged_entity_access_log` recording the disclosure.
+            // The table + migration are scheduled for a follow-up
+            // commit that ships alongside the per-obliged-entity
+            // rate-limit machinery; without the audit row the
+            // disclosure happens but is not yet traceable per c.24.6(c).
+            // Tracking: TODO-006 acceptance criterion #3.
+            tracing::info!(
+                principal = %principal.subject,
+                declaration_id = %declaration_id,
+                "TODO-006: obliged-entity BO disclosure (audit log pending follow-up)"
+            );
+            Ok(Json(response.redact_for_obliged_entity()))
+        }
+        _ => {
+            // FIND-004: 404 not 403 — avoids leaking which IDs exist.
+            Err(ServiceError::NotFound(declaration_id.to_string()))
+        }
+    }
 }
 
 fn idempotency_key_field(headers: &HeaderMap) -> String {
@@ -644,6 +744,9 @@ pub(crate) async fn supersede_declaration(
     Path(superseded_declaration_id): Path<Uuid>,
     Json(req): Json<SubmitDeclarationRequest>,
 ) -> Result<(StatusCode, Json<SupersedeDeclarationResponse>), ServiceError> {
+    // TODO-020 — supersede overwrites a prior declaration; treat the
+    // semantic stakes as administrative and require IAL3.
+    principal.require_assurance(crate::api::oidc::AssuranceLevel::Ial3)?;
     // Same canonicalisation + attestation verification as submit — the
     // NEW declaration is a fully-signed declaration in its own right.
     let canonical_bytes = canonical_payload_bytes(&req, &principal.subject)?;
@@ -780,6 +883,10 @@ pub(crate) async fn amend_declaration(
     Path(declaration_id): Path<Uuid>,
     Json(req): Json<AmendDeclarationRequest>,
 ) -> Result<(StatusCode, Json<AmendDeclarationResponse>), ServiceError> {
+    // TODO-020 — amendment modifies a post-verification declaration;
+    // IAL2 minimum (same as submission, since the change is declarant-
+    // initiated and counter-signed).
+    principal.require_assurance(crate::api::oidc::AssuranceLevel::Ial2)?;
     // 1. Resolve the aggregate's entity_id from the projection so the
     //    canonical-bytes computation matches what the declarant signed.
     //    Owner-check is enforced by the aggregate (`handle_amend`); we
@@ -869,6 +976,9 @@ pub(crate) async fn correct_declaration(
     Path(declaration_id): Path<Uuid>,
     Json(req): Json<CorrectDeclarationRequest>,
 ) -> Result<(StatusCode, Json<CorrectDeclarationResponse>), ServiceError> {
+    // TODO-020 — correction is administrative (admin-only endpoint per
+    // the permission matrix); require IAL3.
+    principal.require_assurance(crate::api::oidc::AssuranceLevel::Ial3)?;
     let declaration_id = DeclarationId(declaration_id);
     let projection = state
         .get_usecase

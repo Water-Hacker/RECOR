@@ -16,7 +16,9 @@ use recor_entity_service::application::{
     UpdateEntityUseCase,
 };
 use recor_entity_service::config::Config;
-use recor_entity_service::infrastructure::{IdempotencyStore, PostgresEntityRepository};
+use recor_entity_service::infrastructure::{
+    warn_if_misconfigured, IdempotencyStore, OutboxRetention, PostgresEntityRepository,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -160,6 +162,8 @@ async fn main() -> Result<()> {
     }
 
     let metrics_for_separate_listener = metrics.clone();
+    // COMP-2: clone for the outbox retention worker (TODO-016).
+    let state_metrics_for_retention = metrics.clone();
     let metrics_bind_addr = cfg.metrics_bind_addr.clone();
 
     let app_state = AppState {
@@ -217,6 +221,31 @@ async fn main() -> Result<()> {
         None
     };
 
+    // COMP-2 — outbox retention worker (TODO-016). Always spawned so a
+    // single cancellation surface covers every background task; when
+    // OUTBOX_RETENTION_DAYS=0 (test/dev default) it logs "disabled" and
+    // waits on the cancel token, doing no work. Production operators
+    // opt in by setting the env explicitly.
+    warn_if_misconfigured(
+        cfg.outbox_retention_days,
+        cfg.outbox_retention_interval_seconds,
+    );
+    let retention = OutboxRetention::new(pool.clone())
+        .with_retention_days(cfg.outbox_retention_days)
+        .with_interval(std::time::Duration::from_secs(
+            cfg.outbox_retention_interval_seconds,
+        ))
+        .with_metrics(state_metrics_for_retention.clone());
+    info!(
+        retention_days = cfg.outbox_retention_days,
+        interval_s = cfg.outbox_retention_interval_seconds,
+        "outbox retention worker spawning"
+    );
+    let cancel_retention = cancel.clone();
+    let retention_handle = tokio::spawn(async move {
+        retention.run(cancel_retention).await;
+    });
+
     let cancel_serve = cancel.clone();
     let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -229,6 +258,7 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!(e));
     }
 
+    let _ = retention_handle.await;
     if let Some(h) = metrics_handle {
         let _ = h.await;
     }

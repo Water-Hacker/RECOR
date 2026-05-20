@@ -1,14 +1,18 @@
 //! HTTP + gRPC API.
 
 pub mod auth;
+pub mod discrepancies;
 pub mod dlq;
 pub mod dto;
+pub mod fiu;
 pub mod grpc;
 pub mod internal;
 pub mod oidc;
 pub mod openapi;
+pub mod public_feedback;
 pub mod rate_limit;
 pub mod rest;
+pub mod sanctions;
 
 pub use dlq::{DlqAdminState, list_dlq, replay_dlq};
 pub use grpc::{DeclarationGrpcService, GrpcAuthConfig};

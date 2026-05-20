@@ -21,6 +21,7 @@ resolver = "2"
 members = [
     "apps/audit-reconciler",
     "apps/audit-verifier",
+    "apps/sanctions-ingest",
     "apps/worker-fabric-bridge",
     "packages/fabric-bridge",
     "packages/recor-auth-oidc",

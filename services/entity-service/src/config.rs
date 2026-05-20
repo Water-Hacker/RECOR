@@ -91,6 +91,20 @@ pub struct Config {
     /// progress.
     #[serde(default = "default_secret")]
     pub internal_hmac_secret_old: SecretString,
+
+    /// COMP-2 — outbox retention worker: rows in `outbox` whose
+    /// `dispatched_at` is older than this are pruned by the retention
+    /// worker. `0` DISABLES pruning entirely (the safe default).
+    /// NEVER touches `entity_events` (immutable event log — see
+    /// migration 0001).
+    #[serde(default)]
+    pub outbox_retention_days: u64,
+
+    /// COMP-2 — outbox retention worker: interval between prune cycles,
+    /// in seconds. Default 86400 (daily). Ignored when
+    /// `outbox_retention_days == 0`.
+    #[serde(default = "default_outbox_retention_interval")]
+    pub outbox_retention_interval_seconds: u64,
 }
 
 impl Config {
@@ -201,4 +215,7 @@ fn default_spiffe_socket() -> String {
 }
 fn default_spiffe_id_self_entity() -> String {
     "spiffe://recor.cm/entity".to_string()
+}
+fn default_outbox_retention_interval() -> u64 {
+    86_400 // 24 hours
 }

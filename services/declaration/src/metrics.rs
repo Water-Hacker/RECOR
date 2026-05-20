@@ -93,6 +93,11 @@ pub struct Metrics {
     /// Health-check (readyz/healthz) latency histogram.
     pub health_check_duration_seconds: HistogramVec,
 
+    /// TODO-009 — public-feedback intake outcomes. Label `result`:
+    ///   - `accepted` — submission inserted
+    ///   - `throttled` — per-IP rate-limit blocked the submission
+    pub public_feedback_rate_limited_total: IntCounterVec,
+
     // ─── R-LOOP-2: Kafka producer metrics ───────────────────────────
     /// Per-send outcome counter — label `result` ∈ {"success","failure"}.
     /// Incremented once per attempted `kafka_producer` send.
@@ -256,6 +261,16 @@ impl Metrics {
         )?;
         registry.register(Box::new(health_check_duration_seconds.clone()))?;
 
+        // TODO-009 — public-feedback throttle outcomes.
+        let public_feedback_rate_limited_total = IntCounterVec::new(
+            Opts::new(
+                "recor_public_feedback_rate_limited_total",
+                "Public-feedback intake outcomes. result=accepted increments per stored row; result=throttled per refusal due to per-IP rate limit.",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(public_feedback_rate_limited_total.clone()))?;
+
         // R-LOOP-2 Kafka producer metrics. The label set is bounded by
         // construction (success | failure) — D18 cardinality guard.
         let kafka_produce_total = IntCounterVec::new(
@@ -291,6 +306,7 @@ impl Metrics {
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             health_check_duration_seconds,
+            public_feedback_rate_limited_total,
             kafka_produce_total,
             kafka_produce_latency_seconds,
         }))

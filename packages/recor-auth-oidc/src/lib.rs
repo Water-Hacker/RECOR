@@ -136,6 +136,121 @@ pub enum VerificationError {
 
     #[error("subject claim {claim} not present or not a string in token")]
     SubjectClaimAbsent { claim: String },
+
+    /// TODO-020 / FIND-020 — the verified token's ACR claim resolves to
+    /// an assurance level lower than the endpoint's configured minimum.
+    /// Maps to `AuthError::AuthenticationRequired` (401) at the HTTP
+    /// boundary; the body explains the policy deliberately (so a
+    /// supervisor's operator can diagnose) but never echoes the
+    /// presented claim back (no log/header injection surface).
+    #[error("insufficient assurance level: token presents `{presented}`, endpoint requires {required:?}")]
+    InsufficientAssurance {
+        presented: String,
+        required: AssuranceLevel,
+    },
+}
+
+/// NIST 800-63A IAL (Identity Assurance Level) / 800-63B AAL
+/// (Authentication Assurance Level) ladder.
+///
+/// The platform treats them as a single monotonic ladder for endpoint-
+/// minimum enforcement; the runbook
+/// `docs/runbooks/oidc-idp-acr-config.md` documents the per-IdP
+/// configuration that maps an issuer's policy to this ladder.
+///
+/// Per FATF c.24.6 IO.5 ("identity verification of the submitter"):
+///   - Read-only endpoints are admissible at IAL1 (self-asserted).
+///   - State-changing submission endpoints require IAL2 (verified
+///     evidence + verified address).
+///   - Administrative endpoints (dissolve, correct, merge-into,
+///     dlq/replay) require IAL3 (in-person or supervised remote
+///     verification).
+///
+/// The IdP's `acr` claim is parsed via [`AssuranceLevel::from_acr_claim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AssuranceLevel {
+    /// IAL1 — self-asserted identity. The fail-closed default when the
+    /// IdP does not advertise an `acr` claim.
+    Ial1,
+    /// IAL2 — verified evidence + verified address. The platform-wide
+    /// default minimum for state-changing endpoints (TODO-020).
+    Ial2,
+    /// IAL3 — in-person or supervised remote verification. Required for
+    /// administrative endpoints.
+    Ial3,
+}
+
+impl AssuranceLevel {
+    /// Parse the OIDC `acr` claim into an [`AssuranceLevel`]. Accepts
+    /// the three canonical forms operators in the wild use:
+    ///
+    /// 1. The NIST URIs:
+    ///    `http://idmanagement.gov/ns/assurance/ial/{1,2,3}` and
+    ///    `https://refeds.org/profile/sfa` / similar.
+    /// 2. The bare numeric levels `"1" | "2" | "3"` (Keycloak / Auth0
+    ///    style; many corporate IdPs follow ISO/IEC 29115).
+    /// 3. The case-insensitive `"ial1" | "ial2" | "ial3"`.
+    ///
+    /// Any unrecognised value resolves to **IAL1** — the fail-closed
+    /// floor — and the caller is expected to refuse if the endpoint's
+    /// minimum is anything stricter (D14).
+    pub fn from_acr_claim(value: &str) -> Self {
+        let trimmed = value.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.ends_with("/ial/3") || lower == "ial3" || lower == "3" {
+            AssuranceLevel::Ial3
+        } else if lower.ends_with("/ial/2") || lower == "ial2" || lower == "2" {
+            AssuranceLevel::Ial2
+        } else if lower.ends_with("/ial/1") || lower == "ial1" || lower == "1" || lower == "0" {
+            AssuranceLevel::Ial1
+        } else {
+            AssuranceLevel::Ial1
+        }
+    }
+
+    /// Wire-friendly name (for logs / matrix docs).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AssuranceLevel::Ial1 => "IAL1",
+            AssuranceLevel::Ial2 => "IAL2",
+            AssuranceLevel::Ial3 => "IAL3",
+        }
+    }
+}
+
+impl Claims {
+    /// TODO-020 — Extract the OIDC `acr` claim and resolve it to an
+    /// [`AssuranceLevel`]. Absent / non-string → `Ial1` (the fail-
+    /// closed floor; the caller must enforce its endpoint minimum
+    /// against this).
+    pub fn assurance_level(&self) -> AssuranceLevel {
+        self.raw
+            .get("acr")
+            .and_then(|v| v.as_str())
+            .map(AssuranceLevel::from_acr_claim)
+            .unwrap_or(AssuranceLevel::Ial1)
+    }
+
+    /// Enforce a per-endpoint minimum assurance level. Returns
+    /// [`VerificationError::InsufficientAssurance`] when the token's
+    /// ACR resolves below `min`.
+    pub fn enforce_assurance(&self, min: AssuranceLevel) -> Result<(), VerificationError> {
+        let presented_level = self.assurance_level();
+        if presented_level >= min {
+            Ok(())
+        } else {
+            let presented = self
+                .raw
+                .get("acr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<absent>")
+                .to_string();
+            Err(VerificationError::InsufficientAssurance {
+                presented,
+                required: min,
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -757,6 +872,140 @@ mod tests {
         assert!(matches!(
             supported_alg(Algorithm::HS512),
             Err(VerificationError::UnsupportedAlgorithm(_))
+        ));
+    }
+
+    // ─── TODO-020 — IAL/AAL ACR-claim parsing + enforcement ──────────
+
+    #[test]
+    fn assurance_level_orders_correctly() {
+        assert!(AssuranceLevel::Ial1 < AssuranceLevel::Ial2);
+        assert!(AssuranceLevel::Ial2 < AssuranceLevel::Ial3);
+    }
+
+    #[test]
+    fn parses_nist_uri_acr_values() {
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("http://idmanagement.gov/ns/assurance/ial/3"),
+            AssuranceLevel::Ial3
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("https://idmanagement.gov/ns/assurance/ial/2"),
+            AssuranceLevel::Ial2
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("http://idmanagement.gov/ns/assurance/ial/1"),
+            AssuranceLevel::Ial1
+        );
+    }
+
+    #[test]
+    fn parses_numeric_acr_values() {
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("1"),
+            AssuranceLevel::Ial1
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("2"),
+            AssuranceLevel::Ial2
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("3"),
+            AssuranceLevel::Ial3
+        );
+        // ISO/IEC 29115 sometimes uses "0" for self-asserted; map to
+        // Ial1 (the floor).
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("0"),
+            AssuranceLevel::Ial1
+        );
+    }
+
+    #[test]
+    fn parses_short_acr_values() {
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("IAL3"),
+            AssuranceLevel::Ial3
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("ial2"),
+            AssuranceLevel::Ial2
+        );
+    }
+
+    #[test]
+    fn unknown_acr_value_floors_to_ial1() {
+        // The fail-closed floor is Ial1 — the caller's
+        // `enforce_assurance(Ial2)` will then refuse. This is
+        // intentional: an unrecognised acr value MUST NOT be silently
+        // upgraded.
+        assert_eq!(
+            AssuranceLevel::from_acr_claim("urn:something:weird"),
+            AssuranceLevel::Ial1
+        );
+        assert_eq!(
+            AssuranceLevel::from_acr_claim(""),
+            AssuranceLevel::Ial1
+        );
+    }
+
+    #[test]
+    fn claims_default_to_ial1_when_acr_absent() {
+        let claims = Claims {
+            sub: "s".into(),
+            iss: "i".into(),
+            exp: 0,
+            raw: json!({}),
+        };
+        assert_eq!(claims.assurance_level(), AssuranceLevel::Ial1);
+    }
+
+    #[test]
+    fn enforce_assurance_passes_at_or_above_threshold() {
+        let claims = Claims {
+            sub: "s".into(),
+            iss: "i".into(),
+            exp: 0,
+            raw: json!({"acr": "http://idmanagement.gov/ns/assurance/ial/3"}),
+        };
+        assert!(claims.enforce_assurance(AssuranceLevel::Ial1).is_ok());
+        assert!(claims.enforce_assurance(AssuranceLevel::Ial2).is_ok());
+        assert!(claims.enforce_assurance(AssuranceLevel::Ial3).is_ok());
+    }
+
+    #[test]
+    fn enforce_assurance_refuses_below_threshold() {
+        let claims = Claims {
+            sub: "s".into(),
+            iss: "i".into(),
+            exp: 0,
+            raw: json!({"acr": "1"}),
+        };
+        let err = claims
+            .enforce_assurance(AssuranceLevel::Ial2)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VerificationError::InsufficientAssurance { ref presented, required: AssuranceLevel::Ial2 }
+                if presented == "1"
+        ));
+    }
+
+    #[test]
+    fn enforce_assurance_refuses_absent_claim_when_strict_minimum_demanded() {
+        let claims = Claims {
+            sub: "s".into(),
+            iss: "i".into(),
+            exp: 0,
+            raw: json!({}),
+        };
+        let err = claims
+            .enforce_assurance(AssuranceLevel::Ial2)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VerificationError::InsufficientAssurance { ref presented, .. }
+                if presented == "<absent>"
         ));
     }
 }

@@ -1,0 +1,37 @@
+[package]
+name = "recor-sanctions-ingest"
+description = "RÉCOR sanctions / PEP / ICIJ ingestion worker — scheduled feed pulls into the verification engine's screening tables, with provenance + sanity-check guards. TODO-014."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "recor-sanctions-ingest-ofac"
+path = "src/bin/ofac.rs"
+
+[lib]
+name = "recor_sanctions_ingest"
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+secrecy.workspace = true
+config.workspace = true
+dotenvy.workspace = true
+time.workspace = true
+uuid.workspace = true
+hex.workspace = true
+blake3.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tempfile = "3.10"

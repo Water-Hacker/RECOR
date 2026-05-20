@@ -252,6 +252,41 @@ pub struct GetDeclarationResponse {
     pub corrected_at: Option<OffsetDateTime>,
 }
 
+impl GetDeclarationResponse {
+    /// TODO-006 / TODO-007 — post-Sovim payload reduction for the
+    /// obliged-entity tier. Drops the operationally-sensitive fields
+    /// while preserving the fields the obliged entity needs for its
+    /// own customer-due-diligence (CDD) workflow: who declared, the
+    /// entity_id under declaration, the structure of the beneficial-
+    /// ownership graph, the cryptographic verification verdict.
+    ///
+    /// Specifically removed:
+    /// - `declarant_principal` — the platform-internal principal id
+    ///   (which can be a stable identifier across declarations,
+    ///   re-disclosing the declarant's submission graph; GDPR
+    ///   Art. 5(1)(c) data minimisation).
+    /// - `correlation_id` — links to the internal verification case
+    ///   surface (V-engine) that obliged entities have no right to
+    ///   correlate against.
+    /// - `verification_case_id` — same.
+    /// - On every BO, `cascade_tier_b_ruled_out_evidence` (free-text
+    ///   evidence that may identify witnesses or internal
+    ///   discussions) and `nominator_person_id` (links a separate
+    ///   natural person to the nominee chain — disclosing this to a
+    ///   bank doing CDD on the entity discloses unrelated PII).
+    #[must_use]
+    pub fn redact_for_obliged_entity(mut self) -> Self {
+        self.declarant_principal = String::new();
+        self.correlation_id = Uuid::nil();
+        self.verification_case_id = None;
+        for bo in &mut self.beneficial_owners {
+            bo.cascade_tier_b_ruled_out_evidence = None;
+            bo.nominator_person_id = None;
+        }
+        self
+    }
+}
+
 impl From<DeclarationProjection> for GetDeclarationResponse {
     fn from(p: DeclarationProjection) -> Self {
         Self {

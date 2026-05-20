@@ -114,8 +114,9 @@ async fn spawn_service_with_rate_limit(per_min: u32, burst: u32) -> TestService 
         idempotency_ttl_seconds: 3600,
         oidc: None,
         metrics: recor_declaration::metrics::Metrics::new().expect("metrics registry"),
+        admin_principals: std::sync::Arc::new(std::collections::HashSet::new()),
     };
-    let router = recor_declaration::api::router(app_state, &cfg);
+    let router = recor_declaration::api::router(app_state, &cfg, true);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

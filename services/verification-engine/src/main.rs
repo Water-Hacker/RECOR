@@ -14,6 +14,7 @@ use recor_verification_engine::api::{AppState, OidcVerifier};
 use recor_verification_engine::application::{
     stages::{
         AdverseMediaStage, AdverseMediaStub, BunecNameResolver, CrossSourceStub,
+        CrossSourceTriangulationStage,
         IdentityAuthenticationStage, NameResolver, PatternDetectionStage,
         PatternDetectionStub, PepStage, PepStub, SanctionsStage, SanctionsStub,
         SchemaValidationStage,
@@ -92,7 +93,66 @@ async fn main() -> Result<()> {
 
     let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
-    let bunec = Arc::new(PostgresMockBunec::new(pool.clone()));
+    // TODO-015 — BUNEC adapter selection. `mock` (default) wires the
+    // Postgres-backed mock seeded by integration smoke tests. `real`
+    // wires the REST adapter at `BUNEC_BASE_URL`. When the operator
+    // declares `real` but the cross-org agreement is not yet in
+    // place (empty `BUNEC_BASE_URL` or empty API key), the service
+    // refuses to start — D14 fail-closed beats "silently fall back
+    // to the mock and pretend BUNEC is responding".
+    use recor_verification_engine::application::port::BunecAdapter;
+    let bunec: Arc<dyn BunecAdapter> = match cfg.bunec_adapter_kind.as_str() {
+        "real" => {
+            use recor_verification_engine::infrastructure::bunec_real::{
+                BunecFailPolicy, BunecRealConfig, RealBunecAdapter,
+            };
+            use secrecy::ExposeSecret;
+            if cfg.bunec_base_url.trim().is_empty()
+                || cfg.bunec_api_key.expose_secret().is_empty()
+            {
+                anyhow::bail!(
+                    "BUNEC_ADAPTER_KIND=real but BUNEC_BASE_URL or BUNEC_API_KEY is empty (TODO-015: cross-org agreement not in place)"
+                );
+            }
+            let real_cfg = BunecRealConfig {
+                base_url: cfg.bunec_base_url.clone(),
+                api_key: cfg.bunec_api_key.clone(),
+                request_timeout: std::time::Duration::from_secs(cfg.bunec_timeout_secs),
+                retry_attempts: cfg.bunec_retry_attempts,
+                retry_base_backoff: std::time::Duration::from_millis(
+                    cfg.bunec_retry_backoff_ms,
+                ),
+                breaker_consecutive_failures: cfg.bunec_breaker_consecutive_failures,
+                breaker_half_open_after: std::time::Duration::from_secs(
+                    cfg.bunec_breaker_half_open_secs,
+                ),
+                fail_policy: BunecFailPolicy::parse(
+                    &cfg.bunec_fail_policy,
+                    &cfg.environment,
+                ),
+            };
+            info!(
+                base_url = %cfg.bunec_base_url,
+                fail_policy = ?real_cfg.fail_policy,
+                "BUNEC adapter: REAL (TODO-015 production path)"
+            );
+            Arc::new(
+                RealBunecAdapter::new(real_cfg)
+                    .context("constructing real BUNEC adapter")?,
+            )
+        }
+        "mock" | "" => {
+            info!(
+                "BUNEC adapter: MOCK (TODO-015 — switch to real when cross-org agreement lands)"
+            );
+            Arc::new(PostgresMockBunec::new(pool.clone()))
+        }
+        other => {
+            anyhow::bail!(
+                "BUNEC_ADAPTER_KIND must be `real` or `mock` (got `{other}`)"
+            );
+        }
+    };
 
     // FIND-009 closure. Each Stage 3..6 starts as a stub and is
     // replaced with the real implementation when the corresponding
@@ -147,6 +207,20 @@ async fn main() -> Result<()> {
         Arc::new(PatternDetectionStub::new())
     };
 
+    // TODO-013 — Stage 7 selection (cross-source triangulation).
+    // Real path consumes upstream Stage 3-6 outcomes + the
+    // declaration's structural claims; ADR-0014 documents the
+    // decision rules.
+    let stage7: Arc<dyn Stage> = if cfg.enable_real_stage7 {
+        info!("Stage 7 (cross-source): real implementation enabled");
+        Arc::new(CrossSourceTriangulationStage::new())
+    } else {
+        info!(
+            "Stage 7 (cross-source): stub (set ENABLE_REAL_STAGE7=true to enable the real path)"
+        );
+        Arc::new(CrossSourceStub::new())
+    };
+
     let stages: Vec<Arc<dyn Stage>> = vec![
         Arc::new(SchemaValidationStage::new()),
         Arc::new(IdentityAuthenticationStage::new(bunec.clone())),
@@ -154,10 +228,7 @@ async fn main() -> Result<()> {
         pep_stage,
         adverse_media_stage,
         pattern_stage,
-        // Stage 7 (cross-source) — no real implementation in v1; the
-        // stub returns InsufficientEvidence. Replacing it is a
-        // separate ticket.
-        Arc::new(CrossSourceStub::new()),
+        stage7,
     ];
 
     let orchestrator = Arc::new(PipelineOrchestrator::new(stages, LaneThresholds::default()));

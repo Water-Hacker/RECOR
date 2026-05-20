@@ -94,6 +94,7 @@ async fn resolve_principal(
             | VerificationError::UnsupportedAlgorithm(_)
             | VerificationError::NoUsableKey
             | VerificationError::MissingClaim(_)
+            | VerificationError::InsufficientAssurance { .. }
             | VerificationError::SubjectClaimAbsent { .. } => {
                 ServiceError::AuthenticationRequired
             }

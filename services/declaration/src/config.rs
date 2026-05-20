@@ -183,6 +183,29 @@ pub struct Config {
     #[serde(default = "default_outbox_retention_interval")]
     pub outbox_retention_interval_seconds: u64,
 
+    /// TODO-009 — public-feedback per-IP throttle: max submissions
+    /// per IP within `public_feedback_per_ip_window_secs`. `0`
+    /// disables the gate (dev only). Production MUST set a real
+    /// value.
+    #[serde(default = "default_public_feedback_per_ip_max")]
+    pub public_feedback_per_ip_max_per_window: u32,
+
+    /// TODO-009 — window (seconds) over which the per-IP throttle
+    /// counts. Default 3600 (one hour).
+    #[serde(default = "default_public_feedback_per_ip_window_secs")]
+    pub public_feedback_per_ip_window_secs: u64,
+
+    /// TODO-009 — mass-flag threshold: when more than N reports
+    /// name the same target within the window, the row is filed as
+    /// `low` priority. Default 5.
+    #[serde(default = "default_public_feedback_mass_flag_threshold")]
+    pub public_feedback_mass_flag_threshold: u32,
+
+    /// TODO-009 — mass-flag detection window in seconds. Default
+    /// 86400 (one day).
+    #[serde(default = "default_public_feedback_mass_flag_window_secs")]
+    pub public_feedback_mass_flag_window_secs: u64,
+
     /// Bind address for the gRPC server (R-DECL-8). Defaults to empty
     /// so test harnesses and local dev that only exercise REST do not
     /// need to bind a second port. Production sets
@@ -428,6 +451,19 @@ fn default_rate_limit_burst() -> u32 {
 
 fn default_outbox_retention_interval() -> u64 {
     86_400 // 24 hours
+}
+
+fn default_public_feedback_per_ip_max() -> u32 {
+    0 // disabled by default; production MUST opt in
+}
+fn default_public_feedback_per_ip_window_secs() -> u64 {
+    3_600 // 1 hour
+}
+fn default_public_feedback_mass_flag_threshold() -> u32 {
+    5
+}
+fn default_public_feedback_mass_flag_window_secs() -> u64 {
+    86_400 // 1 day
 }
 
 fn default_declaration_topic() -> String {
