@@ -24,6 +24,8 @@ path = "src/lib.rs"
 [dependencies]
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+# FIND-012: shared HMAC sign/verify with iat-bound replay window.
+recor-hmac-sig = { path = "../../packages/recor-hmac-sig" }
 recor-inference-gateway = { path = "../../packages/recor-inference-gateway" }
 recor-logging = { path = "../../packages/recor-logging" }
 # R-LOOP-3 SPIFFE Workload API client + rustls glue. Same shape as

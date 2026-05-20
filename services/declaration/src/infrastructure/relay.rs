@@ -175,7 +175,12 @@ impl OutboxRelay {
                 "payload": payload,
             });
             let body = serde_json::to_vec(&envelope).expect("envelope is always serialisable");
-            let signature = hmac_hex(&self.subscriber.hmac_secret, &body);
+            // FIND-012: bind iat into the signature. The receiver
+            // enforces a ±5-min replay window; captured envelopes
+            // cannot be replayed once the window expires.
+            let iat = recor_hmac_sig::now_unix_seconds();
+            let signature =
+                recor_hmac_sig::sign(&self.subscriber.hmac_secret, &body, iat);
 
             // OBS-1: time the POST itself so we can record subscriber
             // delivery latency. This is the per-attempt round-trip; on
@@ -186,6 +191,7 @@ impl OutboxRelay {
                 .post(&self.subscriber.webhook_url)
                 .header("Content-Type", "application/json")
                 .header("X-RECOR-Signature", &signature)
+                .header("X-RECOR-Timestamp", iat.to_string())
                 .header("X-RECOR-Event-Type", &event_type)
                 .header("X-RECOR-Event-Id", event_id.to_string())
                 .body(body)

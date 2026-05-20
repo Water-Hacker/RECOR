@@ -156,15 +156,18 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** cheap (~30 minutes)
 - **Cost class:** code-only
 
-### FIND-012 — D↔V HMAC channel has no `iat`-bound replay window
+### FIND-012 — D↔V HMAC channel has no `iat`-bound replay window — **CLOSED (Sprint 3)**
 
 - **Severity:** HIGH (carry-over from threat-model Gap G2)
-- **Location:** `services/declaration/src/api/internal.rs::verify_hmac` + `services/verification-engine/src/api/internal.rs::verify_hmac`
+- **Status:** CLOSED by audit Sprint 3 — every internal-service HMAC surface now binds a `iat` (issued-at) timestamp into the MAC and enforces a ±5-minute replay window on receipt.
+- **Location:** `packages/recor-hmac-sig` (new shared crate) + every signing/verifying site across `services/declaration`, `services/verification-engine`, and `apps/worker-fabric-bridge`.
 - **Source:** Pass B § 5 (DF-2)
-- **Impact:** A captured envelope can be replayed indefinitely until the HMAC secret rotates. Idempotency on `event_id` prevents observable replay effect on the V-engine side, but the limiter is unbounded.
-- **Remediation:** Bind a `iat` (issued-at) timestamp into the HMAC payload + enforce a 5-minute clock-skew window on receipt. R-LOOP-2 (Kafka) carries this enforcement when transport-cuts-over; for the HTTP fallback transport, add the iat check now.
-- **Effort:** medium (~2-3 days)
-- **Cost class:** code-only
+- **Impact:** Pre-fix, a captured envelope could be replayed indefinitely until the HMAC secret rotated. Idempotency on `event_id` prevented observable replay effect on the V-engine side, but the time horizon was unbounded.
+- **Remediation shipped:**
+  - New `packages/recor-hmac-sig` crate: `sign(secret, body, iat)` returns the hex-encoded MAC of `body || "\n" || iat`. `verify(cfg, body, sig, ts, now)` checks the timestamp window first (default ±300s) and then the MAC under the primary OR (during a rotation window) the previous-generation secret.
+  - Producers: declaration's outbox-relay + V-engine's writeback-relay now stamp `X-RECOR-Timestamp` alongside the existing `X-RECOR-Signature`.
+  - Consumers: V-engine's `/v1/internal/declaration-events`, declaration's `/v1/internal/verification-outcomes`, and worker-fabric-bridge's `/v1/relay` reject missing/stale/forged timestamps with a structured error kind (`missing_timestamp`, `stale_request`, etc.).
+- **Tests:** 12 unit tests on the shared crate cover round-trip, missing-header refusal, stale/future-dated window refusal, malformed inputs, body+timestamp tampering, and dual-secret rotation.
 
 ### FIND-013 — V-engine has no committed OpenAPI snapshot (TODO marker only) — **CLOSED (Sprint 2)**
 
