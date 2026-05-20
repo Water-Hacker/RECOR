@@ -186,6 +186,50 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * @description TODO-021 closure — explicit FATF claims block.
+         *
+         *     FATF R.24 c.24.8 requires BO data to be "adequate, accurate, and
+         *     up-to-date". The cryptographic attestation by itself only proves
+         *     authorship of the bytes; the explicit claims block proves the
+         *     declarant *asserts* the three properties, which is the surface a
+         *     sanctions workflow (TODO-004) needs to demonstrate perjury when
+         *     a claim is later shown false.
+         *
+         *     The block is included in the canonical payload bytes (the bytes
+         *     signed by Ed25519) so any tampering with claims invalidates the
+         *     signature. Historical declarations that pre-date this migration
+         *     deserialise with `None` via `#[serde(default)]`.
+         */
+        AdequacyClaims: {
+            /**
+             * @description The declarant asserts the BO data is *accurate* — verified by
+             *     reliable, independently sourced documents per c.24.8 fn 28.
+             */
+            accurate: boolean;
+            /**
+             * @description The declarant asserts the BO data is *adequate* —
+             *     sufficient to identify each natural person per c.24.8 fn 27
+             *     (full name, all nationalities, full DOB + place, residential
+             *     address, national ID, TIN or equivalent). Required for new
+             *     declarations; missing on legacy projections.
+             */
+            adequate: boolean;
+            /**
+             * @description Free-text legal basis — typically a citation to the CEMAC
+             *     Règlement, Cameroon AML law, or the obligation under which the
+             *     declarant files. The aggregate validates length only; semantic
+             *     review is the back-office responsibility.
+             */
+            legal_basis: string;
+            /**
+             * Format: date-time
+             * @description The declarant asserts the BO data is *up-to-date as of* the
+             *     given timestamp (c.24.8 fn 29; FATF benchmark: within 1 month
+             *     of any change).
+             */
+            up_to_date_as_of: string;
+        };
+        /**
          * @description Request body for `POST /v1/declarations/{id}/amend`. Carries the
          *     full replacement value for every amendable field plus a fresh
          *     Ed25519 attestation signed over the AMENDED canonical form by the
@@ -242,6 +286,7 @@ export interface components {
          *       - `correlation_id` / `submitted_at` (lifecycle metadata)
          */
         AmendmentSet: {
+            adequacy_claims?: null | components["schemas"]["AdequacyClaims"];
             /**
              * @description Replacement beneficial-owner roster. Must still satisfy the
              *     aggregate's owner-sum-invariant (basis points sum to 10_000)
@@ -262,10 +307,46 @@ export interface components {
              */
             effective_from: string;
         };
-        /** @description One declared beneficial owner with their interest in the entity. */
+        /**
+         * @description One declared beneficial owner with their interest in the entity.
+         *
+         *     FATF cascade (TODO-001 closure): R.24 §c.24.6 fn 25 requires every
+         *     BO to be identified under the explicit cascade ownership → control →
+         *     senior managing official. The platform records the cascade tier
+         *     (`cascade_tier`) and, for the Control tier, the specific control
+         *     basis (`control_basis`). Tier (c) — Senior Managing Official — is
+         *     only admissible when tier (b) has been searched-for-and-ruled-out
+         *     (enforced at the aggregate; declarant submits the ruled-out
+         *     declaration in `cascade_tier_b_ruled_out_evidence`).
+         *
+         *     Nominee disclosure (TODO-010 closure): R.24 §c.24.12 requires
+         *     nominee arrangements to disclose the nominator. `is_nominee = true`
+         *     requires `nominator_person_id` to resolve to a separately-registered
+         *     person who themselves appears at the appropriate cascade tier.
+         *
+         *     Backwards-compatibility: every FATF field is `Option<T>` and uses
+         *     `#[serde(default)]` so historical Submitted/Amended/Corrected events
+         *     that pre-date this migration replay without loss. NEW declarations
+         *     MUST present `cascade_tier` (validated at the API DTO ⇒ command
+         *     boundary; missing → 400). Historical projections report the legacy
+         *     `LegacyPreCascade` tier value on read.
+         */
         BeneficialOwnerClaim: {
+            cascade_tier?: null | components["schemas"]["BoCascadeTier"];
+            /**
+             * @description For tier (c) Senior Managing Official, free-text evidence that
+             *     tier (b) was searched-for-and-ruled-out. Required when
+             *     `cascade_tier == Some(SeniorManagingOfficial)`. The aggregate
+             *     only validates presence + length; semantic verification is the
+             *     back-office reviewer's responsibility.
+             */
+            cascade_tier_b_ruled_out_evidence?: string | null;
+            control_basis?: null | components["schemas"]["BoControlBasis"];
             /** @description Nature of the interest — equity, voting-rights, control-without-equity, etc. */
             interest_kind: components["schemas"]["InterestKind"];
+            /** @description TODO-010: is this BO acting on behalf of a nominator? */
+            is_nominee?: boolean | null;
+            nominator_person_id?: null | components["schemas"]["PersonId"];
             /**
              * @description Percentage of equity (or equivalent control proxy) expressed as
              *     basis points.
@@ -278,6 +359,30 @@ export interface components {
              */
             person_id: components["schemas"]["PersonId"];
         };
+        /**
+         * @description FATF R.24 §c.24.6 cascade tiers. The cascade resolves the question
+         *     "who is the beneficial owner" in this order:
+         *
+         *       (a) Ownership — natural persons who hold ≥ 25% of equity or
+         *           equivalent direct/indirect interest.
+         *       (b) Control — natural persons exercising control through other
+         *           means: voting rights, board-appointment power, contractual
+         *           arrangements, family aggregation.
+         *       (c) Senior Managing Official — the residual fallback when (a)
+         *           and (b) yield no identified BO.
+         *
+         *     `LegacyPreCascade` is a read-time sentinel for projection rows that
+         *     were submitted before this migration shipped. It MUST never be the
+         *     target of a new declaration; the API DTO ⇒ command path refuses it.
+         * @enum {string}
+         */
+        BoCascadeTier: "ownership_direct" | "ownership_indirect" | "control" | "senior_managing_official" | "legacy_pre_cascade";
+        /**
+         * @description FATF R.24 §c.24.6(b) control bases. Required when
+         *     `BoCascadeTier == Control`; refused otherwise.
+         * @enum {string}
+         */
+        BoControlBasis: "voting_rights" | "board_appointment" | "contractual_control" | "family_aggregation" | "other_documented";
         /**
          * @description Request body for `POST /v1/declarations/{id}/correct`. Carries
          *     the metadata-correction payload plus a fresh attestation. The
@@ -327,9 +432,10 @@ export interface components {
          *
          *     The signature is over the canonical JSON form of the declaration
          *     payload (entity_id, declarant_principal, declarant_role,
-         *     declaration_kind, effective_from, beneficial_owners, nonce_hex),
-         *     serialised with sorted keys, no whitespace, UTF-8 — i.e. JCS
-         *     (RFC 8785). The nonce protects against replay.
+         *     declaration_kind, effective_from, beneficial_owners,
+         *     adequacy_claims, nonce_hex), serialised with sorted keys, no
+         *     whitespace, UTF-8 — i.e. JCS (RFC 8785). The nonce protects
+         *     against replay.
          */
         CryptographicAttestation: {
             /**
