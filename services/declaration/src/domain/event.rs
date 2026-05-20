@@ -94,6 +94,11 @@ pub struct DeclarationSubmittedV1 {
     /// payloads with `None` so replay is forward-compatible).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adequacy_claims: Option<super::attestation::AdequacyClaims>,
+    /// PR-FATF-4 / TODO-005 — FATF R.24 c.24.8 fn 29: declarant-asserted
+    /// timestamp of the underlying BO control event. Optional on the
+    /// event for back-compat with historical events.
+    #[serde(default, with = "crate::domain::serde_helpers::iso_datetime_option")]
+    pub last_event_observed_at: Option<OffsetDateTime>,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
     pub submitted_at: OffsetDateTime,
     pub correlation_id: uuid::Uuid,

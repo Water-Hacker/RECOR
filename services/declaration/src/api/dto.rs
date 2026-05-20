@@ -59,6 +59,9 @@ impl SubmitDeclarationRequest {
             // backward-compatible inputs while still enforcing the
             // structural invariants when Some.
             adequacy_claims: None,
+            // PR-FATF-4 / TODO-005 — API DTO wiring deferred to
+            // PR-FATF-4.B; aggregate accepts None for back-compat.
+            last_event_observed_at: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
         }

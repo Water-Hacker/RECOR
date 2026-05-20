@@ -49,6 +49,14 @@ pub struct SubmitDeclaration {
     /// invariants when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adequacy_claims: Option<super::attestation::AdequacyClaims>,
+    /// PR-FATF-4 / TODO-005 — FATF R.24 c.24.8 fn 29: the timestamp
+    /// the declarant asserts the BO change occurred. Optional on the
+    /// command for back-compat with in-flight callers. The API DTO
+    /// layer enforces required-ness on new submissions (PR-FATF-4.B);
+    /// the aggregate validates the structural invariants of the value
+    /// itself when present (not in future, not > 5y ago).
+    #[serde(default, with = "crate::domain::serde_helpers::iso_datetime_option")]
+    pub last_event_observed_at: Option<OffsetDateTime>,
     /// Time the API received the request, set by the API layer.
     pub submitted_at: OffsetDateTime,
     /// Correlation token for tracing across services.

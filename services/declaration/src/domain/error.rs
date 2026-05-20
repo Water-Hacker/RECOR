@@ -182,4 +182,17 @@ pub enum DomainError {
 
     #[error("adequacy_claims.legal_basis exceeds 1024 characters; pin a concise citation, attach the full legal text out-of-band if needed")]
     AdequacyLegalBasisTooLong,
+
+    // ─── 30-day update obligation (TODO-005, FATF R.24 c.24.8 fn 29) ──
+    #[error("last_event_observed_at {as_of} is in the future relative to submission time {submitted_at}; the declarant asserts an event that has not yet occurred")]
+    LastEventObservedAtInFuture {
+        as_of: time::OffsetDateTime,
+        submitted_at: time::OffsetDateTime,
+    },
+
+    #[error("last_event_observed_at {as_of} is more than 5 years before submission time {submitted_at}; out of range (the declarant should re-stamp the date the change actually occurred)")]
+    LastEventObservedAtTooOld {
+        as_of: time::OffsetDateTime,
+        submitted_at: time::OffsetDateTime,
+    },
 }
