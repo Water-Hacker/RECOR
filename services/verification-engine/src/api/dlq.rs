@@ -31,6 +31,8 @@ use time::OffsetDateTime;
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
+use utoipa::ToSchema;
+
 use crate::api::auth::Principal;
 use crate::infrastructure::{DlqRow, OutboxAdminError, OutboxAdminStore};
 use crate::metrics::Metrics;
@@ -57,7 +59,7 @@ fn default_limit() -> i64 {
     50
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ListDlqResponse {
     pub total: i64,
     pub limit: i64,
@@ -65,18 +67,24 @@ pub struct ListDlqResponse {
     pub items: Vec<DlqItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DlqItem {
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
+    #[schema(value_type = String, format = "uuid")]
     pub event_id: Uuid,
     pub event_type: String,
     pub event_version: i32,
+    #[schema(value_type = String, format = "uuid")]
     pub aggregate_id: Uuid,
     pub partition_key: String,
+    #[schema(value_type = serde_json::Value)]
     pub payload: serde_json::Value,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: OffsetDateTime,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    #[schema(value_type = String, format = "date-time")]
     pub dead_lettered_at: OffsetDateTime,
     pub dispatch_attempts: i32,
     pub last_error: Option<String>,
@@ -100,12 +108,34 @@ impl From<DlqRow> for DlqItem {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ReplayDlqResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     pub replayed: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/internal/verification-outbox-dlq",
+    tag = "internal",
+    operation_id = "listVerificationDlq",
+    params(
+        ("limit" = Option<i64>, Query, description = "Page size (default 50)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+    ),
+    responses(
+        (status = 200, description = "DLQ rows page", body = ListDlqResponse),
+        (status = 401, description = "Authentication required", body = crate::api::rest::ErrorEnvelope),
+        (status = 403, description = "Caller is not on the admin allowlist", body = crate::api::rest::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::rest::ErrorEnvelope),
+        (status = 503, description = "ADMIN_PRINCIPALS empty — endpoint disabled (D14 fail-closed)", body = crate::api::rest::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[instrument(
     skip_all,
     fields(principal = %principal.subject, limit = query.limit, offset = query.offset)
@@ -134,6 +164,25 @@ pub async fn list_dlq(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/internal/verification-outbox-dlq/{id}/replay",
+    tag = "internal",
+    operation_id = "replayVerificationDlq",
+    params(("id" = String, Path, format = "uuid", description = "DLQ row UUID")),
+    responses(
+        (status = 200, description = "Row atomically moved back to the outbox", body = ReplayDlqResponse),
+        (status = 401, description = "Authentication required", body = crate::api::rest::ErrorEnvelope),
+        (status = 403, description = "Caller is not on the admin allowlist", body = crate::api::rest::ErrorEnvelope),
+        (status = 404, description = "DLQ row not found", body = crate::api::rest::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::rest::ErrorEnvelope),
+        (status = 503, description = "ADMIN_PRINCIPALS empty — endpoint disabled", body = crate::api::rest::ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[instrument(skip_all, fields(principal = %principal.subject, id = %id))]
 pub async fn replay_dlq(
     State(state): State<DlqAdminState>,

@@ -1,12 +1,10 @@
 //! REST API.
-//
-// TODO(R-VER-OPENAPI): wire utoipa-generated OpenAPI 3.1 spec for this
-// service's public surface, mirroring DOC-1 (#70 — declaration). Same
-// pattern: `#[utoipa::path(...)]` on every handler, `#[derive(ToSchema)]`
-// on every DTO, build the document in `api::openapi`, mount
-// `GET /openapi.json` + Scalar UI at `GET /docs`, commit the snapshot
-// to `docs/openapi/verification-engine.json`, extend
-// `tools/ci/check-openapi-drift.sh` to also assert that snapshot.
+//!
+//! DOC-1 / FIND-013 closure. The handlers in this module are
+//! `#[utoipa::path]`-annotated; the assembled OpenAPI 3.1 document
+//! lives in [`crate::api::openapi`]; the snapshot is committed at
+//! `docs/openapi/verification-engine.json` and verified by
+//! `tools/ci/check-openapi-drift.sh`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,12 +12,10 @@ use std::time::Duration;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -27,6 +23,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::warn;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::auth::{auth_middleware, AuthConfig};
@@ -149,7 +146,14 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
         .route("/readyz", get(readyz))
         .with_state(state.clone());
 
-    let app_routes = protected.merge(admin).merge(internal).merge(public);
+    // DOC-1 / FIND-013: OpenAPI artefacts (`GET /openapi.json`, `GET /docs`).
+    let openapi = crate::api::openapi::openapi_routes();
+
+    let app_routes = protected
+        .merge(admin)
+        .merge(internal)
+        .merge(public)
+        .merge(openapi);
 
     // Per-endpoint timing + counter middleware over the app routes
     // only (not /metrics).
@@ -199,10 +203,26 @@ pub fn metrics_only_router(metrics: Arc<crate::metrics::Metrics>) -> Router {
         .with_state(metrics)
 }
 
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    tag = "system",
+    operation_id = "healthz",
+    responses(
+        (status = 200, description = "Service process is alive", body = HealthzResponse),
+    ),
+)]
 #[tracing::instrument(skip(state))]
-async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn healthz(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<HealthzResponse>) {
     let start = std::time::Instant::now();
-    let resp = (StatusCode::OK, Json(json!({"status": "ok"})));
+    let resp = (
+        StatusCode::OK,
+        Json(HealthzResponse {
+            status: "ok".to_string(),
+        }),
+    );
     state
         .metrics
         .health_check_duration_seconds
@@ -211,17 +231,38 @@ async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     resp
 }
 
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    tag = "system",
+    operation_id = "readyz",
+    responses(
+        (status = 200, description = "Database reachable; service ready", body = ReadyzResponse),
+        (status = 503, description = "Database unreachable", body = ReadyzResponse),
+    ),
+)]
 #[tracing::instrument(skip(state))]
-async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn readyz(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<ReadyzResponse>) {
     let start = std::time::Instant::now();
     let probe = sqlx::query_scalar!(r#"SELECT 1 AS "probe!: i32""#).fetch_one(state.repository.pool());
     let resp = match probe.await {
-        Ok(_) => (StatusCode::OK, Json(json!({"status": "ready"}))),
+        Ok(_) => (
+            StatusCode::OK,
+            Json(ReadyzResponse {
+                status: "ready".to_string(),
+                reason: None,
+            }),
+        ),
         Err(e) => {
             warn!(error = %e, "readiness probe failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"status": "not_ready", "reason": "database_unreachable"})),
+                Json(ReadyzResponse {
+                    status: "not_ready".to_string(),
+                    reason: Some("database_unreachable".to_string()),
+                }),
             )
         }
     };
@@ -233,20 +274,72 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     resp
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SubmitVerificationRequest {
+    /// Declaration snapshot to verify. Shape mirrors the
+    /// declaration service's canonical-form payload. Deep type is
+    /// pinned via `serde_json::Value` in the spec — see
+    /// `services/declaration` for the authoritative schema.
+    #[schema(value_type = serde_json::Value)]
     pub declaration: DeclarationSnapshot,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SubmitVerificationResponse {
+    /// Stable identifier of the created verification case.
+    #[schema(value_type = String, format = "uuid")]
     pub case_id: VerificationCaseId,
+    /// Lane decision the fusion engine settled on. One of
+    /// `"green"`, `"yellow"`, `"red"`.
     pub lane: String,
+    /// Dempster-Shafer belief mass for the "authentic" hypothesis.
     pub authenticity_belief: f64,
+    /// Plausibility upper bound for the same hypothesis.
     pub authenticity_plausibility: f64,
+    /// Belief mass for the "elevated risk" hypothesis.
     pub risk_belief: f64,
+    /// Wall-clock pipeline duration, milliseconds.
     pub total_duration_ms: u64,
+    /// Absolute URL for the resulting case projection.
     pub case_url: String,
+}
+
+/// Standard error envelope used across every authenticated endpoint.
+/// Matches the declaration service's `ErrorEnvelope` for cross-service
+/// consistency (same `kind` taxonomy, same outer shape).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorEnvelope {
+    pub error: ErrorBody,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorBody {
+    /// Stable machine-readable error kind. Values include
+    /// `authentication_required`, `not_admin`, `admin_disabled`,
+    /// `not_found`, `bad_request`, `internal`.
+    pub kind: String,
+    /// Human-readable message. May change between releases; never
+    /// match on it.
+    pub message: String,
+}
+
+/// `/healthz` response body.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HealthzResponse {
+    /// Always `"ok"` when the process is alive.
+    pub status: String,
+}
+
+/// `/readyz` response body.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReadyzResponse {
+    /// `"ready"` when the database is reachable; `"not_ready"`
+    /// otherwise.
+    pub status: String,
+    /// Present only on `not_ready`: a short machine-readable cause
+    /// such as `"database_unreachable"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl SubmitVerificationResponse {
@@ -263,8 +356,26 @@ impl SubmitVerificationResponse {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/verifications",
+    tag = "verifications",
+    operation_id = "submitVerification",
+    request_body = SubmitVerificationRequest,
+    responses(
+        (status = 201, description = "Verification case created", body = SubmitVerificationResponse),
+        (status = 401, description = "Authentication required", body = ErrorEnvelope),
+        (status = 403, description = "Caller is not on the admin allowlist (FIND-002 — REST submit is admin-only; the production path is the HMAC-authenticated internal webhook)", body = ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = ErrorEnvelope),
+        (status = 503, description = "ADMIN_PRINCIPALS empty — REST submit is disabled (FIND-002 fail-closed)", body = ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[tracing::instrument(skip_all)]
-async fn submit_verification(
+pub(crate) async fn submit_verification(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
     Json(req): Json<SubmitVerificationRequest>,
@@ -300,8 +411,31 @@ async fn submit_verification(
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/verifications/{case_id}",
+    tag = "verifications",
+    operation_id = "getVerification",
+    params(("case_id" = String, Path, format = "uuid", description = "Verification case UUID")),
+    responses(
+        // The case body is deep nested domain JSON; pinned via
+        // `body = serde_json::Value` to avoid coupling utoipa to
+        // every domain value-object. The shape is stable across
+        // the v1 contract: `case_id`, `declaration`, `stage_outcomes`,
+        // `fused_authenticity`, `fused_risk`, `lane`, `created_at`,
+        // `completed_at`, `total_duration_ms`.
+        (status = 200, description = "Verification case projection", body = serde_json::Value),
+        (status = 401, description = "Authentication required", body = ErrorEnvelope),
+        (status = 404, description = "Case not found OR caller is neither owner nor admin (FIND-004; no enumeration via 403)", body = ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
 #[tracing::instrument(skip(state))]
-async fn get_verification(
+pub(crate) async fn get_verification(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
     Path(case_id): Path<Uuid>,

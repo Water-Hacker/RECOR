@@ -1,0 +1,766 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RÉCOR Verification Engine",
+    "description": "REST surface of the RÉCOR Verification Engine. Operator-only `submit_verification` (the production verification-submission path is the HMAC-authenticated internal webhook), declarant-owner-or-admin gated `get_verification`, DLQ admin endpoints, and the HMAC-authenticated declaration-events inbound webhook. Endpoints under the `internal` tag are not for general consumer use.",
+    "contact": {
+      "name": "RÉCOR verification team",
+      "email": "noreply@recor.cm"
+    },
+    "license": {
+      "name": "Apache-2.0"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8081",
+      "description": "Local dev"
+    },
+    {
+      "url": "https://api.recor.cm",
+      "description": "Production (TBD)"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Service process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Database reachable; service ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/internal/declaration-events": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "summary": "Handler for POST /v1/internal/declaration-events.",
+        "operationId": "handleDeclarationEvent",
+        "requestBody": {
+          "description": "Outbox envelope from the declaration service's relay (HMAC-signed body)",
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verification case created from the inbound declaration event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboundResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed envelope or payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "HMAC signature missing or invalid (or peer-SPIFFE-ID mismatch under mtls-only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "INBOUND_HMAC_SECRET unset under AUTH_TRANSPORT=hmac — endpoint disabled (D14 fail-closed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hmacSignature": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/verification-outbox-dlq": {
+      "get": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "listVerificationDlq",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DLQ rows page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ADMIN_PRINCIPALS empty — endpoint disabled (D14 fail-closed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/verification-outbox-dlq/{id}/replay": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "replayVerificationDlq",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "DLQ row UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Row atomically moved back to the outbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "DLQ row not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ADMIN_PRINCIPALS empty — endpoint disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/verifications": {
+      "post": {
+        "tags": [
+          "verifications"
+        ],
+        "operationId": "submitVerification",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Verification case created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitVerificationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not on the admin allowlist (FIND-002 — REST submit is admin-only; the production path is the HMAC-authenticated internal webhook)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ADMIN_PRINCIPALS empty — REST submit is disabled (FIND-002 fail-closed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/verifications/{case_id}": {
+      "get": {
+        "tags": [
+          "verifications"
+        ],
+        "operationId": "getVerification",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "description": "Verification case UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification case projection",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case not found OR caller is neither owner nor admin (FIND-004; no enumeration via 403)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DlqItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "event_type",
+          "event_version",
+          "aggregate_id",
+          "partition_key",
+          "payload",
+          "created_at",
+          "dead_lettered_at",
+          "dispatch_attempts"
+        ],
+        "properties": {
+          "aggregate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dead_lettered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dispatch_attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "event_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "partition_key": {
+            "type": "string"
+          },
+          "payload": {}
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Stable machine-readable error kind. Values include\n`authentication_required`, `not_admin`, `admin_disabled`,\n`not_found`, `bad_request`, `internal`."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message. May change between releases; never\nmatch on it."
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "Standard error envelope used across every authenticated endpoint.\nMatches the declaration service's `ErrorEnvelope` for cross-service\nconsistency (same `kind` taxonomy, same outer shape).",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "HealthzResponse": {
+        "type": "object",
+        "description": "`/healthz` response body.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `\"ok\"` when the process is alive."
+          }
+        }
+      },
+      "InboundResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "event_type",
+          "case_id",
+          "lane"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "description": "Verification case UUID minted for this declaration event."
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string",
+            "description": "Lane decision (`\"green\"`, `\"yellow\"`, `\"red\"`)."
+          }
+        }
+      },
+      "ListDlqResponse": {
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DlqItem"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReadyzResponse": {
+        "type": "object",
+        "description": "`/readyz` response body.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only on `not_ready`: a short machine-readable cause\nsuch as `\"database_unreachable\"`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`\"ready\"` when the database is reachable; `\"not_ready\"`\notherwise."
+          }
+        }
+      },
+      "ReplayDlqResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "replayed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SubmitVerificationRequest": {
+        "type": "object",
+        "required": [
+          "declaration"
+        ],
+        "properties": {
+          "declaration": {
+            "description": "Declaration snapshot to verify. Shape mirrors the\ndeclaration service's canonical-form payload. Deep type is\npinned via `serde_json::Value` in the spec — see\n`services/declaration` for the authoritative schema."
+          }
+        }
+      },
+      "SubmitVerificationResponse": {
+        "type": "object",
+        "required": [
+          "case_id",
+          "lane",
+          "authenticity_belief",
+          "authenticity_plausibility",
+          "risk_belief",
+          "total_duration_ms",
+          "case_url"
+        ],
+        "properties": {
+          "authenticity_belief": {
+            "type": "number",
+            "format": "double",
+            "description": "Dempster-Shafer belief mass for the \"authentic\" hypothesis."
+          },
+          "authenticity_plausibility": {
+            "type": "number",
+            "format": "double",
+            "description": "Plausibility upper bound for the same hypothesis."
+          },
+          "case_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identifier of the created verification case."
+          },
+          "case_url": {
+            "type": "string",
+            "description": "Absolute URL for the resulting case projection."
+          },
+          "lane": {
+            "type": "string",
+            "description": "Lane decision the fusion engine settled on. One of\n`\"green\"`, `\"yellow\"`, `\"red\"`."
+          },
+          "risk_belief": {
+            "type": "number",
+            "format": "double",
+            "description": "Belief mass for the \"elevated risk\" hypothesis."
+          },
+          "total_duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wall-clock pipeline duration, milliseconds.",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC-issued JWT. The service verifies the signature against the configured issuer's JWKS, plus `iss`/`aud`/`exp`/`nbf` claims. HMAC algorithms are refused (algorithm-confusion mitigation)."
+      },
+      "devPrincipalHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Recor-Dev-Principal",
+        "description": "Dev-only principal shortcut. Refused outside ENVIRONMENT=dev. Production must always use `bearerAuth`."
+      },
+      "hmacSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-RECOR-Signature",
+        "description": "HMAC-SHA256 over the raw request body, hex-encoded, using the shared inbound secret. Constant-time verification; rotation supported via a transient old-secret window."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "verifications",
+      "description": "Verification case submit + read."
+    },
+    {
+      "name": "system",
+      "description": "Liveness and readiness probes."
+    },
+    {
+      "name": "internal",
+      "description": "Operator and internal-service endpoints. Not intended for general consumption; subject to change."
+    }
+  ]
+}

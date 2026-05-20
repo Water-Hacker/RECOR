@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Sha256;
 use tracing::{info, instrument, warn};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::application::SubmitVerificationUseCase;
@@ -94,15 +95,38 @@ pub struct AttestationWire {
     pub nonce_hex: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct InboundResponse {
+    #[schema(value_type = String, format = "uuid")]
     pub event_id: Uuid,
     pub event_type: String,
+    /// Verification case UUID minted for this declaration event.
     pub case_id: String,
+    /// Lane decision (`"green"`, `"yellow"`, `"red"`).
     pub lane: String,
 }
 
 /// Handler for POST /v1/internal/declaration-events.
+#[utoipa::path(
+    post,
+    path = "/v1/internal/declaration-events",
+    tag = "internal",
+    operation_id = "handleDeclarationEvent",
+    // The body is the declaration-relay envelope; its schema is owned
+    // by the declaration service. We expose it as `serde_json::Value`
+    // here — the wire contract lives in declaration's OpenAPI spec.
+    request_body(content = serde_json::Value, description = "Outbox envelope from the declaration service's relay (HMAC-signed body)"),
+    responses(
+        (status = 200, description = "Verification case created from the inbound declaration event", body = InboundResponse),
+        (status = 400, description = "Malformed envelope or payload", body = crate::api::rest::ErrorEnvelope),
+        (status = 401, description = "HMAC signature missing or invalid (or peer-SPIFFE-ID mismatch under mtls-only)", body = crate::api::rest::ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = crate::api::rest::ErrorEnvelope),
+        (status = 503, description = "INBOUND_HMAC_SECRET unset under AUTH_TRANSPORT=hmac — endpoint disabled (D14 fail-closed)", body = crate::api::rest::ErrorEnvelope),
+    ),
+    security(
+        ("hmacSignature" = []),
+    ),
+)]
 #[instrument(skip_all)]
 pub async fn handle_declaration_event(
     State(state): State<InternalAppState>,
