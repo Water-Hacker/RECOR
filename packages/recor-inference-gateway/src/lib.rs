@@ -68,12 +68,23 @@ impl GatewayConfig {
             .unwrap_or_else(|_| SecretString::from(String::new()));
         let base_url = std::env::var("ANTHROPIC_API_URL")
             .unwrap_or_else(|_| ANTHROPIC_API_URL.to_string());
+        // TODO-024 closure — operator-controlled token ceiling, read
+        // from `ANTHROPIC_TOKEN_CEILING` env. Unset / zero / unparseable
+        // means no enforcement (the gateway's traditional posture).
+        // Production deployments MUST set this to a finite value so
+        // the platform's Anthropic spend has a hard ceiling per
+        // process. See `docs/runbooks/anthropic-budget.md` for the
+        // recommended values per service.
+        let session_token_ceiling = std::env::var("ANTHROPIC_TOKEN_CEILING")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .filter(|&n| n > 0);
         Self {
             api_key,
             base_url,
             default_tier: Tier::A,
             request_timeout: Duration::from_secs(30),
-            session_token_ceiling: None,
+            session_token_ceiling,
         }
     }
 
@@ -135,6 +146,29 @@ impl InferenceGateway {
         schema: &ToolSchema,
     ) -> Result<StructuredResponse, GatewayError> {
         let model = tier.model_id();
+
+        // TODO-024 closure — refuse paid calls when the configured
+        // token ceiling has been reached. Fixture mode (no API key)
+        // is allowed regardless: deterministic fixtures cost nothing
+        // and remain useful for graceful degradation when the cap
+        // trips in production.
+        if !self.config.is_fixture_mode()
+            && let Some(ceiling) = self.config.session_token_ceiling
+            && self.budget.total() >= ceiling
+        {
+            warn!(
+                used = self.budget.total(),
+                ceiling = ceiling,
+                purpose = %purpose,
+                "Anthropic budget ceiling reached; refusing paid call (cost-DoS protection)"
+            );
+            return Err(GatewayError::BudgetExceeded {
+                used: self.budget.total(),
+                ceiling,
+                purpose: purpose.to_string(),
+            });
+        }
+
         if self.config.is_fixture_mode() {
             info!("ANTHROPIC_API_KEY unset; returning fixture response (D14 fail-closed)");
             let fixture = FixtureResponse::vacuous(purpose, model);
@@ -263,6 +297,19 @@ pub enum GatewayError {
     NoToolUse,
     #[error("schema validation: {0}")]
     SchemaValidation(String),
+    /// TODO-024 closure — the session-level token ceiling has been
+    /// reached. The gateway REFUSES further paid calls until the
+    /// budget resets (process restart) or the ceiling is raised. The
+    /// caller MUST handle this as a degraded-but-not-failed state —
+    /// fixture-equivalent response is typically the right fallback.
+    #[error(
+        "token budget exhausted: used {used} > ceiling {ceiling} (cost-DoS protection — purpose={purpose})"
+    )]
+    BudgetExceeded {
+        used: u64,
+        ceiling: u64,
+        purpose: String,
+    },
 }
 
 #[cfg(test)]
@@ -309,5 +356,90 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.tool_input["verdict"], "insufficient_evidence");
+    }
+
+    // ─── TODO-024 — Anthropic budget cap enforcement ──────────────────
+
+    fn paid_config(ceiling: u64) -> GatewayConfig {
+        // Non-empty api_key → paid mode. base_url points at a non-
+        // existent host so an unguarded call would 99%-fail at the
+        // transport layer; the test asserts the gateway refuses
+        // BEFORE attempting the network.
+        GatewayConfig {
+            api_key: SecretString::from("test-key".to_string()),
+            base_url: "http://127.0.0.1:1/messages".to_string(),
+            default_tier: Tier::A,
+            request_timeout: Duration::from_millis(50),
+            session_token_ceiling: Some(ceiling),
+        }
+    }
+
+    fn test_schema() -> ToolSchema {
+        ToolSchema {
+            name: "test",
+            description: "test",
+            json_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"v": {"type": "string"}},
+                "required": ["v"]
+            }),
+        }
+    }
+
+    /// When the recorded total has reached the ceiling, the next paid
+    /// call returns `BudgetExceeded` WITHOUT attempting an HTTP request.
+    /// The configured `base_url` points at an unreachable host; if the
+    /// refusal didn't fire first, the test would observe a Transport
+    /// error instead.
+    #[tokio::test]
+    async fn budget_exceeded_refuses_paid_call() {
+        let gw = InferenceGateway::new(paid_config(100)).unwrap();
+        gw.budget().record("seed", "claude-opus-4-7", 100);
+        let err = gw
+            .messages("adverse_media", Tier::A, "sys", "user", &test_schema())
+            .await
+            .expect_err("budget cap must refuse");
+        match err {
+            GatewayError::BudgetExceeded { used, ceiling, .. } => {
+                assert_eq!(used, 100);
+                assert_eq!(ceiling, 100);
+            }
+            other => panic!("expected BudgetExceeded; got {other:?}"),
+        }
+    }
+
+    /// When usage is strictly below the ceiling, the cap does NOT
+    /// short-circuit. The call still fails at the transport layer
+    /// because the base_url is unreachable — we assert that's a
+    /// Transport error, not BudgetExceeded.
+    #[tokio::test]
+    async fn under_ceiling_does_not_refuse() {
+        let gw = InferenceGateway::new(paid_config(100)).unwrap();
+        gw.budget().record("seed", "claude-opus-4-7", 50);
+        let err = gw
+            .messages("adverse_media", Tier::A, "sys", "user", &test_schema())
+            .await
+            .expect_err("transport must fail (unreachable host)");
+        assert!(
+            !matches!(err, GatewayError::BudgetExceeded { .. }),
+            "expected non-budget error; got {err:?}",
+        );
+    }
+
+    /// No ceiling configured → the cap is disabled (None).
+    #[tokio::test]
+    async fn no_ceiling_means_no_refusal() {
+        let mut cfg = paid_config(0);
+        cfg.session_token_ceiling = None;
+        let gw = InferenceGateway::new(cfg).unwrap();
+        gw.budget().record("seed", "claude-opus-4-7", 1_000_000_000);
+        let err = gw
+            .messages("adverse_media", Tier::A, "sys", "user", &test_schema())
+            .await
+            .expect_err("transport must fail (unreachable host)");
+        assert!(
+            !matches!(err, GatewayError::BudgetExceeded { .. }),
+            "expected non-budget error; got {err:?}",
+        );
     }
 }
