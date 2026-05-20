@@ -409,12 +409,13 @@ pub(crate) async fn submit_declaration(
     // 3. Build the command BEFORE consulting idempotency so we have a
     // stable declaration_id for the receipt body.
     //
-    // PR-FATF-2.B: REST uses the strict constructor so FATF-required
-    // fields (cascade_tier, adequacy_claims) become a 400 at the API
-    // boundary rather than a 500-via-validation-failure-at-aggregate.
-    let cmd = req
-        .into_command_strict(principal.subject.clone(), correlation_id)
-        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
+    // PR-FATF-2.B: strict cascade_tier + adequacy_claims enforcement is
+    // available via `into_command_strict` but is OPT-IN at the moment
+    // because the declarant-portal UI does not yet populate the new
+    // fields (form update is PR-FATF-2.C). Until then we accept the
+    // legacy shape; aggregate-side validators still enforce the
+    // structural invariants when the fields ARE present.
+    let cmd = req.into_command(principal.subject.clone(), correlation_id);
     let declaration_id = cmd.declaration_id;
     // Capture the declaration kind for the OBS-1 counter. Bounded enum
     // — 5 possible values — so safe as a Prometheus label (D18).
@@ -647,9 +648,9 @@ pub(crate) async fn supersede_declaration(
         .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
 
     let correlation_id = Uuid::now_v7();
-    let new_command = req
-        .into_command_strict(principal.subject.clone(), correlation_id)
-        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
+    // PR-FATF-2.B strict-cascade enforcement is opt-in pending the
+    // portal form update — see submit handler for context.
+    let new_command = req.into_command(principal.subject.clone(), correlation_id);
 
     let receipt = state
         .supersede_usecase
@@ -803,9 +804,8 @@ pub(crate) async fn amend_declaration(
 
     // 3. Build the command and execute.
     let correlation_id = Uuid::now_v7();
-    let cmd = req
-        .into_command_strict(declaration_id, principal.subject.clone(), correlation_id)
-        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
+    // Strict cascade enforcement opt-in — see submit handler.
+    let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
     let receipt = state.amend_usecase.execute(cmd).await?;
     let response = AmendDeclarationResponse::from_receipt(receipt, &state.base_url);
     // OBS-1: increment AFTER successful persistence. Label `result` is
