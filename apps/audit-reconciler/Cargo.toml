@@ -1,0 +1,66 @@
+[package]
+name = "audit-reconciler"
+description = "RÉCOR audit-chain reconciliation cron. Periodically diffs declaration_events against the Fabric audit channel; emits a Prometheus divergence counter + a structured log line for every event present in the local event log but missing from chaincode. Closes FIND-016."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "audit-reconciler"
+path = "src/main.rs"
+
+[lib]
+name = "audit_reconciler"
+path = "src/lib.rs"
+
+[dependencies]
+# Shared workspace crates — the Fabric client trait + the projection
+# repo trait live in the audit-verifier app today. We re-use those
+# types here rather than duplicating the HTTP client.
+audit-verifier = { path = "../audit-verifier" }
+fabric-bridge = { path = "../../packages/fabric-bridge" }
+recor-logging = { path = "../../packages/recor-logging" }
+
+# Async runtime
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+
+# HTTP server (health + metrics surface only)
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+http.workspace = true
+
+# Database (read declaration_events)
+sqlx.workspace = true
+
+# Serialisation
+serde.workspace = true
+serde_json.workspace = true
+
+# IDs / time
+uuid.workspace = true
+time.workspace = true
+
+# Errors
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Observability
+tracing.workspace = true
+tracing-subscriber.workspace = true
+prometheus.workspace = true
+
+# Config
+config.workspace = true
+secrecy.workspace = true
+dotenvy.workspace = true
+
+# HTTP client (gateway query) — used transitively via audit-verifier
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
