@@ -1,6 +1,11 @@
 apiVersion: v2
 name: recor-service
-description: Generic Helm chart for any RÉCOR backend (declaration, verification-engine, person, entity, audit-verifier, audit-reconciler, worker-fabric-bridge). Per-service values.yaml selects the image + Vault paths + bind ports. Closes the Helm half of audit FIND-008.
+description: >
+  Generic Helm chart for any RÉCOR backend (declaration,
+  verification-engine, person, entity, audit-verifier,
+  audit-reconciler, worker-fabric-bridge). Per-service
+  values.yaml selects the image + Vault paths + bind ports.
+  Closes the Helm half of audit FIND-008.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

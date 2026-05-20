@@ -55,6 +55,6 @@ acquire conflicting state locks.
 ## Audit cross-ref
 
 - **FIND-008 (HIGH):** structurally closed alongside Helm + Kubernetes
-  + Ansible scaffolding. Full production-readiness depends on
+  and Ansible scaffolding. Full production-readiness depends on
   fleshing out the resource definitions for the chosen cloud
   (multi-week workstream).
