@@ -265,8 +265,12 @@ impl DeclarationService for DeclarationGrpcService {
             effective_from,
             beneficial_owners,
             attestation,
+            // Deferred to PR-FATF-2.B: gRPC will carry adequacy_claims
+            // once the proto contract is bumped to include the field.
+            adequacy_claims: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
+            adequacy_claims: None,
         };
 
         let receipt = self
@@ -376,8 +380,11 @@ impl DeclarationService for DeclarationGrpcService {
             effective_from,
             beneficial_owners,
             attestation,
+            // Deferred to PR-FATF-2.B.
+            adequacy_claims: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
+            adequacy_claims: None,
         };
 
         let receipt = self
@@ -419,6 +426,8 @@ impl DeclarationService for DeclarationGrpcService {
             beneficial_owners: decode_owners(&amendments_proto.beneficial_owners)?,
             effective_from: parse_iso_date(&amendments_proto.effective_from)?,
             declarant_role: decode_declarant_role(amendments_proto.declarant_role)?,
+            // Deferred to PR-FATF-2.B; see SubmitDeclaration note.
+            adequacy_claims: None,
         };
 
         // Resolve entity_id from the projection so the canonical-bytes
@@ -678,6 +687,18 @@ fn decode_owners(owners: &[proto::BeneficialOwner]) -> Result<Vec<BeneficialOwne
                 person_id,
                 ownership_basis_points,
                 interest_kind,
+                // PR-FATF-2.A: cascade + nominee fields are part of the
+                // FATF-cascade domain type. The proto contract does not
+                // yet carry these fields — see contracts/declaration.proto
+                // R-DECL-PROTO-FATF follow-up. Until the proto is bumped
+                // the gRPC ingestion path emits a legacy-shape owner
+                // (cascade_tier=None deserialises as LegacyPreCascade on
+                // the projection read).
+                cascade_tier: None,
+                control_basis: None,
+                cascade_tier_b_ruled_out_evidence: None,
+                is_nominee: None,
+                nominator_person_id: None,
             })
         })
         .collect()
@@ -1058,6 +1079,11 @@ mod tests {
             ownership_basis_points: OwnershipBasisPoints::try_from_basis_points(10_000)
                 .unwrap(),
             interest_kind: InterestKind::Equity,
+            cascade_tier: None,
+            control_basis: None,
+            cascade_tier_b_ruled_out_evidence: None,
+            is_nominee: None,
+            nominator_person_id: None,
         }];
         let nonce = "deadbeef";
         let bytes = canonical_submit_bytes(

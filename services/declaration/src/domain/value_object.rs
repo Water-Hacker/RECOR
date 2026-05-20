@@ -219,6 +219,27 @@ impl DeclarationState {
 }
 
 /// One declared beneficial owner with their interest in the entity.
+///
+/// FATF cascade (TODO-001 closure): R.24 §c.24.6 fn 25 requires every
+/// BO to be identified under the explicit cascade ownership → control →
+/// senior managing official. The platform records the cascade tier
+/// (`cascade_tier`) and, for the Control tier, the specific control
+/// basis (`control_basis`). Tier (c) — Senior Managing Official — is
+/// only admissible when tier (b) has been searched-for-and-ruled-out
+/// (enforced at the aggregate; declarant submits the ruled-out
+/// declaration in `cascade_tier_b_ruled_out_evidence`).
+///
+/// Nominee disclosure (TODO-010 closure): R.24 §c.24.12 requires
+/// nominee arrangements to disclose the nominator. `is_nominee = true`
+/// requires `nominator_person_id` to resolve to a separately-registered
+/// person who themselves appears at the appropriate cascade tier.
+///
+/// Backwards-compatibility: every FATF field is `Option<T>` and uses
+/// `#[serde(default)]` so historical Submitted/Amended/Corrected events
+/// that pre-date this migration replay without loss. NEW declarations
+/// MUST present `cascade_tier` (validated at the API DTO ⇒ command
+/// boundary; missing → 400). Historical projections report the legacy
+/// `LegacyPreCascade` tier value on read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BeneficialOwnerClaim {
     /// Canonical person identifier. The declarant supplies this; the
@@ -230,6 +251,104 @@ pub struct BeneficialOwnerClaim {
     pub ownership_basis_points: OwnershipBasisPoints,
     /// Nature of the interest — equity, voting-rights, control-without-equity, etc.
     pub interest_kind: InterestKind,
+    /// FATF cascade tier. New declarations MUST set this; historical
+    /// declarations (pre-FATF-cascade migration) deserialise with `None`
+    /// and are reported as `LegacyPreCascade` at the projection layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cascade_tier: Option<BoCascadeTier>,
+    /// For tier (b) Control, the specific control basis. Required when
+    /// `cascade_tier == Some(Control)`; refused for other tiers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_basis: Option<BoControlBasis>,
+    /// For tier (c) Senior Managing Official, free-text evidence that
+    /// tier (b) was searched-for-and-ruled-out. Required when
+    /// `cascade_tier == Some(SeniorManagingOfficial)`. The aggregate
+    /// only validates presence + length; semantic verification is the
+    /// back-office reviewer's responsibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cascade_tier_b_ruled_out_evidence: Option<String>,
+    /// TODO-010: is this BO acting on behalf of a nominator?
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_nominee: Option<bool>,
+    /// TODO-010: when `is_nominee = Some(true)`, the person_id of the
+    /// nominator. The nominator MUST appear as a separately-registered
+    /// person, and the aggregate refuses self-nomination (person_id ==
+    /// nominator_person_id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nominator_person_id: Option<PersonId>,
+}
+
+/// FATF R.24 §c.24.6 cascade tiers. The cascade resolves the question
+/// "who is the beneficial owner" in this order:
+///
+///   (a) Ownership — natural persons who hold ≥ 25% of equity or
+///       equivalent direct/indirect interest.
+///   (b) Control — natural persons exercising control through other
+///       means: voting rights, board-appointment power, contractual
+///       arrangements, family aggregation.
+///   (c) Senior Managing Official — the residual fallback when (a)
+///       and (b) yield no identified BO.
+///
+/// `LegacyPreCascade` is a read-time sentinel for projection rows that
+/// were submitted before this migration shipped. It MUST never be the
+/// target of a new declaration; the API DTO ⇒ command path refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoCascadeTier {
+    /// Direct ownership ≥ 25%.
+    OwnershipDirect,
+    /// Indirect ownership ≥ 25% via intermediate legal persons.
+    OwnershipIndirect,
+    /// Control-without-ownership (voting / board / contractual).
+    Control,
+    /// Residual fallback per FATF cascade.
+    SeniorManagingOfficial,
+    /// Read-time sentinel for historical (pre-cascade-migration) rows.
+    /// Never set on new declarations.
+    LegacyPreCascade,
+}
+
+impl BoCascadeTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnershipDirect => "ownership_direct",
+            Self::OwnershipIndirect => "ownership_indirect",
+            Self::Control => "control",
+            Self::SeniorManagingOfficial => "senior_managing_official",
+            Self::LegacyPreCascade => "legacy_pre_cascade",
+        }
+    }
+}
+
+/// FATF R.24 §c.24.6(b) control bases. Required when
+/// `BoCascadeTier == Control`; refused otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoControlBasis {
+    /// Holds voting rights without equivalent equity.
+    VotingRights,
+    /// Power to appoint or remove a majority of the board.
+    BoardAppointment,
+    /// Contractual arrangement (shareholder agreement, management
+    /// agreement, etc.) granting effective control.
+    ContractualControl,
+    /// Family-of-controllers aggregation (FATF Guidance §2.4).
+    FamilyAggregation,
+    /// Other documented control basis; supporting documents accompany
+    /// the declaration.
+    OtherDocumented,
+}
+
+impl BoControlBasis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VotingRights => "voting_rights",
+            Self::BoardAppointment => "board_appointment",
+            Self::ContractualControl => "contractual_control",
+            Self::FamilyAggregation => "family_aggregation",
+            Self::OtherDocumented => "other_documented",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -287,6 +406,13 @@ pub struct AmendmentSet {
     /// unchanged; the field is still recorded explicitly in both
     /// before/after snapshots so a replay sees the full intent.
     pub declarant_role: DeclarantRole,
+    /// TODO-021: replacement adequacy_claims block. The declarant
+    /// re-asserts adequate / accurate / up-to-date for the amended
+    /// values. Optional on the type for back-compat with legacy
+    /// Amended events; required at the API DTO boundary for new
+    /// amendments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adequacy_claims: Option<crate::domain::attestation::AdequacyClaims>,
 }
 
 /// The set of pre-verification corrections the API supports.

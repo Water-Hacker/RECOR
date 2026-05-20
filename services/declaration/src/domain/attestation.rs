@@ -27,9 +27,10 @@ impl SignatureAlgorithm {
 ///
 /// The signature is over the canonical JSON form of the declaration
 /// payload (entity_id, declarant_principal, declarant_role,
-/// declaration_kind, effective_from, beneficial_owners, nonce_hex),
-/// serialised with sorted keys, no whitespace, UTF-8 — i.e. JCS
-/// (RFC 8785). The nonce protects against replay.
+/// declaration_kind, effective_from, beneficial_owners,
+/// adequacy_claims, nonce_hex), serialised with sorted keys, no
+/// whitespace, UTF-8 — i.e. JCS (RFC 8785). The nonce protects
+/// against replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CryptographicAttestation {
     /// Principal identifier the signature is bound to. Matches the
@@ -46,6 +47,42 @@ pub struct CryptographicAttestation {
     /// Random nonce, hex-encoded. The verifier records nonces per
     /// principal to prevent replay.
     pub nonce_hex: String,
+}
+
+/// TODO-021 closure — explicit FATF claims block.
+///
+/// FATF R.24 c.24.8 requires BO data to be "adequate, accurate, and
+/// up-to-date". The cryptographic attestation by itself only proves
+/// authorship of the bytes; the explicit claims block proves the
+/// declarant *asserts* the three properties, which is the surface a
+/// sanctions workflow (TODO-004) needs to demonstrate perjury when
+/// a claim is later shown false.
+///
+/// The block is included in the canonical payload bytes (the bytes
+/// signed by Ed25519) so any tampering with claims invalidates the
+/// signature. Historical declarations that pre-date this migration
+/// deserialise with `None` via `#[serde(default)]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AdequacyClaims {
+    /// The declarant asserts the BO data is *adequate* —
+    /// sufficient to identify each natural person per c.24.8 fn 27
+    /// (full name, all nationalities, full DOB + place, residential
+    /// address, national ID, TIN or equivalent). Required for new
+    /// declarations; missing on legacy projections.
+    pub adequate: bool,
+    /// The declarant asserts the BO data is *accurate* — verified by
+    /// reliable, independently sourced documents per c.24.8 fn 28.
+    pub accurate: bool,
+    /// The declarant asserts the BO data is *up-to-date as of* the
+    /// given timestamp (c.24.8 fn 29; FATF benchmark: within 1 month
+    /// of any change).
+    #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
+    pub up_to_date_as_of: time::OffsetDateTime,
+    /// Free-text legal basis — typically a citation to the CEMAC
+    /// Règlement, Cameroon AML law, or the obligation under which the
+    /// declarant files. The aggregate validates length only; semantic
+    /// review is the back-office responsibility.
+    pub legal_basis: String,
 }
 
 impl CryptographicAttestation {

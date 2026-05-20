@@ -42,6 +42,13 @@ pub struct SubmitDeclaration {
     pub effective_from: time::Date,
     pub beneficial_owners: Vec<BeneficialOwnerClaim>,
     pub attestation: CryptographicAttestation,
+    /// TODO-021 closure — explicit FATF R.24 c.24.8 adequacy claims.
+    /// Optional on the type for back-compat with in-flight commands
+    /// (and historical replay); the API DTO layer treats absence as a
+    /// 400 for new submissions. Aggregate validates the structural
+    /// invariants when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adequacy_claims: Option<super::attestation::AdequacyClaims>,
     /// Time the API received the request, set by the API layer.
     pub submitted_at: OffsetDateTime,
     /// Correlation token for tracing across services.

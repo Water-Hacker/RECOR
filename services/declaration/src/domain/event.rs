@@ -88,6 +88,12 @@ pub struct DeclarationSubmittedV1 {
     pub effective_from: time::Date,
     pub beneficial_owners: Vec<BeneficialOwnerClaim>,
     pub attestation: CryptographicAttestation,
+    /// TODO-021 closure — explicit FATF R.24 c.24.8 adequacy claims.
+    /// Required for new declarations; absent on historical events that
+    /// pre-date this migration (`#[serde(default)]` deserialises older
+    /// payloads with `None` so replay is forward-compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adequacy_claims: Option<super::attestation::AdequacyClaims>,
     #[serde(with = "crate::domain::serde_helpers::iso_datetime")]
     pub submitted_at: OffsetDateTime,
     pub correlation_id: uuid::Uuid,
