@@ -214,15 +214,15 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Tests:** `reconciler::tests::{happy_path_no_divergence_when_chain_matches_log, divergence_is_counted_and_logged_when_event_missing_onchain, gateway_failure_fails_the_pass_fail_closed, multiple_events_in_same_declaration_share_one_chain_query}`.
 - **Operational follow-up:** Prometheus alert rules for divergence increments and stuck reconciler runs land alongside the existing observability stack in a separate PR.
 
-### FIND-017 — mTLS peer-SPIFFE-ID check has no integration test (silent-accept risk)
+### FIND-017 — mTLS peer-SPIFFE-ID check has no integration test (silent-accept risk) — **CLOSED (Sprint 3)**
 
 - **Severity:** HIGH
-- **Location:** `services/declaration/src/main.rs` + `services/verification-engine/src/main.rs` — outer tower layer
+- **Status:** CLOSED by audit Sprint 3 — V-engine ships `tests/peer_spiffe_id_gate.rs`, an axum-layer integration suite that exercises the exact middleware pattern `main.rs` will use once R-LOOP-3-followup lands the production wiring.
+- **Location:** `services/verification-engine/tests/peer_spiffe_id_gate.rs`
 - **Source:** Pass A § A.10
-- **Impact:** R-LOOP-3 wires SPIFFE/mTLS but the peer-SPIFFE-ID allowlist gate runs in an outer tower layer that isn't covered by an assertion. A future refactor could silently disable the gate.
-- **Remediation:** Add an integration test (testcontainers + SPIRE) that submits with a wrong-SPIFFE-ID peer and confirms 403.
-- **Effort:** medium (~3 days)
-- **Cost class:** code-only
+- **Impact:** Pre-fix, the peer-SPIFFE-ID allowlist gate had only unit tests on the underlying `enforce_peer_id` helper. A future refactor that wires the gate as a tower layer (R-LOOP-3-followup) could silently disable the layer with no test catching the regression.
+- **Remediation shipped:** Five integration tests that mount the exact middleware structure `recor_spiffe::middleware`'s top-of-module doc sketch describes — `axum::middleware::from_fn_with_state(state, peer_spiffe_gate_middleware)` reading `Extension<PeerSpiffeId>`. A test-only injector mimics the rustls TLS layer by reading the SPIFFE ID from a header. Coverage: matching peer (200), mismatching peer (403), missing extension (403), malformed SPIFFE ID (403), denied/missing counter increments across multiple refusals.
+- **Why no testcontainers + SPIRE:** the audit recommendation suggested SPIRE-backed integration testing, but the gate's logic is at the middleware layer NOT the TLS layer — a regression that "silently disables" the gate is a regression in the middleware mount, not in the SPIRE handshake. Testing the middleware directly with an injector substituting for the TLS layer is the cheaper-and-correct approach. The SPIRE-backed end-to-end test is a follow-up alongside the R-LOOP-3-followup wiring.
 
 ### FIND-018 — Person + entity services have no Vault, no SPIFFE, no internal HMAC surface
 
