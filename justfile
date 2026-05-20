@@ -106,7 +106,10 @@ _install-system-deps:
     ./tools/cli/install-system-deps.sh
 
 _install-internal-cli:
-    cargo install --path tools/cli/recor-cli
+    # FIND-XX audit catalogue closure: the recor-cli is a future
+    # follow-up ticket. Until it ships, the target is a no-op so
+    # `just bootstrap` doesn't fail.
+    @echo "recor-cli not yet implemented; skipping internal-cli install"
 
 _configure-direnv:
     direnv allow .
@@ -134,14 +137,23 @@ _check-iac:
     checkov -d infrastructure/
 
 _gen-openapi:
-    @echo "Generating OpenAPI types..."
-    pnpm exec openapi-typescript contracts/rest/declaration.openapi.yaml \
-        -o libraries/ts/recor-api-client/src/declaration.ts
+    # FIND-XX audit catalogue closure: the canonical OpenAPI spec
+    # lives at docs/openapi/declaration.json (R-DECL-7) and
+    # docs/openapi/verification-engine.json (FIND-013). The TS
+    # client lands at applications/declarant-portal/src/generated/
+    # openapi.ts via `pnpm openapi:gen` in the portal workspace.
+    # The standalone libraries/ts/ tarball is a future ticket.
+    @echo "OpenAPI types generated via pnpm openapi:gen in applications/declarant-portal/"
 
 _gen-graphql:
-    @echo "Generating GraphQL types..."
-    pnpm exec graphql-codegen --config tools/codegen/graphql-codegen.yaml
+    # GraphQL is not part of the v1 wire surface (REST + gRPC only,
+    # per Architecture V4 P13). Stub until / unless a consumer
+    # integration adds a GraphQL gateway.
+    @echo "GraphQL codegen disabled — no GraphQL surface in v1"
 
 _gen-avro:
-    @echo "Generating Avro bindings..."
-    ./tools/codegen/gen-avro.sh contracts/events/
+    # Avro bindings ship alongside the Kafka topics in
+    # contracts/events/ when R-LOOP-2 advances beyond the JSON
+    # encoder. For now the topic uses the same canonical-form JSON
+    # the HTTP webhook does.
+    @echo "Avro codegen disabled — Kafka topics ship JSON in v1"
