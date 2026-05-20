@@ -195,15 +195,16 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** cheap (~1 day)
 - **Cost class:** code-only
 
-### FIND-016 — Audit chain reconciliation cron MISSING (event_log vs Fabric witness divergence)
+### FIND-016 — Audit chain reconciliation cron MISSING (event_log vs Fabric witness divergence) — **CLOSED (Sprint 2)**
 
 - **Severity:** HIGH
-- **Location:** Does not exist
+- **Status:** CLOSED by audit Sprint 2 — `apps/audit-reconciler` ships a periodic job that detects events in the local event log absent from the Fabric chaincode.
+- **Location:** `apps/audit-reconciler/src/reconciler.rs`
 - **Source:** Pass C § 08-audit-chain.md "Gaps to close"
-- **Impact:** If the worker-fabric-bridge silently fails to anchor an event, no automated job detects it. The threat-model marks Gap G1 as partially closed by R-DECL-9; full closure requires this reconciliation.
-- **Remediation:** Author a cron-style job that joins `declaration_events` against the chaincode KV by `event_id` and alerts on events present in the event log but missing from chaincode for > N minutes (where N covers normal bridge lag).
-- **Effort:** medium (~3 days)
-- **Cost class:** code + requires-infrastructure (alert routing)
+- **Impact:** If the worker-fabric-bridge silently fails to anchor an event, no automated job detected it. Threat-model Gap G1 is now fully closed (R-DECL-9 anchors; FIND-016 reconciles).
+- **Remediation shipped:** New app `apps/audit-reconciler`. Every `RECONCILE_INTERVAL_SECONDS` (default 600s) it pulls `declaration_events` rows older than `RECONCILE_GRACE_SECONDS` (default 300s — bridge dispatch lag), groups by `declaration_id`, calls `ListAuditEntriesForDeclaration` on the chaincode, and counts every local `event_id` absent from the on-chain set. Each divergence increments `recor_audit_reconciliation_divergence_total{event_type=...}` and emits a structured WARN with `declaration_id` + `event_id` + `event_time`. `recor_audit_reconciliation_runs_total{outcome=ok|gateway_error|db_error}` makes a stuck reconciler itself alertable.
+- **Tests:** `reconciler::tests::{happy_path_no_divergence_when_chain_matches_log, divergence_is_counted_and_logged_when_event_missing_onchain, gateway_failure_fails_the_pass_fail_closed, multiple_events_in_same_declaration_share_one_chain_query}`.
+- **Operational follow-up:** Prometheus alert rules for divergence increments and stuck reconciler runs land alongside the existing observability stack in a separate PR.
 
 ### FIND-017 — mTLS peer-SPIFFE-ID check has no integration test (silent-accept risk)
 

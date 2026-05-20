@@ -19,6 +19,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/audit-reconciler",
     "apps/audit-verifier",
     "apps/worker-fabric-bridge",
     "packages/fabric-bridge",
