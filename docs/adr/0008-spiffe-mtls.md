@@ -224,3 +224,7 @@ model.md`); we close it now.
   ADR retires.
 - Doctrines D7 (no workarounds), D14 (fail-closed), D17 (zero
   trust), D20 (supply-chain integrity — SPIRE upstream pinned).
+
+## Linked from
+
+- [ADR-0010 — FATF R.24 BO cascade, bearer-share + nominee disclosure, adequacy claims](0010-fatf-bo-cascade-and-adequacy.md) — references this ADR in its "Related" section.

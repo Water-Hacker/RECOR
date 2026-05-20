@@ -231,3 +231,7 @@ displacement.
   - Periodic chaincode-state reconciliation report (cron-style job
     that compares the projection event count to the on-chain count
     and alerts on drift)
+
+## Linked from
+
+- [ADR-0010 — FATF R.24 BO cascade, bearer-share + nominee disclosure, adequacy claims](0010-fatf-bo-cascade-and-adequacy.md) — references this ADR in its "Related" section.

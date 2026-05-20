@@ -177,3 +177,7 @@ write path local and adds Fabric as an externalisation step.
   provenance)
 - Follow-up: `R-DECL-3` (amend / correction / supersede commands —
   partially closed by PR #55), `R-DECL-9` (Fabric anchoring)
+
+## Linked from
+
+- [ADR-0010 — FATF R.24 BO cascade, bearer-share + nominee disclosure, adequacy claims](0010-fatf-bo-cascade-and-adequacy.md) — references this ADR in its "Related" section.
