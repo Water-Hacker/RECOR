@@ -1,0 +1,14 @@
+# RÉCOR namespace. Labels drive PodSecurity Admission and the
+# NetworkPolicy selectors in `infrastructure/networks/`.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    # PodSecurity Admission — D14 fail-closed posture.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

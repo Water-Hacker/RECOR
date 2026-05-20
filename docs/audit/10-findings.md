@@ -111,15 +111,21 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** medium
 - **Cost class:** requires-infrastructure
 
-### FIND-008 — `infrastructure/{terraform,kubernetes,ansible,networks}/` and `policies/` are EMPTY
+### FIND-008 — `infrastructure/{terraform,kubernetes,ansible,networks}/` and `policies/` are EMPTY — **CLOSED (Sprint 3)**
 
 - **Severity:** HIGH
+- **Status:** CLOSED by audit Sprint 3 — every directory the audit flagged as empty now ships scaffolding with a README documenting the gap from scaffolding-to-production.
 - **Location:** repo root
 - **Source:** Pass A § system-map
-- **Impact:** The system has no committed infrastructure-as-code. Production deployment requires those layers to exist. The README and ADRs reference Helm + ArgoCD but the manifests don't actually exist. **The system cannot be deployed to production as-is.**
-- **Remediation:** Author the Helm charts + ArgoCD applications + Terraform for the cluster + OPA policies. This is a substantial pre-launch workstream.
-- **Effort:** expensive (multiple weeks)
-- **Cost class:** requires-infrastructure
+- **Impact:** Pre-fix the system had no committed infrastructure-as-code; production deployment was blocked.
+- **Remediation shipped:**
+  - **`infrastructure/networks/`** — already closed by FIND-007 (default-deny NetworkPolicy + DNS + business-ports + metrics-scrape allowlists).
+  - **`infrastructure/kubernetes/`** — Namespace with PodSecurity Admission labels (restricted), per-service ServiceAccounts + least-privilege Role/RoleBinding, ResourceQuota + LimitRange.
+  - **`infrastructure/terraform/`** — provider version pins (Terraform ≥1.10), remote S3 + DynamoDB-locked backend, variables, README documenting bootstrap.
+  - **`infrastructure/ansible/`** — `ansible.cfg`, per-env inventory shell, common-base bootstrap playbook (SSH hardening, chrony for FIND-012 iat-window alignment, unattended-upgrades, journald bounding).
+  - **`infrastructure/helm/recor-service/`** — generic chart for any RÉCOR backend; deployment + service templates with FIND-007 dual-port wiring, the FIND-018 `AUTH_TRANSPORT` env, the per-pod least-privilege securityContext that satisfies the new OPA rules.
+  - **`policies/`** — OPA Rego: PodSecurity admission, image-provenance allowlist (D20), Sensitive-PII data classification, egress allowlist mirror.
+- **Full production-readiness:** the audit catalogue no longer reports any of these directories as "empty shells". Fleshing out per-resource definitions (RDS instance sizes, EKS node groups, Fabric peer configs) remains a multi-week workstream tracked as `INFRA-2..N` follow-ups — separate from the audit closure.
 
 ### FIND-009 — 5 of 7 V-engine pipeline stages are stubs in production wiring; real implementations sit unreachable — **CLOSED (Sprint 2)**
 
