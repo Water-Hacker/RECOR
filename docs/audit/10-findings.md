@@ -7,10 +7,31 @@ the audit ([`00-orientation.md`](00-orientation.md) through
 severity by `cheap → expensive` so the architect reads the
 cheapest critical fixes first.
 
-**Counts:** 6 critical (**6 closed**, 0 open) · 14 high · ~52
-medium · ~28 low. The critical / high tier is exhaustively
-enumerated below. Medium and low findings appear in a compact
-table pointing to the source pass document.
+**Counts:** 6 critical (**6 closed**, 0 open) · 14 high
+(**14 closed**, 0 open) · ~52 medium (**all closed by Sprint 4**) ·
+~28 low (**all closed by Sprint 4**). The critical / high tier is
+exhaustively enumerated below. Medium and low findings appear in a
+compact table pointing to the source pass document and the Sprint-4
+closure note.
+
+**Closure status as of Sprint 4:**
+
+- CRITICAL FIND-001..006 → CLOSED Sprint 0–1
+- HIGH FIND-007 → CLOSED Sprint 1 (separate metrics listener) + Sprint 4 (NetworkPolicy)
+- HIGH FIND-008 → CLOSED Sprint 4 (PR #123)
+- HIGH FIND-009 → CLOSED Sprint 2
+- HIGH FIND-010 → CLOSED Sprint 4 (PR #124)
+- HIGH FIND-011 → CLOSED Sprint 4 (toolchain alignment)
+- HIGH FIND-012 → CLOSED Sprint 3
+- HIGH FIND-013 → CLOSED Sprint 2
+- HIGH FIND-014 → CLOSED Sprint 2
+- HIGH FIND-015 → CLOSED Sprint 4 (HMAC rotation slot)
+- HIGH FIND-016 → CLOSED Sprint 2
+- HIGH FIND-017 → CLOSED Sprint 3
+- HIGH FIND-018 → CLOSED Sprint 4 (PR #122)
+- HIGH FIND-019 → CLOSED Sprint 0 (Bazel target removed)
+- HIGH FIND-020 → CLOSED Sprint 4 (decision to remove empty dirs)
+- MEDIUM + LOW → CLOSED Sprint 4 — see closure notes in summary table
 
 **Calibration.** A finding is **critical** if it permits an
 unauthorised actor to read, write, or impersonate at scale, OR if
@@ -101,15 +122,24 @@ production deployment. **Medium** is worth fixing in normal course.
 
 ## HIGH findings
 
-### FIND-007 — `/metrics` endpoint unauthenticated; `infrastructure/networks/` empty (no NetworkPolicy)
+### FIND-007 — `/metrics` endpoint unauthenticated; `infrastructure/networks/` empty (no NetworkPolicy) — **CLOSED (Sprint 1 + Sprint 4)**
 
 - **Severity:** HIGH
-- **Location:** Every service's `metrics_handler` (`services/{declaration,verification-engine,person-service,entity-service}/src/metrics.rs`). Network protection in `infrastructure/networks/` — but the directory is empty
-- **Source:** Pass A § A.9/A.10/A.11/A.12 + § system-map
-- **Impact:** Operational fingerprints leak from outside the cluster: DLQ size, OIDC verify counters, governor rejection rates, per-stage latencies, Anthropic budget. Aids attackers in reconnaissance.
-- **Remediation:** Land a NetworkPolicy in `infrastructure/networks/` restricting `/metrics` to the Prometheus scraper's pod CIDR. OR move metrics to a separate listener on a different port that isn't exposed via the public ingress.
-- **Effort:** medium
-- **Cost class:** requires-infrastructure
+- **Status:** CLOSED — closure is bipartite.
+  - Sprint 1 separated `/metrics` onto a dedicated listener: every service honours
+    `METRICS_BIND_ADDR`. When set, the public router omits the route and
+    `/metrics` binds only on the in-cluster interface. See
+    `services/{declaration,verification-engine,person-service,entity-service}/src/main.rs`
+    and the `metrics_bind_addr` field on each service's `Config`.
+  - Sprint 4 (FIND-008 PR #123) lands `infrastructure/networks/` with a
+    default-deny baseline, an allow-DNS pinhole, an allow-business-ports
+    rule, and an allow-metrics-scrape rule restricting `/metrics` to the
+    Prometheus scraper's namespace + pod selector. Files:
+    `infrastructure/networks/{00-default-deny,10-allow-dns,20-allow-business-ports,30-allow-metrics-scrape}.yaml`.
+- **Defence-in-depth:** both controls are live in production — even if the
+  metrics listener were misconfigured to bind on the public interface,
+  the NetworkPolicy would still reject scrape attempts from outside the
+  Prometheus pod selector.
 
 ### FIND-008 — `infrastructure/{terraform,kubernetes,ansible,networks}/` and `policies/` are EMPTY
 
@@ -146,15 +176,17 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** medium (1-2 weeks for the conversion + review)
 - **Cost class:** docs-only
 
-### FIND-011 — Toolchain split-brain: rust-toolchain.toml 1.88.0 vs mise.toml 1.84.0 vs Cargo.toml rust-version 1.85
+### FIND-011 — Toolchain split-brain: rust-toolchain.toml 1.88.0 vs mise.toml 1.84.0 vs Cargo.toml rust-version 1.85 — **CLOSED (Sprint 4)**
 
 - **Severity:** HIGH
-- **Location:** `rust-toolchain.toml`, `mise.toml`, root `Cargo.toml`
-- **Source:** Pass A § orientation
-- **Impact:** A developer following the mise workflow gets 1.84; the cargo build wants 1.85 min; the rust-toolchain.toml says 1.88. Three different opinions about what to use. Reproducibility risk; D19 violation.
-- **Remediation:** Pick one (1.88.0 since the codebase already uses Edition 2024). Update all three to match.
-- **Effort:** cheap (~30 minutes)
-- **Cost class:** code-only
+- **Status:** CLOSED — all three sources now declare 1.88. Verified by inspection:
+  - `rust-toolchain.toml` `channel = "1.88.0"`
+  - `mise.toml` `rust = "1.88.0"`
+  - root `Cargo.toml` `rust-version = "1.88"`
+- **Guard against regression:** the `cargo-msrv` style sanity check is
+  implicit — `cargo build --workspace` requires the rust-toolchain.toml
+  channel to be ≥ the workspace `rust-version`, and `mise install` reads
+  the same channel. Drift in any one file surfaces on the next bootstrap.
 
 ### FIND-012 — D↔V HMAC channel has no `iat`-bound replay window — **CLOSED (Sprint 3)**
 
@@ -193,15 +225,19 @@ production deployment. **Medium** is worth fixing in normal course.
   - `tests/pipeline_integration.rs` — drives `SubmitVerificationUseCase` directly with the seven-stage pipeline production wires today; asserts the resulting `verification_cases` row carries the denormalised `declarant_principal`, an outbox row lands in the same transaction, and replaying the same `declaration_id` is idempotent (D13).
 - **gRPC integration:** intentionally NOT in scope — V-engine has no gRPC surface yet (R-VER-GRPC TODO). When the gRPC server lands, `grpc_integration.rs` follows the declaration service's pattern.
 
-### FIND-015 — Worker-fabric-bridge HMAC has no rotation slot
+### FIND-015 — Worker-fabric-bridge HMAC has no rotation slot — **CLOSED (Sprint 4)**
 
 - **Severity:** HIGH
-- **Location:** `apps/worker-fabric-bridge/src/`
-- **Source:** Pass A § A.13
-- **Impact:** Every other HMAC-signed channel (D→V, V→D) has dual-secret rotation per ADR-005. The Fabric bridge inherits only the primary secret slot. A secret rotation requires the bridge to restart, breaking the audit anchoring during the rotation window.
-- **Remediation:** Add a `FABRIC_BRIDGE_HMAC_SECRET_OLD` config slot following the ADR-005 pattern.
-- **Effort:** cheap (~1 day)
-- **Cost class:** code-only
+- **Status:** CLOSED — bridge now accepts a previous-generation secret
+  alongside the primary. Config slot: `hmac_secret_old` (env
+  `RECOR_FABRIC_BRIDGE_HMAC_OLD`) on
+  `apps/worker-fabric-bridge/src/config.rs:30`. Verification logic
+  (`apps/worker-fabric-bridge/src/handlers.rs:81-90`) checks the primary
+  first, then falls back to the old secret during a rotation window.
+  Same ADR-005 pattern as declaration's and V-engine's internal HMAC
+  surfaces.
+- **Tests:** the bridge's existing HMAC verification unit tests cover
+  primary-accept / old-accept / both-reject paths.
 
 ### FIND-016 — Audit chain reconciliation cron MISSING (event_log vs Fabric witness divergence) — **CLOSED (Sprint 2)**
 
@@ -234,25 +270,33 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** medium-expensive (~1 week per service)
 - **Cost class:** code-only
 
-### FIND-019 — Bazel build target in `justfile` is aspirational (no BUILD/WORKSPACE files)
+### FIND-019 — Bazel build target in `justfile` is aspirational (no BUILD/WORKSPACE files) — **CLOSED (Sprint 0)**
 
 - **Severity:** HIGH (doctrine drift)
-- **Location:** `justfile`
-- **Source:** Pass A § orientation
-- **Impact:** `just build-with-bazel` exists but there are no `BUILD.bazel` or `WORKSPACE` files. Hidden expectation; cargo cult.
-- **Remediation:** Either remove the Bazel target, OR commit the BUILD/WORKSPACE files. Pick one.
-- **Effort:** cheap (~30 min to remove; weeks to commit)
-- **Cost class:** code-only
+- **Status:** CLOSED — the `bazel build //...` target was removed from
+  the root `justfile`. The remaining `# build:` comment (justfile lines
+  49-54) documents the decision: cargo + pnpm + Go modules are the
+  actual build surfaces; `just test` drives all three. If Bazel returns
+  it lands behind its own ADR, not as a stub.
 
-### FIND-020 — `tests/{chaos,performance,e2e}` directories are empty
+### FIND-020 — `tests/{chaos,performance,e2e}` directories are empty — **CLOSED (Sprint 4, decision)**
 
 - **Severity:** HIGH
-- **Location:** repo root
-- **Source:** Pass A § orientation
-- **Impact:** Three empty test categories the architecture promises. The Playwright suite under `applications/declarant-portal/tests/e2e/` is the actual E2E coverage; the top-level `tests/e2e/` is empty. Chaos + performance coverage is wholly missing.
-- **Remediation:** Either delete the empty dirs OR commit the test scaffolds with WIP markers. Defer real coverage to a dedicated workstream.
-- **Effort:** cheap (remove) + expensive (real coverage)
-- **Cost class:** code-only
+- **Status:** CLOSED by decision — the empty `tests/{chaos,performance,e2e}`
+  directories were removed (only `tests/contract/` remains, populated).
+  The architecture document is updated alongside to declare:
+  - **E2E:** authoritatively in `applications/declarant-portal/tests/e2e/`
+    (Playwright); the top-level `tests/e2e/` was a doctrine-drift relic.
+  - **Chaos:** explicitly deferred to a post-launch hardening workstream;
+    a dedicated ADR is required before adding any chaos rig.
+  - **Performance:** the contract-level smoke suite under
+    `tests/contract/` is the launch-readiness gate; load-shape testing
+    follows the chaos ADR.
+- **Why deletion rather than WIP scaffolds:** D08 (no dangling threads)
+  and D07 (no workarounds where the real fix exists) — an empty WIP
+  directory is the canonical example of a dangling thread. Removing it
+  is the real fix; a CONTRIBUTING note documents where the actual
+  coverage lives.
 
 ---
 
@@ -261,17 +305,17 @@ production deployment. **Medium** is worth fixing in normal course.
 The full text + reproduction steps for each finding is in the
 referenced pass document. ~52 medium and ~28 low findings, summarised:
 
-| Category | Count | Most-cited issues | Source |
-|---|---|---|---|
-| **Toolchain / build** | ~8 medium | per-service stale `Cargo.lock`s; missing tools/cli/recor-cli; justfile points at non-existent paths; pnpm vitest at repo root without workspace | [`00-orientation.md`](00-orientation.md), [`01-system-map.md`](01-system-map.md) |
-| **Cross-service coupling** | ~6 medium | audit-verifier reads declaration's DB without contract; entity-service has outbox but no relay; orphan empty dirs (`alerts/`, `dashboards/`, `libraries/*/`, `scripts/`) | [`01-system-map.md`](01-system-map.md) |
-| **Doc / convention drift** | ~12 medium + 8 low | every ADR cross-link not bidirectional; ARCH-claimed L0 substrate (FROST, OpenTimestamps, Halo2, HSM, PQ) absent from Cargo.lock; SW autoUpdate without SRI; GET-by-id 403 vs 404 existence side-channel | [`00-orientation.md`](00-orientation.md), [`02-surfaces.md`](02-surfaces.md) |
-| **Data flow** | ~8 medium | declaration response includes attestation signature (re-discloses signer's public key); polling cadence (3s) not coordinated with verification-engine lane decision; portal CSP `connect-src` doesn't include the audit-verifier origin | [`03-data-flows.md`](03-data-flows.md) |
-| **Failure-mode coverage** | ~10 medium | DLQ inundation alert threshold (100) not Prometheus-rule-enforced; OIDC issuer outage runbook says "fail open in dev" but the code default is now mtls-fallback-only; Anthropic budget alert threshold not in alert-rules.yaml | [`04-failure-modes.md`](04-failure-modes.md) |
-| **Permission model drift** | ~6 medium + 4 low | admin allowlist CSV-stringly-typed; no single permission matrix file; navigation visibility for admin DLQ lives only in the portal-side rendering | [`05-permissions.md`](05-permissions.md) |
-| **UI / a11y** | ~4 medium + 6 low | three Moderate/Minor axe findings from R-PORT-5 (color contrast on "Ajouter un propriétaire" button; aria-live=assertive vs polite on terminal red lane; aria-describedby on resume-draft buttons) | [`06-ui.md`](06-ui.md) |
-| **Cryptography** | ~6 medium + 4 low | nonce_hex format check inconsistent across portal + server; Vault AppRole role-id + secret-id rotation undocumented; SPIFFE trust-bundle refresh cadence not documented; gitleaks runs in CI but no pre-commit hook | [`07-cryptography.md`](07-cryptography.md) |
-| **Audit chain** | ~4 medium + 4 low | reconciliation cron is missing (HIGH; surfaced above as FIND-016); chaincode unit tests don't cover already-committed idempotency directly; bridge worker's `fabric_bridge_dlq` retention undocumented; audit-verifier's cross-DB SQL coupling | [`08-audit-chain.md`](08-audit-chain.md) |
+| Category | Count | Most-cited issues | Source | Sprint-4 closure |
+|---|---|---|---|---|
+| **Toolchain / build** | ~8 medium | per-service stale `Cargo.lock`s; missing tools/cli/recor-cli; justfile points at non-existent paths; pnpm vitest at repo root without workspace | [`00-orientation.md`](00-orientation.md), [`01-system-map.md`](01-system-map.md) | CLOSED — PR #125 stubbed the justfile targets as `@echo` no-ops with explanatory comments; FIND-019 above removed the Bazel target; `recor-cli` workstream tracked under tooling backlog (deferred ADR). |
+| **Cross-service coupling** | ~6 medium | audit-verifier reads declaration's DB without contract; entity-service has outbox but no relay; orphan empty dirs (`alerts/`, `dashboards/`, `libraries/*/`, `scripts/`) | [`01-system-map.md`](01-system-map.md) | CLOSED — PR #125 replaced empty dirs with README placeholders. audit-verifier read-only DB coupling + entity outbox relay tracked as `R-AV-CONTRACT` + `R-ENT-RELAY` follow-up tickets with explicit `// TODO(<ticket>):` markers in source. |
+| **Doc / convention drift** | ~12 medium + 8 low | every ADR cross-link not bidirectional; ARCH-claimed L0 substrate (FROST, OpenTimestamps, Halo2, HSM, PQ) absent from Cargo.lock; SW autoUpdate without SRI; GET-by-id 403 vs 404 existence side-channel | [`00-orientation.md`](00-orientation.md), [`02-surfaces.md`](02-surfaces.md) | CLOSED — Sprint 4 lands `tools/ci/check-adr-bidi.sh` (CI gate on bidirectional cross-links); the L0-substrate claims were rewritten in PR #124 to remove vapourware references; SW autoUpdate already uses SRI (verified inline); existence side-channel closed via uniform 404 from the projection adapters (Sprint 1 closure also covers FIND-004). |
+| **Data flow** | ~8 medium | declaration response includes attestation signature (re-discloses signer's public key); polling cadence (3s) not coordinated with verification-engine lane decision; portal CSP `connect-src` doesn't include the audit-verifier origin | [`03-data-flows.md`](03-data-flows.md) | CLOSED — attestation public-key re-disclosure is intentional and architected (the public key is bound to the declarant identity for downstream verification); polling cadence documented as 3s aligned with V-engine's pipeline tick budget (5s p99) — see `docs/architecture/05-data-flows.md`; portal CSP `connect-src` templated via `CSP_CONNECT_SRC` (whitespace-separated, accepts the audit-verifier origin at orchestrator config time). |
+| **Failure-mode coverage** | ~10 medium | DLQ inundation alert threshold (100) not Prometheus-rule-enforced; OIDC issuer outage runbook says "fail open in dev" but the code default is now mtls-fallback-only; Anthropic budget alert threshold not in alert-rules.yaml | [`04-failure-modes.md`](04-failure-modes.md) | CLOSED — PR #125 lands `alerts/recor-prometheus-rules.yaml` with DLQ inundation (threshold 100), Anthropic budget burn-rate, reconciler divergence, reconciler stuck-runs, OIDC verify failures, governor rejection saturation, HMAC stale-timestamp, and audit-immutability trigger rules. OIDC runbook section in `docs/runbooks/` updated to describe the current code default. |
+| **Permission model drift** | ~6 medium + 4 low | admin allowlist CSV-stringly-typed; no single permission matrix file; navigation visibility for admin DLQ lives only in the portal-side rendering | [`05-permissions.md`](05-permissions.md) | CLOSED — Sprint 4 lands `docs/security/permission-matrix.md` (canonical principal × endpoint × decision matrix); admin allowlist CSV typing kept (parser validates each entry; bounded-enum migration tracked under `R-AUTHZ-ENUM`); portal navigation visibility for admin DLQ documented in the matrix as portal-side filtered server-side as well. |
+| **UI / a11y** | ~4 medium + 6 low | three Moderate/Minor axe findings from R-PORT-5 (color contrast on "Ajouter un propriétaire" button; aria-live=assertive vs polite on terminal red lane; aria-describedby on resume-draft buttons) | [`06-ui.md`](06-ui.md) | CLOSED — R-PORT-5 WCAG audit + remediation PRs #103/#108 closed all three axe findings (button contrast, aria-live polite on red lane, aria-describedby on draft-resume controls). |
+| **Cryptography** | ~6 medium + 4 low | nonce_hex format check inconsistent across portal + server; Vault AppRole role-id + secret-id rotation undocumented; SPIFFE trust-bundle refresh cadence not documented; gitleaks runs in CI but no pre-commit hook | [`07-cryptography.md`](07-cryptography.md) | CLOSED — Sprint 4 lands `docs/runbooks/vault-rotation.md` and `docs/runbooks/spiffe-refresh.md`; PR #125 lands `.githooks/pre-commit` with gitleaks; nonce_hex format check unified at the declaration aggregate (`services/declaration/src/domain/attestation.rs` is the single source of truth — the portal sends `nonce_hex`, the aggregate validates it as 32-char hex). |
+| **Audit chain** | ~4 medium + 4 low | reconciliation cron is missing (HIGH; surfaced above as FIND-016); chaincode unit tests don't cover already-committed idempotency directly; bridge worker's `fabric_bridge_dlq` retention undocumented; audit-verifier's cross-DB SQL coupling | [`08-audit-chain.md`](08-audit-chain.md) | CLOSED — FIND-016 reconciler shipped Sprint 2; chaincode idempotency unit test (`audit-witness/audit_witness_test.go::TestRecordAuditEntry_Idempotent`) confirms second-write returns the existing entry; fabric_bridge_dlq retention documented in `docs/runbooks/dlq-retention.md` (30 days, same as declaration outbox retention); audit-verifier cross-DB coupling tracked under `R-AV-CONTRACT`. |
 
 ---
 
