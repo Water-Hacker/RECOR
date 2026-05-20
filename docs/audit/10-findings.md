@@ -142,15 +142,14 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Tests:** `BunecNameResolver` has its own unit-test matrix (found / not-found / circuit-open → respectively Some / None / None). The real stages already shipped with their own unit tests; this PR doesn't change their behaviour, only their reachability.
 - **Activation:** operators flip `ENABLE_REAL_SANCTIONS=true` (etc.) per stage. Adverse-media additionally requires `ANTHROPIC_API_KEY` for non-fixture inference; absent the key the gateway runs in fixture mode (see `recor-inference-gateway`).
 
-### FIND-010 — Architecture binders are `.docx` (non-diffable)
+### FIND-010 — Architecture binders are `.docx` (non-diffable) — **CLOSED (Sprint 3)**
 
 - **Severity:** HIGH (doctrine drift)
-- **Location:** `docs/architecture/`, `docs/companion/`, `docs/concept-note/`
+- **Status:** CLOSED by audit Sprint 3 — all three binders converted to GitHub-Flavoured Markdown via pandoc and committed alongside the original `.docx` files. From this PR onwards, edits land in the `.md` and the `.docx` is regenerated on release (or deleted in a follow-up once the team confirms the conversion fidelity).
+- **Location:** `docs/architecture/RECOR-Software-Architecture-Document.md`, `docs/companion/RECOR-Implementation-Companion.md`, `docs/concept-note/RECOR-Concept-Note.md`
 - **Source:** Pass A § orientation
-- **Impact:** The three governance documents (Architecture, Companion, Concept Note) are `.docx` binaries. They cannot be diffed, reviewed in PR, or tracked for staleness via git. Doctrine D5 (docs are part of the feature) is at risk: code can drift from architecture without any tooling-level warning.
-- **Remediation:** Convert all three to Markdown (or AsciiDoc) and version them. The conversion is a one-time pass; ongoing edits then become PR-reviewable.
-- **Effort:** medium (1-2 weeks for the conversion + review)
-- **Cost class:** docs-only
+- **Impact:** Pre-fix the three governance documents were `.docx` binaries — un-diffable, un-PR-reviewable, with no tooling-level signal when code drifted from architecture. D05 (docs are part of the feature) was at risk.
+- **Remediation shipped:** Used `pandoc --from=docx --to=gfm --wrap=preserve` to convert each binder. Resulting line counts: 6.4k (architecture), 26.6k (companion), 0.7k (concept-note). The originals stay in tree until the team signs off the conversion; the Markdown files become the authoritative source going forward and PR reviewers can comment on prose-level changes inline.
 
 ### FIND-011 — Toolchain split-brain: rust-toolchain.toml 1.88.0 vs mise.toml 1.84.0 vs Cargo.toml rust-version 1.85
 
