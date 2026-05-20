@@ -83,6 +83,38 @@ pub struct Config {
     /// redaction layer. REQUIRED in non-dev when redaction is enabled.
     #[serde(default = "default_secret")]
     pub log_redaction_key: SecretString,
+
+    // ─── FIND-018 (audit Sprint 3) / R-LOOP-3 ───────────────────────
+    //
+    // Mirror of declaration / V-engine SPIFFE config. Bootstrap-only
+    // for now — the inbound TLS layer + peer-ID gate land in the
+    // R-LOOP-3-followup wiring. `auth_transport=hmac` (the default)
+    // skips the bootstrap entirely.
+    /// One of `"hmac"` (default), `"mtls"`, `"mtls-only"`.
+    #[serde(default = "default_auth_transport")]
+    pub auth_transport: String,
+    /// SPIFFE Workload API socket path. Unused when
+    /// `auth_transport == "hmac"`.
+    #[serde(default = "default_spiffe_socket")]
+    pub spiffe_socket: String,
+    /// This service's own SPIFFE ID. Defaults to
+    /// `spiffe://recor.cm/person`.
+    #[serde(default = "default_spiffe_id_self_person")]
+    pub spiffe_id_self: String,
+
+    /// FIND-018 / OPS-4 placeholder for the inbound-internal HMAC
+    /// secret. Person-service ships no internal endpoint today; the
+    /// config slot is declared so a future inbound webhook (e.g. a
+    /// NDI-integration notification or a backfill bulk-load surface)
+    /// can opt in without another config-shape change. Empty ⇒
+    /// future endpoint disabled at startup (D14 fail-closed).
+    #[serde(default = "default_secret")]
+    pub internal_hmac_secret: SecretString,
+    /// FIND-018 / ADR-005: previous-generation internal HMAC secret
+    /// accepted during a rotation window. Empty ⇒ no rotation in
+    /// progress.
+    #[serde(default = "default_secret")]
+    pub internal_hmac_secret_old: SecretString,
 }
 
 impl Config {
@@ -113,6 +145,13 @@ impl Config {
         if !cfg.oidc_issuer_url.is_empty() && cfg.oidc_audience.is_empty() {
             return Err(ConfigError::OidcAudienceRequired);
         }
+        // FIND-018: validate the SPIFFE auth-transport enum.
+        match cfg.auth_transport.as_str() {
+            "hmac" | "mtls" | "mtls-only" => {}
+            other => {
+                return Err(ConfigError::InvalidAuthTransport(other.to_string()));
+            }
+        }
         Ok(cfg)
     }
 
@@ -133,6 +172,12 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect()
     }
+
+    /// FIND-018: true iff the service should bring up SPIFFE/mTLS at
+    /// startup.
+    pub fn mtls_enabled(&self) -> bool {
+        matches!(self.auth_transport.as_str(), "mtls" | "mtls-only")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -151,6 +196,8 @@ pub enum ConfigError {
     DevWithOidcIsIncoherent,
     #[error("OIDC_AUDIENCE is required when OIDC_ISSUER_URL is set")]
     OidcAudienceRequired,
+    #[error("AUTH_TRANSPORT must be one of: hmac, mtls, mtls-only (got `{0}`)")]
+    InvalidAuthTransport(String),
 }
 
 fn default_bind_addr() -> String {
@@ -187,4 +234,16 @@ fn default_secret() -> SecretString {
 
 fn default_subject_claim() -> String {
     "sub".to_string()
+}
+
+fn default_auth_transport() -> String {
+    "hmac".to_string()
+}
+
+fn default_spiffe_socket() -> String {
+    "unix:///run/spire/agent.sock".to_string()
+}
+
+fn default_spiffe_id_self_person() -> String {
+    "spiffe://recor.cm/person".to_string()
 }

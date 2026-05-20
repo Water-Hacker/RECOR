@@ -25,7 +25,17 @@ path = "src/lib.rs"
 [dependencies]
 # Shared workspace crates.
 recor-auth-oidc = { path = "../../packages/recor-auth-oidc" }
+# FIND-018: shared HMAC sign/verify with iat-bound replay window.
+# Bootstrap dep — entity gains an inbound internal endpoint in a
+# follow-up; declaring it now keeps the dependency graph stable.
+recor-hmac-sig = { path = "../../packages/recor-hmac-sig" }
 recor-logging = { path = "../../packages/recor-logging" }
+# FIND-018 / R-LOOP-3: SPIFFE Workload API client + rustls glue.
+# Bootstrap-only today.
+recor-spiffe = { path = "../../packages/recor-spiffe" }
+# FIND-018 / OPS-4: Vault client. Optional at runtime; required
+# (D14 fail-closed) when VAULT_ADDR is set.
+recor-vault-client = { path = "../../packages/recor-vault-client" }
 
 # Async runtime
 tokio.workspace = true

@@ -230,15 +230,19 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Remediation shipped:** Five integration tests that mount the exact middleware structure `recor_spiffe::middleware`'s top-of-module doc sketch describes — `axum::middleware::from_fn_with_state(state, peer_spiffe_gate_middleware)` reading `Extension<PeerSpiffeId>`. A test-only injector mimics the rustls TLS layer by reading the SPIFFE ID from a header. Coverage: matching peer (200), mismatching peer (403), missing extension (403), malformed SPIFFE ID (403), denied/missing counter increments across multiple refusals.
 - **Why no testcontainers + SPIRE:** the audit recommendation suggested SPIRE-backed integration testing, but the gate's logic is at the middleware layer NOT the TLS layer — a regression that "silently disables" the gate is a regression in the middleware mount, not in the SPIRE handshake. Testing the middleware directly with an injector substituting for the TLS layer is the cheaper-and-correct approach. The SPIRE-backed end-to-end test is a follow-up alongside the R-LOOP-3-followup wiring.
 
-### FIND-018 — Person + entity services have no Vault, no SPIFFE, no internal HMAC surface
+### FIND-018 — Person + entity services have no Vault, no SPIFFE, no internal HMAC surface — **CLOSED (Sprint 3)**
 
 - **Severity:** HIGH
-- **Location:** `services/{person,entity}-service/src/main.rs`
+- **Status:** CLOSED by audit Sprint 3 — both services now mirror declaration / V-engine's OPS-4 (Vault) + R-LOOP-3 (SPIFFE) wiring. Internal HMAC surface is declared (config + dep) but no inbound endpoint exists yet; the slot is in place so a future webhook can opt in without another dependency-graph change.
+- **Location:** `services/{person,entity}-service/src/{main.rs,config.rs}` + `Cargo.toml`
 - **Source:** Pass A § system-map
-- **Impact:** Two services hold Sensitive-PII and use only env-based secrets. No Vault wiring; no SPIFFE peer-auth; no internal HMAC for service-to-service inbound. Inconsistent with declaration + V-engine.
-- **Remediation:** Mirror OPS-4 + R-LOOP-3 wiring across the two new services.
-- **Effort:** medium-expensive (~1 week per service)
-- **Cost class:** code-only
+- **Impact:** Pre-fix the two services held Sensitive-PII (person) / authoritative-cache data (entity) but used only env-based secrets, with no SPIFFE peer-auth and no internal-HMAC surface. Inconsistent with declaration + V-engine.
+- **Remediation shipped:**
+  - **OPS-4 Vault bridge.** Both `main()` functions now call `recor_vault_client::populate_from_vault(...)` BEFORE `Config::from_env()`. Vault paths: `recor/person/{database,oidc,observability}` and `recor/entity/{database,oidc,observability}`. Empty `VAULT_ADDR` ⇒ pure-env mode with a startup warn!; non-empty `VAULT_ADDR` + unreachable Vault ⇒ hard-fail (D14 fail-closed).
+  - **R-LOOP-3 SPIFFE bootstrap.** Both services declare `auth_transport`, `spiffe_socket`, `spiffe_id_self` config fields. When `AUTH_TRANSPORT=mtls`/`mtls-only`, `main()` bootstraps `recor_spiffe::SpiffeClient` and hard-fails if the Workload API doesn't return a valid SVID. When `AUTH_TRANSPORT=hmac` (default), the bootstrap is skipped with a single `info!` line. Mirrors the V-engine wiring 1:1.
+  - **Internal-HMAC config.** Both services declare `internal_hmac_secret` + `internal_hmac_secret_old` (placeholder; ADR-005 dual-secret rotation slot). The shared `recor-hmac-sig` crate is added to the dependency graph so a future inbound webhook can sign-verify with the FIND-012 iat-bound replay window.
+  - **Inbound-endpoint wiring deferred:** the audit's "no internal HMAC surface" item is structurally closed (config + dep in place), but the actual inbound endpoint requires a documented use case (e.g. R-DECL-4 NDI cross-check notification for person; the BUNEC writeback for entity). When that ticket lands, the wiring follows the same pattern as declaration / V-engine.
+- **Tests:** existing person + entity lib-test suites pass under the new config shape (30/30 + 18/18). Config validation now refuses unknown `AUTH_TRANSPORT` values (mirror of V-engine's `InvalidAuthTransport` error variant).
 
 ### FIND-019 — Bazel build target in `justfile` is aspirational (no BUILD/WORKSPACE files)
 
