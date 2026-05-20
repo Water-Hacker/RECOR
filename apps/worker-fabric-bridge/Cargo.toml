@@ -17,6 +17,8 @@ path = "src/lib.rs"
 
 [dependencies]
 fabric-bridge = { path = "../../packages/fabric-bridge" }
+# FIND-012: shared HMAC sign/verify with iat-bound replay window.
+recor-hmac-sig = { path = "../../packages/recor-hmac-sig" }
 recor-logging = { path = "../../packages/recor-logging" }
 
 # Async runtime

@@ -2703,6 +2703,7 @@ dependencies = [
  "protoc-bin-vendored",
  "rdkafka",
  "recor-auth-oidc",
+ "recor-hmac-sig",
  "recor-logging",
  "recor-spiffe",
  "recor-vault-client",
@@ -2777,6 +2778,18 @@ dependencies = [
  "utoipa",
  "utoipa-scalar",
  "uuid",
+]
+
+[[package]]
+name = "recor-hmac-sig"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hmac",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
+ "tracing",
 ]
 
 [[package]]
@@ -2905,6 +2918,7 @@ dependencies = [
  "proptest",
  "rdkafka",
  "recor-auth-oidc",
+ "recor-hmac-sig",
  "recor-inference-gateway",
  "recor-logging",
  "recor-spiffe",
@@ -5152,6 +5166,7 @@ dependencies = [
  "hex",
  "hmac",
  "prometheus",
+ "recor-hmac-sig",
  "recor-logging",
  "secrecy",
  "serde",

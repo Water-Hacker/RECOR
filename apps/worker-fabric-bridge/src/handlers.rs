@@ -73,20 +73,33 @@ async fn receive(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let signature = headers
+    // FIND-012: iat-bound HMAC verification via the shared
+    // `recor-hmac-sig` crate. Both X-RECOR-Signature and
+    // X-RECOR-Timestamp are required; requests outside a ±5-min
+    // window are rejected before the MAC compare runs.
+    // FIND-015 / ADR-005: dual-secret rotation slot still honoured —
+    // when `RECOR_FABRIC_BRIDGE_HMAC_OLD` is set, MACs under the old
+    // secret verify too.
+    let sig_header = headers
         .get("x-recor-signature")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-
+        .and_then(|v| v.to_str().ok());
+    let ts_header = headers
+        .get("x-recor-timestamp")
+        .and_then(|v| v.to_str().ok());
     let primary = state.hmac_secret.expose_secret();
     let old = state.hmac_secret_old.expose_secret();
-    // FIND-015 / ADR-005: accept either the active secret OR the
-    // outgoing secret during a rotation window. The `!old.is_empty()`
-    // guard ensures the empty default never matches in steady state.
-    let accepted = verify_hmac(primary, &body, signature)
-        || (!old.is_empty() && verify_hmac(old, &body, signature));
-    if !accepted {
-        warn!("rejected relay request: HMAC mismatch");
+    let mut cfg = recor_hmac_sig::VerifyConfig::primary(primary);
+    if !old.is_empty() {
+        cfg = cfg.with_old_secret(old);
+    }
+    if let Err(e) = recor_hmac_sig::verify(
+        &cfg,
+        &body,
+        sig_header,
+        ts_header,
+        recor_hmac_sig::now_unix_seconds(),
+    ) {
+        warn!(error = %e, "rejected relay request: HMAC verification failed");
         return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
     }
 

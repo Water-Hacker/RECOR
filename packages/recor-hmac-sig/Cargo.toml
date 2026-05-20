@@ -1,0 +1,20 @@
+[package]
+name = "recor-hmac-sig"
+description = "Shared HMAC-SHA256 signing + verification with an iat-bound replay window (FIND-012). One crate for every internal-service HMAC surface so the rotation + replay-window semantics stay consistent across declaration / verification-engine / worker-fabric-bridge."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_hmac_sig"
+path = "src/lib.rs"
+
+[dependencies]
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+time.workspace = true

@@ -138,28 +138,51 @@ pub async fn handle_verification_outcome(
                 "writeback endpoint disabled — WRITEBACK_HMAC_SECRET unset",
             ));
         }
-        let Some(provided_hex) = headers
+        // FIND-012: iat-bound replay window via the shared
+        // `recor-hmac-sig` crate. Both X-RECOR-Signature and
+        // X-RECOR-Timestamp are required; the receiver refuses
+        // requests outside a 5-minute clock-skew window.
+        let sig_header = headers
             .get("x-recor-signature")
-            .and_then(|v| v.to_str().ok())
-        else {
-            return Err(error_response(
-                StatusCode::UNAUTHORIZED,
-                "missing_signature",
-                "X-RECOR-Signature header required",
-            ));
-        };
-        if !verify_hmac_with_rotation(
-            &state.hmac_secret,
-            &state.old_hmac_secret,
+            .and_then(|v| v.to_str().ok());
+        let ts_header = headers
+            .get("x-recor-timestamp")
+            .and_then(|v| v.to_str().ok());
+        let mut cfg = recor_hmac_sig::VerifyConfig::primary(&state.hmac_secret);
+        if !state.old_hmac_secret.is_empty() {
+            cfg = cfg.with_old_secret(&state.old_hmac_secret);
+        }
+        if let Err(e) = recor_hmac_sig::verify(
+            &cfg,
             &body,
-            provided_hex,
+            sig_header,
+            ts_header,
+            recor_hmac_sig::now_unix_seconds(),
         ) {
-            warn!("writeback HMAC verification failed");
-            return Err(error_response(
-                StatusCode::UNAUTHORIZED,
-                "bad_signature",
-                "HMAC signature did not verify",
-            ));
+            warn!(error = %e, "writeback HMAC verification failed");
+            let (kind, message): (&str, &str) = match e {
+                recor_hmac_sig::VerifyError::TimestampMissing => {
+                    ("missing_timestamp", "X-RECOR-Timestamp header required")
+                }
+                recor_hmac_sig::VerifyError::TimestampMalformed => (
+                    "malformed_timestamp",
+                    "X-RECOR-Timestamp must be unix seconds",
+                ),
+                recor_hmac_sig::VerifyError::OutsideWindow { .. } => (
+                    "stale_request",
+                    "request timestamp outside the replay window",
+                ),
+                recor_hmac_sig::VerifyError::SignatureMissing => {
+                    ("missing_signature", "X-RECOR-Signature header required")
+                }
+                recor_hmac_sig::VerifyError::SignatureMalformed => {
+                    ("malformed_signature", "X-RECOR-Signature must be hex")
+                }
+                recor_hmac_sig::VerifyError::BadSignature => {
+                    ("bad_signature", "HMAC signature did not verify")
+                }
+            };
+            return Err(error_response(StatusCode::UNAUTHORIZED, kind, message));
         }
     }
 
