@@ -129,10 +129,10 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Source:** Pass A § system-map + § A.10
 - **Impact:** Pre-fix, `stages/mod.rs` registered five stubs unconditionally. The real implementations (`stage3_sanctions.rs`, `stage4_pep.rs`, `stage5_adverse_media.rs`, `stage6_patterns.rs`) shipped in the crate but were never instantiated because the wiring had no `NameResolver` to construct them with.
 - **Remediation shipped:**
-    - New `BunecNameResolver` (`stages/name_resolver.rs`) wraps the existing `BunecAdapter`; this was the missing piece for stages 3/4/5.
-    - Four new Config flags — `enable_real_sanctions`, `enable_real_pep`, `enable_real_adverse_media`, `enable_real_patterns` — default `false` (preserves current behaviour).
-    - `main.rs` constructs each Stage 3..6 as either the real or the stubbed implementation based on its flag, with an `info!` line per stage so operators can confirm which path is live.
-    - Stage 7 (cross-source) stays stub — no real implementation exists in the crate. The composition-root comment documents this explicitly.
+  - New `BunecNameResolver` (`stages/name_resolver.rs`) wraps the existing `BunecAdapter`; this was the missing piece for stages 3/4/5.
+  - Four new Config flags — `enable_real_sanctions`, `enable_real_pep`, `enable_real_adverse_media`, `enable_real_patterns` — default `false` (preserves current behaviour).
+  - `main.rs` constructs each Stage 3..6 as either the real or the stubbed implementation based on its flag, with an `info!` line per stage so operators can confirm which path is live.
+  - Stage 7 (cross-source) stays stub — no real implementation exists in the crate. The composition-root comment documents this explicitly.
 - **Tests:** `BunecNameResolver` has its own unit-test matrix (found / not-found / circuit-open → respectively Some / None / None). The real stages already shipped with their own unit tests; this PR doesn't change their behaviour, only their reachability.
 - **Activation:** operators flip `ENABLE_REAL_SANCTIONS=true` (etc.) per stage. Adverse-media additionally requires `ANTHROPIC_API_KEY` for non-fixture inference; absent the key the gateway runs in fixture mode (see `recor-inference-gateway`).
 
