@@ -153,6 +153,17 @@ jobs:
           # codebase has accumulated content.
           echo "TODO-age check: ${old_todos:-no findings}"
 
+  governance-adr-bidi:
+    name: "governance / adr-bidi"
+    runs-on: ubuntu-latest
+    # Sprint-4 audit closure: every ADR cross-link must be bidirectional.
+    # D05 (docs are part of the feature) — a one-way link rot-traps as
+    # the linked-to ADR mutates without the linked-from updating.
+    steps:
+      - uses: actions/checkout@v4
+      - name: ADR cross-link bidirectionality
+        run: ./tools/ci/check-adr-bidi.sh
+
   # ─── Claude Code config ───────────────────────────────────────────────────
   claude-config-validate:
     name: "claude-config-validate"
