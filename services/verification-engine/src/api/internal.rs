@@ -84,6 +84,21 @@ pub struct BeneficialOwnerWire {
     pub person_id: Uuid,
     pub ownership_basis_points: u32,
     pub interest_kind: String,
+    /// PR-FATF-2.B — FATF R.24 c.24.6 cascade tier. Optional on the
+    /// wire for back-compat with declaration-side events that pre-date
+    /// the FATF migration (`#[serde(default)]` deserialises absent as
+    /// None). Stage 7 cross-source verification (TODO-013) is the
+    /// consumer that reads this field.
+    #[serde(default)]
+    pub cascade_tier: Option<String>,
+    #[serde(default)]
+    pub control_basis: Option<String>,
+    #[serde(default)]
+    pub cascade_tier_b_ruled_out_evidence: Option<String>,
+    #[serde(default)]
+    pub is_nominee: Option<bool>,
+    #[serde(default)]
+    pub nominator_person_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,6 +256,13 @@ pub async fn handle_declaration_event(
                 person_id: o.person_id,
                 ownership_basis_points: o.ownership_basis_points,
                 interest_kind: o.interest_kind,
+                // PR-FATF-2.B: propagate FATF cascade fields from the
+                // declaration-side wire to the V-engine domain snapshot.
+                cascade_tier: o.cascade_tier,
+                control_basis: o.control_basis,
+                cascade_tier_b_ruled_out_evidence: o.cascade_tier_b_ruled_out_evidence,
+                is_nominee: o.is_nominee,
+                nominator_person_id: o.nominator_person_id,
             })
             .collect(),
         attestation_signed_by: payload.attestation.signed_by,
@@ -249,6 +271,12 @@ pub async fn handle_declaration_event(
         receipt_hash_hex: payload.receipt_hash_hex,
         correlation_id: payload.correlation_id,
         submitted_at: payload.submitted_at,
+        // PR-FATF-2.B: the declaration-side wire doesn't yet carry
+        // adequacy_claims through the relay envelope (the relay
+        // serialises the projection row; the projection columns are
+        // unchanged in this PR). Stage 7 wiring + relay-envelope
+        // extension is the follow-up.
+        adequacy_claims: None,
     };
 
     // 4. Run the pipeline.

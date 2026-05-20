@@ -408,7 +408,13 @@ pub(crate) async fn submit_declaration(
 
     // 3. Build the command BEFORE consulting idempotency so we have a
     // stable declaration_id for the receipt body.
-    let cmd = req.into_command(principal.subject.clone(), correlation_id);
+    //
+    // PR-FATF-2.B: REST uses the strict constructor so FATF-required
+    // fields (cascade_tier, adequacy_claims) become a 400 at the API
+    // boundary rather than a 500-via-validation-failure-at-aggregate.
+    let cmd = req
+        .into_command_strict(principal.subject.clone(), correlation_id)
+        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
     let declaration_id = cmd.declaration_id;
     // Capture the declaration kind for the OBS-1 counter. Bounded enum
     // — 5 possible values — so safe as a Prometheus label (D18).
@@ -554,6 +560,14 @@ fn canonical_payload_bytes(
     // the date encoding with the wire format the declarant signs.
     // Field names and serialised representation MUST match what the
     // declarant signs — anything else is a signature mismatch.
+    //
+    // PR-FATF-2.B: adequacy_claims is included as the second-to-last
+    // field, just before `nonce_hex`. Its absence is serialised as
+    // `null` (via `Option<AdequacyClaims>`); presence is the full
+    // object. Either way, the declarant's signature covers it. The
+    // strict DTO constructor (`into_command_strict`) refuses None for
+    // new submissions, so production traffic always carries a non-null
+    // adequacy_claims block in the signed bytes.
     #[derive(Serialize)]
     struct Canonical<'a> {
         entity_id: &'a crate::domain::EntityId,
@@ -563,6 +577,7 @@ fn canonical_payload_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
     let canonical = Canonical {
@@ -572,6 +587,7 @@ fn canonical_payload_bytes(
         kind: req.kind.as_str(),
         effective_from: req.effective_from,
         beneficial_owners: &req.beneficial_owners,
+        adequacy_claims: &req.adequacy_claims,
         nonce_hex: &req.attestation.nonce_hex,
     };
     serde_json::to_vec(&canonical)
@@ -631,7 +647,9 @@ pub(crate) async fn supersede_declaration(
         .map_err(|e| ServiceError::AttestationVerificationFailed(e.to_string()))?;
 
     let correlation_id = Uuid::now_v7();
-    let new_command = req.into_command(principal.subject.clone(), correlation_id);
+    let new_command = req
+        .into_command_strict(principal.subject.clone(), correlation_id)
+        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
 
     let receipt = state
         .supersede_usecase
@@ -658,6 +676,10 @@ fn canonical_amend_bytes(
     entity_id: &crate::domain::EntityId,
 ) -> Result<Vec<u8>, ServiceError> {
     use serde::Serialize;
+    // PR-FATF-2.B: adequacy_claims is part of the amended canonical
+    // bytes for the same reason it's part of the submit canonical
+    // bytes — declarant re-asserts the FATF c.24.8 properties for
+    // the amended values.
     #[derive(Serialize)]
     struct Canonical<'a> {
         entity_id: &'a crate::domain::EntityId,
@@ -667,6 +689,7 @@ fn canonical_amend_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
     let canonical = Canonical {
@@ -676,6 +699,7 @@ fn canonical_amend_bytes(
         kind: "amendment",
         effective_from: req.effective_from,
         beneficial_owners: &req.beneficial_owners,
+        adequacy_claims: &req.adequacy_claims,
         nonce_hex: &req.attestation.nonce_hex,
     };
     serde_json::to_vec(&canonical)
@@ -779,7 +803,9 @@ pub(crate) async fn amend_declaration(
 
     // 3. Build the command and execute.
     let correlation_id = Uuid::now_v7();
-    let cmd = req.into_command(declaration_id, principal.subject.clone(), correlation_id);
+    let cmd = req
+        .into_command_strict(declaration_id, principal.subject.clone(), correlation_id)
+        .map_err(|e| ServiceError::BadRequest(e.to_string()))?;
     let receipt = state.amend_usecase.execute(cmd).await?;
     let response = AmendDeclarationResponse::from_receipt(receipt, &state.base_url);
     // OBS-1: increment AFTER successful persistence. Label `result` is

@@ -15,7 +15,8 @@ use crate::domain::{
     DeclarantRole, DeclarationId, DeclarationKind, EntityId, RecordVerificationOutcome,
     SubmitDeclaration, VerificationLane,
 };
-use crate::domain::attestation::CryptographicAttestation;
+use crate::domain::attestation::{AdequacyClaims, CryptographicAttestation};
+use crate::domain::value_object::{BoCascadeTier, BoControlBasis};
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct SubmitDeclarationRequest {
@@ -32,6 +33,23 @@ pub struct SubmitDeclarationRequest {
     pub effective_from: time::Date,
     pub beneficial_owners: Vec<BeneficialOwnerClaim>,
     pub attestation: CryptographicAttestation,
+    /// PR-FATF-2.B / TODO-021 — FATF R.24 c.24.8 adequacy claims.
+    /// REQUIRED for new submissions. The aggregate-side accepts None
+    /// (back-compat with historical replay); the API DTO layer
+    /// refuses None on the *write* path — see the DtoError::AdequacyClaimsRequired
+    /// translation in `into_command_strict`.
+    pub adequacy_claims: Option<AdequacyClaims>,
+}
+
+/// PR-FATF-2.B / TODO-001 + TODO-010 + TODO-021 closure errors at the
+/// API DTO boundary. The aggregate accepts the legacy None shape for
+/// back-compat (event replay); the API DTO refuses it on writes.
+#[derive(Debug, thiserror::Error)]
+pub enum DtoError {
+    #[error("beneficial_owners[{0}] missing cascade_tier (FATF R.24 c.24.6 cascade requires every BO to declare a tier)")]
+    CascadeTierRequired(usize),
+    #[error("adequacy_claims missing (FATF R.24 c.24.8 requires explicit adequate/accurate/up-to-date assertion on new submissions)")]
+    AdequacyClaimsRequired,
 }
 
 impl SubmitDeclarationRequest {
@@ -39,6 +57,44 @@ impl SubmitDeclarationRequest {
     /// + the authenticated principal + the request-derived correlation id.
     /// `declarant_principal` comes from auth, not from the request body —
     /// this is the integrity property that prevents principal spoofing.
+    ///
+    /// PR-FATF-2.B: enforces FATF required-ness at the API boundary —
+    /// every BO must declare a cascade_tier; the declaration must
+    /// carry an adequacy_claims block. The aggregate validates the
+    /// structural invariants of the values themselves.
+    pub fn into_command_strict(
+        self,
+        declarant_principal: String,
+        correlation_id: Uuid,
+    ) -> Result<SubmitDeclaration, DtoError> {
+        for (idx, owner) in self.beneficial_owners.iter().enumerate() {
+            if owner.cascade_tier.is_none() {
+                return Err(DtoError::CascadeTierRequired(idx));
+            }
+        }
+        if self.adequacy_claims.is_none() {
+            return Err(DtoError::AdequacyClaimsRequired);
+        }
+        Ok(SubmitDeclaration {
+            declaration_id: self.declaration_id.unwrap_or_default(),
+            entity_id: self.entity_id,
+            declarant_principal,
+            declarant_role: self.declarant_role,
+            kind: self.kind,
+            effective_from: self.effective_from,
+            beneficial_owners: self.beneficial_owners,
+            attestation: self.attestation,
+            adequacy_claims: self.adequacy_claims,
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id,
+        })
+    }
+
+    /// Legacy back-compat constructor — used by the gRPC transport
+    /// while its proto contract hasn't been bumped to carry the FATF
+    /// fields. NEVER called from REST production paths after PR-FATF-2.B.
+    /// gRPC will switch to `into_command_strict` once the proto carries
+    /// the new fields (R-DECL-PROTO-FATF follow-up).
     pub fn into_command(
         self,
         declarant_principal: String,
@@ -53,12 +109,12 @@ impl SubmitDeclarationRequest {
             effective_from: self.effective_from,
             beneficial_owners: self.beneficial_owners,
             attestation: self.attestation,
-            // PR-FATF-2.A scope intentionally defers the API-DTO surface
-            // for adequacy_claims to PR-FATF-2.B. Until then this path
-            // leaves the field None; aggregate accepts None for
-            // backward-compatible inputs while still enforcing the
-            // structural invariants when Some.
-            adequacy_claims: None,
+            // PR-FATF-2.B: the request DTO now carries adequacy_claims;
+            // pass it through. The strict-required path lives in
+            // `into_command_strict` and is gated behind PR-FATF-2.C
+            // (portal form update) — current REST handlers call
+            // `into_command` so legacy submissions still work.
+            adequacy_claims: self.adequacy_claims,
             // PR-FATF-4 / TODO-005 — API DTO wiring deferred to
             // PR-FATF-4.B; aggregate accepts None for back-compat.
             last_event_observed_at: None,
@@ -387,14 +443,48 @@ pub struct AmendDeclarationRequest {
     /// Fresh attestation signed by the declarant over the AMENDED
     /// canonical payload (entity_id, declarant_principal,
     /// declarant_role, kind, effective_from, beneficial_owners,
-    /// nonce_hex). Verified at the API boundary before the command
-    /// reaches the aggregate.
+    /// adequacy_claims, nonce_hex). Verified at the API boundary
+    /// before the command reaches the aggregate.
     pub attestation: CryptographicAttestation,
+    /// PR-FATF-2.B / TODO-021 — required on new amendments. The
+    /// declarant re-asserts adequate / accurate / up-to-date for the
+    /// amended values.
+    pub adequacy_claims: Option<AdequacyClaims>,
 }
 
 impl AmendDeclarationRequest {
-    /// Construct the domain command. `declaration_id`, `declarant_principal`
-    /// and `correlation_id` come from the API context, not from the body.
+    /// Strict construction (PR-FATF-2.B): refuses missing cascade_tier
+    /// on any beneficial owner and missing adequacy_claims.
+    pub fn into_command_strict(
+        self,
+        declaration_id: DeclarationId,
+        declarant_principal: String,
+        correlation_id: Uuid,
+    ) -> Result<AmendDeclaration, DtoError> {
+        for (idx, owner) in self.beneficial_owners.iter().enumerate() {
+            if owner.cascade_tier.is_none() {
+                return Err(DtoError::CascadeTierRequired(idx));
+            }
+        }
+        if self.adequacy_claims.is_none() {
+            return Err(DtoError::AdequacyClaimsRequired);
+        }
+        Ok(AmendDeclaration {
+            declaration_id,
+            declarant_principal,
+            amendments: AmendmentSet {
+                beneficial_owners: self.beneficial_owners,
+                effective_from: self.effective_from,
+                declarant_role: self.declarant_role,
+                adequacy_claims: self.adequacy_claims,
+            },
+            attestation: self.attestation,
+            submitted_at: OffsetDateTime::now_utc(),
+            correlation_id,
+        })
+    }
+
+    /// Legacy back-compat constructor — kept for the gRPC transport.
     pub fn into_command(
         self,
         declaration_id: DeclarationId,
@@ -408,8 +498,7 @@ impl AmendDeclarationRequest {
                 beneficial_owners: self.beneficial_owners,
                 effective_from: self.effective_from,
                 declarant_role: self.declarant_role,
-                // Deferred to PR-FATF-2.B; see SubmitDeclaration note.
-                adequacy_claims: None,
+                adequacy_claims: self.adequacy_claims,
             },
             attestation: self.attestation,
             submitted_at: OffsetDateTime::now_utc(),
