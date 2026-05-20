@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# RÉCOR pre-commit hook — runs the same gitleaks scan CI runs on
+# every PR, but locally so secrets never leave the developer's
+# workstation.
+#
+# Closes the MEDIUM-tier "gitleaks runs in CI but no pre-commit
+# hook" audit catalogue item.
+#
+# Install:
+#   git config core.hooksPath .githooks
+#
+# Skip (for emergencies):
+#   git commit --no-verify
+# Do NOT skip routinely — pre-commit is the cheapest place to catch
+# a leaked credential before it lands in the remote.
+
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not installed — skipping local scan."
+    echo "             install: https://github.com/gitleaks/gitleaks"
+    exit 0
+fi
+
+# Scan only what's staged for commit. The repo-root .gitleaks.toml
+# carries the policy CI uses.
+echo "pre-commit: running gitleaks on staged changes..."
+if ! gitleaks protect --staged --redact --config=.gitleaks.toml; then
+    echo ""
+    echo "pre-commit: gitleaks flagged a potential secret."
+    echo "  Inspect the staged diff. If the match is a false positive,"
+    echo "  add it to .gitleaks.toml's allowlist with a comment."
+    echo "  NEVER commit a real secret — rotate it instead."
+    exit 1
+fi

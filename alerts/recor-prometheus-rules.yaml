@@ -1,0 +1,129 @@
+# RÉCOR Prometheus alert rules.
+#
+# Mounted as a Prometheus ConfigMap; loaded via the `rule_files`
+# directive in the Prometheus chart's values.yaml. Closes the
+# audit catalogue's MEDIUM/LOW sweep item for "DLQ inundation alert
+# threshold not Prometheus-rule-enforced" and similar gaps.
+
+groups:
+  - name: recor.platform.alerts
+    interval: 30s
+    rules:
+      # ─── Audit-chain divergence (FIND-016) ────────────────────────
+      - alert: RecorAuditReconcilerDivergence
+        expr: increase(recor_audit_reconciliation_divergence_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+        annotations:
+          summary: "Audit-chain divergence detected"
+          description: |
+            The audit-reconciler found events in declaration_events
+            absent from the Fabric audit channel. Threat-model Gap G1.
+            Runbook: docs/runbooks/audit-chain-divergence.md
+
+      - alert: RecorAuditReconcilerStuck
+        # Expect a successful run at least every 20 minutes (2x the
+        # default RECONCILE_INTERVAL_SECONDS=600). Missing increments
+        # means the cron is unhealthy.
+        expr: increase(recor_audit_reconciliation_runs_total{outcome="ok"}[20m]) == 0
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+        annotations:
+          summary: "audit-reconciler hasn't completed a pass in 20 minutes"
+          description: |
+            The reconciler is either crash-looping or hung; threat-
+            model Gap G1 detection is blind.
+
+      # ─── DLQ inundation ───────────────────────────────────────────
+      - alert: RecorOutboxDlqGrowing
+        # Both declaration and V-engine surface their DLQ size via
+        # the same metric family name.
+        expr: max_over_time(recor_outbox_dlq_size[15m]) > 100
+        for: 10m
+        labels:
+          severity: ticket
+          team: platform
+        annotations:
+          summary: "Outbox DLQ has crossed 100 rows"
+          description: |
+            Rows are dead-lettering faster than operators are replaying
+            them. Investigate the upstream error pattern.
+
+      # ─── HTTP 5xx rate ────────────────────────────────────────────
+      - alert: RecorHttp5xxRateHigh
+        expr: |
+          (
+            sum by (service) (rate(recor_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum by (service) (rate(recor_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+        annotations:
+          summary: "{{ $labels.service }} 5xx rate > 5% for 5 minutes"
+          description: |
+            Investigate the service's logs + traces; runbook in
+            docs/runbooks/oncall-triage.md.
+
+      # ─── Stage 5 Anthropic spend ──────────────────────────────────
+      - alert: RecorAnthropicBudgetExhausted
+        expr: increase(recor_inference_gateway_calls_total{result="budget_exhausted"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: platform
+        annotations:
+          summary: "Anthropic Inference Gateway is refusing calls (budget exhausted)"
+          description: |
+            Stage 5 (adverse media) is degrading to InsufficientEvidence
+            until the budget refreshes. Review token usage trends.
+
+      # ─── OIDC backend availability ────────────────────────────────
+      - alert: RecorOidcBackendUnavailable
+        expr: |
+          increase(recor_oidc_verify_total{result="unavailable"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+        annotations:
+          summary: "OIDC JWKS / discovery failing for more than 5 minutes"
+          description: |
+            Auth is degraded; new tokens cannot be verified. Check
+            the issuer's reachability; runbook in
+            docs/runbooks/oidc-outage.md.
+
+      # ─── HMAC replay-window refusals ──────────────────────────────
+      # FIND-012 closure increments these labels.
+      - alert: RecorHmacReplayRefusalsSpike
+        expr: increase(recor_hmac_verify_total{result="stale_request"}[5m]) > 100
+        for: 5m
+        labels:
+          severity: ticket
+          team: platform
+        annotations:
+          summary: "Spike in HMAC `stale_request` refusals"
+          description: |
+            Either a misconfigured peer clock (chrony drift), a replay
+            attack, or a producer bug. Investigate via service logs.
+
+      # ─── SPIFFE peer-ID denials ───────────────────────────────────
+      # FIND-017 closure increments these labels.
+      - alert: RecorSpiffePeerDenied
+        expr: increase(recor_spiffe_peer_verify_total{result="denied"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+        annotations:
+          summary: "SPIFFE peer-ID gate denying > 5 requests in 5 minutes"
+          description: |
+            Either a misconfigured peer SPIFFE_ID_PEER, an unexpected
+            caller, or a directed attack. Check the actual peer IDs
+            in the structured WARN logs.

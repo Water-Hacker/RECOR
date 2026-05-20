@@ -256,10 +256,29 @@ production deployment. **Medium** is worth fixing in normal course.
 
 ---
 
-## MEDIUM + LOW findings (summary table)
+## MEDIUM + LOW findings (summary table) — **PARTIALLY CLOSED (Sprint 3 sweep)**
 
-The full text + reproduction steps for each finding is in the
-referenced pass document. ~52 medium and ~28 low findings, summarised:
+A Sprint-3 sweep PR addressed the highest-impact cluster of
+MEDIUM/LOW items in the structural / repository-hygiene class:
+
+- Empty placeholder directories (`alerts/`, `dashboards/`,
+  `libraries/{go,protos,rust,ts}/.gitkeep`) replaced with README
+  files OR removed entirely.
+- `alerts/recor-prometheus-rules.yaml` ships alert rules for every
+  metric the Sprint-0..3 work added (FIND-016 reconciler
+  divergence, FIND-007 metrics scrape, FIND-012 HMAC replay,
+  FIND-017 SPIFFE peer denials, FIND-009 stage budget exhaustion).
+- `.githooks/pre-commit` adds the gitleaks pre-commit hook the
+  catalogue flagged.
+- `justfile` dangling targets (`tools/cli/recor-cli`,
+  `libraries/ts/recor-api-client`, `tools/codegen/*`) replaced
+  with documented no-op stubs so `just bootstrap` succeeds.
+
+The remaining MEDIUM/LOW items are tracked as backlog tickets;
+closure happens via individual follow-up PRs as the platform
+grows. The full text + reproduction steps for each finding is in
+the referenced pass document. ~52 medium and ~28 low findings,
+summarised:
 
 | Category | Count | Most-cited issues | Source |
 |---|---|---|---|
