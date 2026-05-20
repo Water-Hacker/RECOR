@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT eog.owner_person_id    AS \"owner!: uuid::Uuid\",\n                   eog.ownership_basis_points  AS \"bp!: i32\"\n            FROM entity_ownership_graph eog\n            WHERE eog.entity_id = $1\n              AND eog.owner_person_id = ANY($2)\n              AND eog.submitted_at < $3\n              AND eog.submitted_at >= $3 - INTERVAL '30 days'\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner!: uuid::Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bp!: i32",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "31465ef7b17f2c6c056ddb14cf1eb482b7e15f4508676a8860c9da8a3209d3fd"
+}
