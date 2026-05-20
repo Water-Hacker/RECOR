@@ -161,6 +161,17 @@ impl IntoResponse for ServiceError {
                 "optimistic_concurrency_conflict",
                 self.to_string(),
             ),
+            // TODO-017 closure: a previously-used (signer_public_key,
+            // nonce_hex) pair was re-presented. The Ed25519 signature
+            // would otherwise still verify; we refuse it for replay
+            // protection. 409 (the signature is structurally valid but
+            // is in conflict with prior recorded state) — distinct
+            // kind so clients can detect replay vs concurrency.
+            ServiceError::Repository(RepositoryError::NonceCollision { .. }) => (
+                StatusCode::CONFLICT,
+                "attestation_nonce_replay",
+                self.to_string(),
+            ),
             ServiceError::Repository(e) => {
                 error!(error = ?e, "repository failure");
                 (

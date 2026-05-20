@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO attestation_nonces\n            (signer_public_key_hex, nonce_hex, declaration_id, event_type)\n        VALUES ($1, $2, $3, $4)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d1a78b4d80ea0426c5358c0e42cf7a09cb17501737ac8df408c06a637401f2c"
+}

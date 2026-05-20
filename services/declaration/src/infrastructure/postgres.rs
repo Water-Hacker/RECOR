@@ -94,6 +94,12 @@ impl DeclarationRepository for PostgresDeclarationRepository {
             i64::try_from(expected_version.saturating_add(1)).unwrap_or(i64::MAX);
 
         insert_event(&mut tx, event, new_version).await?;
+        // TODO-017 closure: every attestation-carrying event records
+        // its (signer_public_key, nonce_hex) in the same transaction
+        // as the event log row. The PRIMARY KEY enforces uniqueness;
+        // a replay surfaces as NonceCollision before the projection /
+        // outbox writes commit. The whole transaction rolls back.
+        record_nonce_if_attested(&mut tx, event).await?;
         upsert_projection(&mut tx, event, new_version).await?;
         write_outbox(&mut tx, event).await?;
 
@@ -126,6 +132,7 @@ impl DeclarationRepository for PostgresDeclarationRepository {
 
         // Insert NEW declaration's Submitted event + projection + outbox.
         insert_event(&mut tx, new_event, new_version).await?;
+        record_nonce_if_attested(&mut tx, new_event).await?;
         upsert_projection_with_supersedes(
             &mut tx,
             new_event,
@@ -138,7 +145,8 @@ impl DeclarationRepository for PostgresDeclarationRepository {
         // Insert OLD declaration's Superseded event + projection update +
         // outbox. (Order is intentional: NEW first so its projection row
         // exists before any reader could observe a stale OLD row that
-        // points at it.)
+        // points at it.) The Superseded event carries no attestation,
+        // so no nonce-record call is needed here.
         insert_event(&mut tx, old_event, old_version).await?;
         upsert_projection(&mut tx, old_event, old_version).await?;
         write_outbox(&mut tx, old_event).await?;
@@ -605,6 +613,61 @@ async fn upsert_projection(
         }
     }
     Ok(())
+}
+
+/// TODO-017 closure — record the attestation nonce (signer_public_key,
+/// nonce_hex) atomically with the event-log row. Replay surfaces as a
+/// unique-violation that maps to `RepositoryError::NonceCollision`.
+///
+/// Only Submitted, Amended, and Corrected events carry a declarant
+/// attestation; Verified and Superseded are operator/system events
+/// and have no nonce to record.
+///
+/// The whole `save_event` (or `save_supersede`) transaction rolls back
+/// on collision — no projection or outbox write occurs for a replayed
+/// signature.
+async fn record_nonce_if_attested(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &DeclarationEvent,
+) -> Result<(), RepositoryError> {
+    let (declaration_id, attestation, event_type) = match event {
+        DeclarationEvent::Submitted(p) => {
+            (p.declaration_id.0, &p.attestation, event.event_type())
+        }
+        DeclarationEvent::Amended(p) => {
+            (p.declaration_id.0, &p.attestation, event.event_type())
+        }
+        DeclarationEvent::Corrected(p) => {
+            (p.declaration_id.0, &p.attestation, event.event_type())
+        }
+        // Verified + Superseded carry no declarant attestation.
+        DeclarationEvent::Verified(_) | DeclarationEvent::Superseded(_) => return Ok(()),
+    };
+
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO attestation_nonces
+            (signer_public_key_hex, nonce_hex, declaration_id, event_type)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        attestation.public_key_hex,
+        attestation.nonce_hex,
+        declaration_id,
+        event_type,
+    )
+    .execute(&mut **tx)
+    .await;
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::Database(db_err)) if db_err.is_unique_violation() => {
+            Err(RepositoryError::NonceCollision {
+                signer_public_key_hex: attestation.public_key_hex.clone(),
+                nonce_hex: attestation.nonce_hex.clone(),
+            })
+        }
+        Err(e) => Err(RepositoryError::Backend(e)),
+    }
 }
 
 async fn write_outbox(
