@@ -171,15 +171,19 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Remediation shipped:** Wired utoipa across V-engine handlers (`#[utoipa::path]` on `submit_verification`, `get_verification`, `healthz`, `readyz`, `list_dlq`, `replay_dlq`, `handle_declaration_event`); added `ToSchema` derives on the wire DTOs (`SubmitVerificationRequest`, `SubmitVerificationResponse`, `HealthzResponse`, `ReadyzResponse`, `ErrorEnvelope`, `ErrorBody`, `ListDlqResponse`, `DlqItem`, `ReplayDlqResponse`, `InboundResponse`); created `services/verification-engine/src/api/openapi.rs` with the assembled document; committed `docs/openapi/verification-engine.json`; mounted `GET /openapi.json` + `GET /docs` on the V-engine router; extended `tools/ci/check-openapi-drift.sh` to assert the V-engine snapshot alongside declaration's. The Prometheus `/metrics` endpoint is intentionally NOT in the consumer-facing spec (OBS-1; served on a separate listener per FIND-007). Deep nested domain types (`DeclarationSnapshot`, `VerificationCase`) are pinned via `serde_json::Value` shims — the authoritative schema for those bodies lives in `services/declaration`'s OpenAPI document.
 - **Tests:** `api::openapi::tests::{openapi_is_3_1, every_public_path_present, submit_endpoint_declares_request_and_known_responses, get_endpoint_documents_404_for_cross_tenant_denial, security_schemes_are_registered, internal_endpoints_carry_internal_tag, metrics_endpoint_is_intentionally_absent}`.
 
-### FIND-014 — V-engine has no `tests/*.rs` integration files (only unit tests)
+### FIND-014 — V-engine has no `tests/*.rs` integration files (only unit tests) — **CLOSED (Sprint 2)**
 
 - **Severity:** HIGH
+- **Status:** CLOSED by audit Sprint 2.
 - **Location:** `services/verification-engine/tests/`
 - **Source:** Pass A § orientation
-- **Impact:** No end-to-end testcontainers coverage of the V-engine. The integration-smoke.sh exercises it indirectly via the declaration service, but stage failures, pipeline regressions, and lane-router changes have no V-engine-side gate.
-- **Remediation:** Author `services/verification-engine/tests/{api_integration,pipeline_integration,grpc_integration}.rs` mirroring the declaration test suite.
-- **Effort:** medium-expensive (~5 days)
-- **Cost class:** code-only
+- **Impact:** No end-to-end testcontainers coverage of the V-engine. integration-smoke.sh exercised it indirectly via the declaration service; stage failures, pipeline regressions, and lane-router changes had no V-engine-side gate.
+- **Remediation shipped:** Four V-engine integration test files (testcontainers Postgres 17, `#[ignore]`-gated so they don't break the lib-test lane):
+  - `tests/migrations_apply.rs` — asserts all migrations apply cleanly, verifies the FIND-004 `verification_cases.declarant_principal NOT NULL` invariant in the live schema, and confirms the R-VER-* tables (`sanctions_persons`, `peps`, `icij_persons`) ship.
+  - `tests/audit_immutability.rs` — COMP-2 / D15 regression: asserts BEFORE-trigger refusal of UPDATE / DELETE / TRUNCATE on `verification_cases`, mirroring the declaration service's audit-immutability suite.
+  - `tests/api_integration.rs` — full HTTP surface: healthz / readyz / `/metrics` Prometheus exposition, `/openapi.json` regression guard (FIND-013), Scalar UI at `/docs`, FIND-002 admin-allowlist on POST /v1/verifications, FIND-004 unauth + admin + non-admin GET predicates, DLQ admin allowlist, internal webhook HMAC gate.
+  - `tests/pipeline_integration.rs` — drives `SubmitVerificationUseCase` directly with the seven-stage pipeline production wires today; asserts the resulting `verification_cases` row carries the denormalised `declarant_principal`, an outbox row lands in the same transaction, and replaying the same `declaration_id` is idempotent (D13).
+- **gRPC integration:** intentionally NOT in scope — V-engine has no gRPC surface yet (R-VER-GRPC TODO). When the gRPC server lands, `grpc_integration.rs` follows the declaration service's pattern.
 
 ### FIND-015 — Worker-fabric-bridge HMAC has no rotation slot
 
