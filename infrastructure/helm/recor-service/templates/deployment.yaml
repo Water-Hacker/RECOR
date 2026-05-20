@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "recor-service.fullname" . }}
+  namespace: recor
+  labels:
+    {{- include "recor-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "recor-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "recor-service.labels" . | nindent 8 }}
+        {{- if .Values.metrics.enabled }}
+        {{- range $k, $v := .Values.metrics.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | default (include "recor-service.fullname" .) }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Values.name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.business }}
+              protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.ports.metrics }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: ENVIRONMENT
+              value: {{ .Values.env | quote }}
+            - name: BIND_ADDR
+              value: {{ printf "0.0.0.0:%d" (int .Values.ports.business) | quote }}
+            {{- if .Values.metrics.enabled }}
+            - name: METRICS_BIND_ADDR
+              value: {{ printf "0.0.0.0:%d" (int .Values.ports.metrics) | quote }}
+            {{- end }}
+            - name: AUTH_TRANSPORT
+              value: {{ .Values.authTransport | quote }}
+            {{- if .Values.oidc.issuerUrl }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.oidc.issuerUrl | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.oidc.audience | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthcheck.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.healthcheck.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthcheck.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.healthcheck.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthcheck.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.healthcheck.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthcheck.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.healthcheck.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}

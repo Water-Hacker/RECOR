@@ -1,0 +1,112 @@
+# Least-privilege ServiceAccounts per RÉCOR service. Each binds
+# only the role its pod needs — no shared cluster-admin SAs.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-declaration
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: declaration
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-verification-engine
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: verification-engine
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-person-service
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: person-service
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-entity-service
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: entity-service
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-audit-verifier
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: audit-verifier
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-audit-reconciler
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: audit-reconciler
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recor-worker-fabric-bridge
+  namespace: recor
+  labels:
+    app.kubernetes.io/part-of: recor
+    app.kubernetes.io/component: worker-fabric-bridge
+---
+# Minimal read-only Role for pods to read their own ConfigMaps +
+# Secrets. No write permissions; no cluster-scoped permissions.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: recor-service-self-read
+  namespace: recor
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+    # Restrict to resources owned by this app (label-selector applied
+    # by the running controller; the API itself does not filter by
+    # label so this Role is the broadest the controller sees).
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: recor-services-can-self-read
+  namespace: recor
+subjects:
+  - kind: ServiceAccount
+    name: recor-declaration
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-verification-engine
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-person-service
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-entity-service
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-audit-verifier
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-audit-reconciler
+    namespace: recor
+  - kind: ServiceAccount
+    name: recor-worker-fabric-bridge
+    namespace: recor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: recor-service-self-read

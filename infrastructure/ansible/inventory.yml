@@ -1,0 +1,20 @@
+# RÉCOR Ansible inventory. Real per-host values live in
+# environments/{dev,staging,prod}/inventory.yml — committed encrypted
+# with ansible-vault. This file is the topology declaration.
+all:
+  children:
+    recor:
+      children:
+        fabric_peers:
+          hosts:
+            # Populate per-environment. Example:
+            # fabric-peer-1.recor.cm:
+            #   ansible_host: 10.0.1.10
+        spire_servers:
+          hosts:
+            # spire-server-1.recor.cm:
+            #   ansible_host: 10.0.2.10
+        vault_cluster:
+          hosts:
+            # vault-1.recor.cm:
+            #   ansible_host: 10.0.3.10

@@ -1,0 +1,84 @@
+# Default values for the RÉCOR generic service chart. Per-service
+# `values-{declaration,verification-engine,...}.yaml` overrides these.
+
+# Identity
+name: ""                    # required, e.g. "declaration"
+fullName: ""                # e.g. "recor-declaration"
+image:
+  repository: ghcr.io/water-hacker/recor-declaration
+  tag: latest               # overridden per-release to a sha256 digest in prod
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# Network
+ports:
+  business: 8080            # the main HTTP listener
+  metrics: 9080             # FIND-007: separate metrics port
+
+# Resources (LimitRange in 20-resource-quotas applies; these are
+# the per-pod defaults the chart hints at)
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+# Probes
+healthcheck:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 6
+
+# FIND-007: metrics surface is in-cluster only; the NetworkPolicy in
+# `infrastructure/networks/30-allow-metrics-scrape.yaml` restricts the
+# port to the Prometheus scraper.
+metrics:
+  enabled: true
+  port: 9080
+  podLabels:
+    recor.cm/role: service
+
+# Config — populated per-environment from the ConfigMap + the Vault
+# AppRole sidecar.
+env: dev                    # "dev" / "staging" / "prod"
+oidc:
+  issuerUrl: ""             # required outside dev (FIND-003)
+  audience: ""
+
+# Auth transport (FIND-018). One of "hmac", "mtls", "mtls-only".
+authTransport: hmac
+
+# Pod security (D17 zero trust + the OPA admission rule)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# ServiceAccount (per-service; provisioned in
+# infrastructure/kubernetes/10-rbac.yaml).
+serviceAccount:
+  name: ""                  # set per release; e.g. "recor-declaration"
+
+# Tolerations / nodeSelector / affinity — sensible empty defaults.
+nodeSelector: {}
+tolerations: []
+affinity: {}
