@@ -563,12 +563,15 @@ fn canonical_payload_bytes(
     // declarant signs — anything else is a signature mismatch.
     //
     // PR-FATF-2.B: adequacy_claims is included as the second-to-last
-    // field, just before `nonce_hex`. Its absence is serialised as
-    // `null` (via `Option<AdequacyClaims>`); presence is the full
-    // object. Either way, the declarant's signature covers it. The
-    // strict DTO constructor (`into_command_strict`) refuses None for
-    // new submissions, so production traffic always carries a non-null
-    // adequacy_claims block in the signed bytes.
+    // field, just before `nonce_hex`, ONLY WHEN PRESENT. We use
+    // `skip_serializing_if = "Option::is_none"` so the canonical bytes
+    // for legacy clients (no adequacy_claims) are byte-identical to
+    // what they signed pre-FATF-cascade. New clients that opt into
+    // the FATF-required shape sign the same bytes that include the
+    // block. The strict DTO constructor refuses None on the *write*
+    // path once PR-FATF-2.C ships, so production traffic eventually
+    // always carries the block — but the *canonical-bytes shape* must
+    // remain back-compat for the rollover window.
     #[derive(Serialize)]
     struct Canonical<'a> {
         entity_id: &'a crate::domain::EntityId,
@@ -578,6 +581,7 @@ fn canonical_payload_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        #[serde(skip_serializing_if = "Option::is_none")]
         adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
@@ -690,6 +694,7 @@ fn canonical_amend_bytes(
         #[serde(with = "crate::domain::serde_helpers::iso_date")]
         effective_from: time::Date,
         beneficial_owners: &'a [crate::domain::BeneficialOwnerClaim],
+        #[serde(skip_serializing_if = "Option::is_none")]
         adequacy_claims: &'a Option<crate::domain::attestation::AdequacyClaims>,
         nonce_hex: &'a str,
     }
