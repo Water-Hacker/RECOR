@@ -20,6 +20,31 @@ use recor_entity_service::infrastructure::{IdempotencyStore, PostgresEntityRepos
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // FIND-018 (audit Sprint 3) / OPS-4: load secrets from Vault
+    // before Config::from_env(). Mirror of declaration's wiring —
+    // VAULT_ADDR empty ⇒ pure env mode with a startup warn!;
+    // VAULT_ADDR set + Vault unreachable ⇒ hard-fail (D14).
+    let vault_paths: &[(&str, &[(&str, &str)])] = &[
+        (
+            "recor/entity/database",
+            &[("DATABASE_URL", "DATABASE_URL")],
+        ),
+        (
+            "recor/entity/oidc",
+            &[
+                ("OIDC_ISSUER_URL", "OIDC_ISSUER_URL"),
+                ("OIDC_AUDIENCE", "OIDC_AUDIENCE"),
+            ],
+        ),
+        (
+            "recor/entity/observability",
+            &[("LOG_REDACTION_KEY", "LOG_REDACTION_KEY")],
+        ),
+    ];
+    recor_vault_client::populate_from_vault(vault_paths)
+        .await
+        .map_err(|e| anyhow::anyhow!("Vault secret loading failed (D14 fail-closed): {e}"))?;
+
     let cfg = Config::from_env().context("loading configuration from environment")?;
     let _tracing_guard = recor_entity_service::observability::init(&cfg)
         .map_err(|e| anyhow::anyhow!("tracing init failed: {e}"))?;
@@ -87,6 +112,46 @@ async fn main() -> Result<()> {
     let metrics = recor_entity_service::metrics::Metrics::new()
         .map_err(|e| anyhow::anyhow!("prometheus registry init failed: {e}"))?;
     info!("prometheus metrics registry initialised");
+
+    // FIND-018 / R-LOOP-3: SPIFFE bootstrap. Same shape as
+    // person-service / V-engine / declaration. Hard-fail under
+    // AUTH_TRANSPORT=mtls if the Workload API is unavailable (D14).
+    let spiffe_metrics = std::sync::Arc::new(
+        recor_spiffe::SpiffeMetrics::register(&metrics.registry)
+            .map_err(|e| anyhow::anyhow!("spiffe metrics register failed: {e}"))?,
+    );
+    let spiffe_client = if cfg.mtls_enabled() {
+        info!(
+            socket = %cfg.spiffe_socket,
+            self_id = %cfg.spiffe_id_self,
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT requires SPIFFE — bootstrapping Workload API client"
+        );
+        let api = std::sync::Arc::new(
+            recor_spiffe::HttpWorkloadApi::new(cfg.spiffe_socket.clone()),
+        );
+        let client = std::sync::Arc::new(recor_spiffe::SpiffeClient::new(
+            api,
+            Some(spiffe_metrics.clone()),
+        ));
+        client
+            .bootstrap(&cfg.spiffe_id_self)
+            .await
+            .context("SPIFFE Workload API bootstrap failed — refusing to start under AUTH_TRANSPORT=mtls (D14 fail-closed)")?;
+        info!("SPIFFE SVID + trust bundle fetched");
+        // TODO(R-LOOP-3-followup): when entity-service grows an
+        // inbound internal endpoint, wire the peer-SPIFFE-ID gate
+        // using `recor_spiffe::enforce_peer_id`. Test pattern lives
+        // at `services/verification-engine/tests/peer_spiffe_id_gate.rs`.
+        Some(client)
+    } else {
+        info!(
+            transport = %cfg.auth_transport,
+            "AUTH_TRANSPORT=hmac — SPIFFE not bootstrapped"
+        );
+        None
+    };
+    let _spiffe = spiffe_client;
 
     let admin_principals: HashSet<String> =
         cfg.admin_principals_list().into_iter().collect();
