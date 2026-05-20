@@ -268,6 +268,7 @@ impl DeclarationService for DeclarationGrpcService {
             // Deferred to PR-FATF-2.B: gRPC will carry adequacy_claims
             // once the proto contract is bumped to include the field.
             adequacy_claims: None,
+            last_event_observed_at: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
         };
@@ -381,6 +382,7 @@ impl DeclarationService for DeclarationGrpcService {
             attestation,
             // Deferred to PR-FATF-2.B.
             adequacy_claims: None,
+            last_event_observed_at: None,
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id,
         };

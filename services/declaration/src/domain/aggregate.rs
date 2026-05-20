@@ -157,6 +157,7 @@ impl DeclarationAggregate {
             beneficial_owners: cmd.beneficial_owners,
             attestation: cmd.attestation,
             adequacy_claims: cmd.adequacy_claims,
+            last_event_observed_at: cmd.last_event_observed_at,
             submitted_at: cmd.submitted_at,
             correlation_id: cmd.correlation_id,
             receipt_hash_hex,
@@ -436,6 +437,38 @@ fn validate_command(cmd: &SubmitDeclaration) -> Result<(), DomainError> {
     // historical events that pre-date this migration.
     if let Some(claims) = &cmd.adequacy_claims {
         validate_adequacy_claims(claims, cmd.submitted_at)?;
+    }
+    // PR-FATF-4 / TODO-005: validate the declarant-asserted BO event
+    // timestamp when present. The aggregate accepts None for back-
+    // compat; the API DTO layer enforces required-ness on new writes
+    // (PR-FATF-4.B).
+    if let Some(as_of) = cmd.last_event_observed_at {
+        validate_last_event_observed_at(as_of, cmd.submitted_at)?;
+    }
+    Ok(())
+}
+
+/// TODO-005 closure — declarant-asserted "the BO change occurred at"
+/// timestamp invariants. The aggregate refuses values that are
+/// structurally implausible; the staleness worker (in
+/// `infrastructure::staleness`) flags rows that *pass* this
+/// validation but are now > 30 days old without an update.
+fn validate_last_event_observed_at(
+    as_of: OffsetDateTime,
+    submitted_at: OffsetDateTime,
+) -> Result<(), DomainError> {
+    if as_of > submitted_at {
+        return Err(DomainError::LastEventObservedAtInFuture {
+            as_of,
+            submitted_at,
+        });
+    }
+    let five_years_ago = submitted_at - Duration::days(365 * 5);
+    if as_of < five_years_ago {
+        return Err(DomainError::LastEventObservedAtTooOld {
+            as_of,
+            submitted_at,
+        });
     }
     Ok(())
 }
@@ -729,6 +762,7 @@ mod tests {
             submitted_at: OffsetDateTime::now_utc(),
             correlation_id: Uuid::now_v7(),
             adequacy_claims: None,
+            last_event_observed_at: None,
         }
     }
 
@@ -1150,6 +1184,7 @@ mod tests {
             correlation_id: Uuid::now_v7(),
             receipt_hash_hex: "0".repeat(64),
                     adequacy_claims: None,
+                    last_event_observed_at: None,
 }));
         replayed.apply(&event);
         assert_eq!(replayed.amendment_state.unwrap(), snapshot_after_apply);
@@ -1239,6 +1274,7 @@ mod tests {
             correlation_id: Uuid::now_v7(),
             receipt_hash_hex: "0".repeat(64),
                     adequacy_claims: None,
+                    last_event_observed_at: None,
 }));
         replayed.apply(&event);
         assert_eq!(replayed.correction_state, payload.after);
@@ -1540,5 +1576,52 @@ mod tests {
         // `owner()` sets cascade_tier = None.
         let event = agg.handle_submit(cmd).expect("legacy shape admissible");
         let DeclarationEvent::Submitted(_) = event else { panic!() };
+    }
+
+    // ─── PR-FATF-4 / TODO-005 — last_event_observed_at invariants ─────
+
+    #[test]
+    fn last_event_observed_at_future_refused() {
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.last_event_observed_at = Some(cmd.submitted_at + Duration::days(1));
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::LastEventObservedAtInFuture { .. }
+        ));
+    }
+
+    #[test]
+    fn last_event_observed_at_more_than_5_years_old_refused() {
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.last_event_observed_at = Some(cmd.submitted_at - Duration::days(365 * 5 + 30));
+        assert!(matches!(
+            agg.handle_submit(cmd).unwrap_err(),
+            DomainError::LastEventObservedAtTooOld { .. }
+        ));
+    }
+
+    #[test]
+    fn last_event_observed_at_recent_succeeds() {
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.last_event_observed_at = Some(cmd.submitted_at - Duration::days(7));
+        let event = agg.handle_submit(cmd).expect("recent change date admissible");
+        let DeclarationEvent::Submitted(p) = event else { panic!() };
+        assert!(p.last_event_observed_at.is_some());
+    }
+
+    #[test]
+    fn last_event_observed_at_absent_succeeds_for_back_compat() {
+        // The domain accepts None (legacy / pre-FATF-migration shape).
+        // The API DTO layer enforces required-ness on new writes; the
+        // aggregate's job is to not break replay of historical events.
+        let agg = DeclarationAggregate::fresh(DeclarationId::new());
+        let mut cmd = submit_command(agg.id, vec![owner(10_000)]);
+        cmd.last_event_observed_at = None;
+        let event = agg.handle_submit(cmd).expect("None is admissible at the aggregate");
+        let DeclarationEvent::Submitted(p) = event else { panic!() };
+        assert!(p.last_event_observed_at.is_none());
     }
 }
