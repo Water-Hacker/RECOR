@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT MIN(submitted_at) AS \"min?\"\n            FROM declaration_projection\n            WHERE declarant_principal = $1\n              AND submitted_at < $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "min?",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "467c575a4e7f74da54954e7c54ad5f38dfe96b5bc0e45c0c3931c59c28b7140f"
+}

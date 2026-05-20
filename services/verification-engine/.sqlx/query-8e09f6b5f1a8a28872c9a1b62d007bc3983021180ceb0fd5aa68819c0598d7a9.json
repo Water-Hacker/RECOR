@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT MAX(depth) AS \"depth?\"\n            FROM ownership_paths\n            WHERE root_entity_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "depth?",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8e09f6b5f1a8a28872c9a1b62d007bc3983021180ceb0fd5aa68819c0598d7a9"
+}

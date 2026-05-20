@@ -179,6 +179,42 @@ pub struct Config {
     /// the only legitimate caller of the inbound surface).
     #[serde(default = "default_spiffe_id_peer_declaration")]
     pub spiffe_id_peer: String,
+
+    // ─── FIND-009: real-stage activation flags ──────────────────────
+    //
+    // Each flag swaps a stub stage for its real implementation:
+    //
+    //   - sanctions     (Stage 3) → PostgresSanctionsAdapter + BunecNameResolver
+    //   - PEP           (Stage 4) → PostgresPepAdapter + BunecNameResolver
+    //   - adverse media (Stage 5) → PostgresIcijRepository + InferenceGateway
+    //   - patterns      (Stage 6) → in-process structural checks against the pool
+    //
+    // Default is `false` for every flag — operators must opt in once
+    // the upstream data sources are populated. The audit calls this
+    // out under FIND-009: the real implementations have shipped since
+    // R-VER-2..6 but were unreachable because the wiring registered
+    // the stubs unconditionally.
+    //
+    // Stage 7 (cross-source) has no real implementation yet; the stub
+    // stays in place until a separate ticket lands it.
+    /// Activate the real Stage 3 (sanctions screening) instead of the
+    /// stub. Requires the `sanctions_persons` table to be populated.
+    #[serde(default)]
+    pub enable_real_sanctions: bool,
+    /// Activate the real Stage 4 (PEP screening) instead of the stub.
+    /// Requires the `peps` table to be populated.
+    #[serde(default)]
+    pub enable_real_pep: bool,
+    /// Activate the real Stage 5 (adverse media). Requires the
+    /// `icij_persons` table AND a configured Anthropic API key
+    /// (`ANTHROPIC_API_KEY`). When the API key is unset, the real
+    /// gateway runs in fixture mode (see `recor-inference-gateway`).
+    #[serde(default)]
+    pub enable_real_adverse_media: bool,
+    /// Activate the real Stage 6 (pattern detection) instead of the
+    /// stub.
+    #[serde(default)]
+    pub enable_real_patterns: bool,
 }
 
 impl Config {

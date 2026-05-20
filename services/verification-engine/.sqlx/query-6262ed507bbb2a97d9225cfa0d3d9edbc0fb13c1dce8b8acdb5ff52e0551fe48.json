@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*)::INT8 AS \"n!\"\n            FROM entity_ownership_graph eog\n            WHERE eog.entity_id = ANY(\n                SELECT entity_id FROM entity_ownership_graph\n                WHERE owner_person_id = ANY($1)\n            )\n            AND eog.owner_person_id = ANY($1)\n            AND eog.entity_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "n!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6262ed507bbb2a97d9225cfa0d3d9edbc0fb13c1dce8b8acdb5ff52e0551fe48"
+}

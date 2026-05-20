@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT has_bunec_activity FROM declaration_projection WHERE entity_id = $1 ORDER BY submitted_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "has_bunec_activity",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2737566171c5bde468c128cc8356a7351f29e8c917699fe9934670ad87bf2e80"
+}

@@ -121,15 +121,20 @@ production deployment. **Medium** is worth fixing in normal course.
 - **Effort:** expensive (multiple weeks)
 - **Cost class:** requires-infrastructure
 
-### FIND-009 — 5 of 7 V-engine pipeline stages are stubs in production wiring; real implementations sit unreachable
+### FIND-009 — 5 of 7 V-engine pipeline stages are stubs in production wiring; real implementations sit unreachable — **CLOSED (Sprint 2)**
 
 - **Severity:** HIGH
-- **Location:** `services/verification-engine/src/application/stages/mod.rs`
+- **Status:** CLOSED by audit Sprint 2 — every real stage that exists is now reachable behind a config flag; the stubs remain as fail-safe defaults so the pipeline runs with the same vacuous BPA behaviour out of the box.
+- **Location:** `services/verification-engine/src/main.rs` (composition root) + `services/verification-engine/src/application/stages/name_resolver.rs` (new `BunecNameResolver`).
 - **Source:** Pass A § system-map + § A.10
-- **Impact:** The `mod.rs` registers `stage_3_sanctions_stub`, `stage_4_pep_stub`, `stage_5_adverse_media_stub`, `stage_6_pattern_detection_stub`, `stage_7_cross_source_stub` in the pipeline. The "real" implementations (`stage3_sanctions.rs`, `stage4_pep.rs`, etc.) ship the same crate but are NOT registered. The system runs with stubs in production today.
-- **Remediation:** Update `stages/mod.rs` to register the real stages behind config switches (per the R-VER-1..6 design). Default behaviour can stay stub-based until ingestion + Anthropic key are in place.
-- **Effort:** cheap (~1-2 days) for the registration; the real-data switches require partner data (sanctions feeds, OpenSanctions PEP, ICIJ licence, Anthropic API key — `requires-external-action`)
-- **Cost class:** code + requires-external-action for full activation
+- **Impact:** Pre-fix, `stages/mod.rs` registered five stubs unconditionally. The real implementations (`stage3_sanctions.rs`, `stage4_pep.rs`, `stage5_adverse_media.rs`, `stage6_patterns.rs`) shipped in the crate but were never instantiated because the wiring had no `NameResolver` to construct them with.
+- **Remediation shipped:**
+    - New `BunecNameResolver` (`stages/name_resolver.rs`) wraps the existing `BunecAdapter`; this was the missing piece for stages 3/4/5.
+    - Four new Config flags — `enable_real_sanctions`, `enable_real_pep`, `enable_real_adverse_media`, `enable_real_patterns` — default `false` (preserves current behaviour).
+    - `main.rs` constructs each Stage 3..6 as either the real or the stubbed implementation based on its flag, with an `info!` line per stage so operators can confirm which path is live.
+    - Stage 7 (cross-source) stays stub — no real implementation exists in the crate. The composition-root comment documents this explicitly.
+- **Tests:** `BunecNameResolver` has its own unit-test matrix (found / not-found / circuit-open → respectively Some / None / None). The real stages already shipped with their own unit tests; this PR doesn't change their behaviour, only their reachability.
+- **Activation:** operators flip `ENABLE_REAL_SANCTIONS=true` (etc.) per stage. Adverse-media additionally requires `ANTHROPIC_API_KEY` for non-fixture inference; absent the key the gateway runs in fixture mode (see `recor-inference-gateway`).
 
 ### FIND-010 — Architecture binders are `.docx` (non-diffable)
 

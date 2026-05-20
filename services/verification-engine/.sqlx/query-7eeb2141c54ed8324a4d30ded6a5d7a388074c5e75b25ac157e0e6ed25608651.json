@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT entity_jurisdiction FROM declaration_projection\n               WHERE entity_id = $1 ORDER BY submitted_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entity_jurisdiction",
+        "type_info": "Bpchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "7eeb2141c54ed8324a4d30ded6a5d7a388074c5e75b25ac157e0e6ed25608651"
+}

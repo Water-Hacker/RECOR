@@ -13,15 +13,18 @@ use tracing::{error, info, warn};
 use recor_verification_engine::api::{AppState, OidcVerifier};
 use recor_verification_engine::application::{
     stages::{
-        AdverseMediaStub, CrossSourceStub, IdentityAuthenticationStage, PatternDetectionStub,
-        PepStub, SanctionsStub, SchemaValidationStage,
+        AdverseMediaStage, AdverseMediaStub, BunecNameResolver, CrossSourceStub,
+        IdentityAuthenticationStage, NameResolver, PatternDetectionStage,
+        PatternDetectionStub, PepStage, PepStub, SanctionsStage, SanctionsStub,
+        SchemaValidationStage,
     },
     GetVerificationUseCase, PipelineOrchestrator, SubmitVerificationUseCase,
 };
 use recor_verification_engine::config::Config;
 use recor_verification_engine::domain::{LaneThresholds, Stage};
 use recor_verification_engine::infrastructure::{
-    KafkaConsumer, OutboxAdminStore, PostgresMockBunec, PostgresVerificationRepository,
+    KafkaConsumer, OutboxAdminStore, PostgresIcijRepository, PostgresMockBunec,
+    PostgresPepAdapter, PostgresSanctionsAdapter, PostgresVerificationRepository,
     VerificationOutboxRelay, VerificationOutboxRetention, WritebackSubscriber,
 };
 use recor_verification_engine::infrastructure::retention::warn_if_misconfigured;
@@ -91,13 +94,69 @@ async fn main() -> Result<()> {
 
     let bunec = Arc::new(PostgresMockBunec::new(pool.clone()));
 
+    // FIND-009 closure. Each Stage 3..6 starts as a stub and is
+    // replaced with the real implementation when the corresponding
+    // `enable_real_*` config flag is set. Stage 7 (cross-source)
+    // has no real implementation in the crate yet; it stays stub.
+    //
+    // The real stages need a `NameResolver` (sanctions, PEP, adverse
+    // media) AND/OR a Postgres pool (patterns) AND/OR the Inference
+    // Gateway (adverse media). We construct the resolver + adapters
+    // up front so the per-stage switch can drop them in cheaply.
+    let name_resolver: Arc<dyn NameResolver> =
+        Arc::new(BunecNameResolver::new(bunec.clone()));
+
+    let sanctions_stage: Arc<dyn Stage> = if cfg.enable_real_sanctions {
+        info!("Stage 3 (sanctions): real implementation enabled");
+        let adapter = Arc::new(PostgresSanctionsAdapter::new(pool.clone()));
+        Arc::new(SanctionsStage::new(adapter, name_resolver.clone()))
+    } else {
+        info!("Stage 3 (sanctions): stub (set ENABLE_REAL_SANCTIONS=true to enable the real path)");
+        Arc::new(SanctionsStub::new())
+    };
+
+    let pep_stage: Arc<dyn Stage> = if cfg.enable_real_pep {
+        info!("Stage 4 (PEP): real implementation enabled");
+        let adapter = Arc::new(PostgresPepAdapter::new(pool.clone()));
+        Arc::new(PepStage::new(adapter, name_resolver.clone()))
+    } else {
+        info!("Stage 4 (PEP): stub (set ENABLE_REAL_PEP=true to enable the real path)");
+        Arc::new(PepStub::new())
+    };
+
+    let adverse_media_stage: Arc<dyn Stage> = if cfg.enable_real_adverse_media {
+        info!("Stage 5 (adverse media): real implementation enabled");
+        let icij = Arc::new(PostgresIcijRepository::new(pool.clone()));
+        let gateway = Arc::new(
+            recor_inference_gateway::InferenceGateway::new(
+                recor_inference_gateway::GatewayConfig::from_env(),
+            )
+            .context("inference gateway init failed (Stage 5 real path)")?,
+        );
+        Arc::new(AdverseMediaStage::new(icij, name_resolver.clone(), gateway))
+    } else {
+        info!("Stage 5 (adverse media): stub (set ENABLE_REAL_ADVERSE_MEDIA=true to enable the real path)");
+        Arc::new(AdverseMediaStub::new())
+    };
+
+    let pattern_stage: Arc<dyn Stage> = if cfg.enable_real_patterns {
+        info!("Stage 6 (patterns): real implementation enabled");
+        Arc::new(PatternDetectionStage::new(pool.clone()))
+    } else {
+        info!("Stage 6 (patterns): stub (set ENABLE_REAL_PATTERNS=true to enable the real path)");
+        Arc::new(PatternDetectionStub::new())
+    };
+
     let stages: Vec<Arc<dyn Stage>> = vec![
         Arc::new(SchemaValidationStage::new()),
         Arc::new(IdentityAuthenticationStage::new(bunec.clone())),
-        Arc::new(SanctionsStub::new()),
-        Arc::new(PepStub::new()),
-        Arc::new(AdverseMediaStub::new()),
-        Arc::new(PatternDetectionStub::new()),
+        sanctions_stage,
+        pep_stage,
+        adverse_media_stage,
+        pattern_stage,
+        // Stage 7 (cross-source) — no real implementation in v1; the
+        // stub returns InsufficientEvidence. Replacing it is a
+        // separate ticket.
         Arc::new(CrossSourceStub::new()),
     ];
 
