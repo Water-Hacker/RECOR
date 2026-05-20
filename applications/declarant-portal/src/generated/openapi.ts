@@ -237,12 +237,13 @@ export interface components {
          *     at the API boundary (D17), not from this body.
          */
         AmendDeclarationRequest: {
+            adequacy_claims?: null | components["schemas"]["AdequacyClaims"];
             /**
              * @description Fresh attestation signed by the declarant over the AMENDED
              *     canonical payload (entity_id, declarant_principal,
              *     declarant_role, kind, effective_from, beneficial_owners,
-             *     nonce_hex). Verified at the API boundary before the command
-             *     reaches the aggregate.
+             *     adequacy_claims, nonce_hex). Verified at the API boundary
+             *     before the command reaches the aggregate.
              */
             attestation: components["schemas"]["CryptographicAttestation"];
             beneficial_owners: components["schemas"]["BeneficialOwnerClaim"][];
@@ -705,6 +706,7 @@ export interface components {
          */
         SignatureAlgorithm: "ed25519";
         SubmitDeclarationRequest: {
+            adequacy_claims?: null | components["schemas"]["AdequacyClaims"];
             attestation: components["schemas"]["CryptographicAttestation"];
             beneficial_owners: components["schemas"]["BeneficialOwnerClaim"][];
             declarant_role: components["schemas"]["DeclarantRole"];
