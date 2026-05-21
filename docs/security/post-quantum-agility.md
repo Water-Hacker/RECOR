@@ -120,8 +120,8 @@ openssl s_client \
   -tls1_3 < /dev/null 2>&1 | grep 'Server Temp Key'
 ```
 
-A server that negotiated the hybrid prints `Server Temp Key:
-X25519MLKEM768`.
+A server that negotiated the hybrid prints a Server Temp Key line
+containing the algorithm identifier `X25519MLKEM768`.
 
 ## Migration plan
 
@@ -138,6 +138,6 @@ X25519MLKEM768`.
   loudly and falls back to classical; the service does not silently
   serve a weaker key exchange than configured.
 - **D21 post-quantum agility** — substrate swap is a feature-flag
-  + config-flag change, not a code rewrite.
+  combined with a config-flag change, not a code rewrite.
 - **D19 reproducible** — the feature flag is compile-time;
   per-flag build outputs are bytewise deterministic.

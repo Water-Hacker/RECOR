@@ -67,11 +67,11 @@ carry no PII columns of their own.
 | `registration_number_in_jurisdiction` | `TEXT NOT NULL` | Public | Art. 6(1)(c) — business-register ID | Forever |
 | `founded_at` | `DATE NOT NULL` | Public | Art. 6(1)(c) | Forever |
 | `dissolved_at` | `DATE NULL` | Public | Art. 6(1)(c) | Forever |
-| `has_outstanding_bearer_shares` | `BOOLEAN NOT NULL` | DEFAULT false | Public | Art. 6(1)(c) — FATF c.24.12 bearer-share disclosure | Forever |
-| `bearer_share_status` | `TEXT NOT NULL` | CHECK IN ('none','outstanding','converted','immobilised') | Public | Art. 6(1)(c) | Forever |
-| `sufficient_link_kind` | `TEXT NULL` | CHECK IN ('branch','significant_business','financial_relationship','real_estate','employees','tax_residence','other_documented') | Public | Art. 6(1)(c) — FATF c.24.1(d) sufficient-link test | Forever |
-| `sufficient_link_evidence` | `TEXT NULL` | 16–2048 chars | Public | Art. 6(1)(c) | Forever |
-| `created_at` | `TIMESTAMPTZ NOT NULL` | DEFAULT NOW() | Internal | Art. 6(1)(c) | Forever |
+| `has_outstanding_bearer_shares` | `BOOLEAN NOT NULL DEFAULT false` | Public | Art. 6(1)(c) — FATF c.24.12 bearer-share disclosure | Forever |
+| `bearer_share_status` | `TEXT NOT NULL CHECK IN ('none','outstanding','converted','immobilised')` | Public | Art. 6(1)(c) | Forever |
+| `sufficient_link_kind` | `TEXT NULL CHECK IN ('branch','significant_business','financial_relationship','real_estate','employees','tax_residence','other_documented')` | Public | Art. 6(1)(c) — FATF c.24.1(d) sufficient-link test | Forever |
+| `sufficient_link_evidence` | `TEXT NULL` (16–2048 chars) | Public | Art. 6(1)(c) | Forever |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Internal | Art. 6(1)(c) | Forever |
 
 ---
 
@@ -104,8 +104,8 @@ below establishes the expected handling rules.
 | `settlor_person_ids` | `UUID[] NOT NULL` | **PII** | Art. 6(1)(c) | Forever |
 | `beneficiary_person_ids` | `UUID[] NOT NULL` | **PII** | Art. 6(1)(c) — FATF R.25 requires beneficiary disclosure | Forever |
 | `protector_person_ids` | `UUID[] NULL` | **PII** | Art. 6(1)(c) | Forever |
-| `declaration_id` | `UUID NOT NULL` | FK | Public | Art. 6(1)(c) | Forever |
-| `submitted_at` | `TIMESTAMPTZ NOT NULL` | — | Internal | Art. 6(1)(c) | Forever |
+| `declaration_id` | `UUID NOT NULL` (FK) | Public | Art. 6(1)(c) | Forever |
+| `submitted_at` | `TIMESTAMPTZ NOT NULL` | Internal | Art. 6(1)(c) | Forever |
 
 ---
 
