@@ -29,7 +29,7 @@ jobs:
     name: validate CODEOWNERS
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: real CODEOWNERS validates clean
         run: ./tools/ci/validate-codeowners.sh
 

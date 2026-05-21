@@ -30,7 +30,7 @@ jobs:
     name: "lint / yaml"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: yamllint
         run: |
           pip install --user yamllint==1.35.1
@@ -46,7 +46,7 @@ jobs:
     name: "lint / shell"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: bash -n syntax check
         run: |
           set -euo pipefail
@@ -71,7 +71,7 @@ jobs:
     name: "lint / markdown"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@v17
         with:
@@ -97,7 +97,7 @@ jobs:
     name: "secrets / gitleaks"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@v2
         env:
@@ -107,7 +107,7 @@ jobs:
     name: "secrets / detect-secrets"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: detect-secrets
         run: |
           pip install --user detect-secrets==1.5.0
@@ -118,7 +118,7 @@ jobs:
     name: "governance / codeowners-validate"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: validate CODEOWNERS
         run: ./tools/ci/validate-codeowners.sh
 
@@ -136,7 +136,7 @@ jobs:
     name: "governance / no-dangling"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - name: TODO-age check (best-effort at this stage)
         run: |
@@ -160,7 +160,7 @@ jobs:
     # D05 (docs are part of the feature) — a one-way link rot-traps as
     # the linked-to ADR mutates without the linked-from updating.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: ADR cross-link bidirectionality
         run: ./tools/ci/check-adr-bidi.sh
 
@@ -169,7 +169,7 @@ jobs:
     name: "claude-config-validate"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: install pyyaml
         run: pip install --user pyyaml==6.0.2
       - name: validate .claude/ configuration
@@ -185,7 +185,7 @@ jobs:
     name: "api / openapi-drift"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: install rust toolchain
         # rust-toolchain.toml at the repo root pins to 1.88.0; this
         # action honours that file so we don't pin twice.
@@ -253,7 +253,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: install Rust toolchain (1.88.0)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -328,7 +328,7 @@ jobs:
       run:
         working-directory: applications/declarant-portal
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: install Node.js 22
         uses: actions/setup-node@v4
         with:
