@@ -55,7 +55,7 @@ jobs:
     # run; 60 min is the same envelope publish-images.yaml uses.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: install prerequisites
         run: |

@@ -21,7 +21,7 @@ jobs:
     name: pr template completeness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: required sections present
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -55,7 +55,7 @@ jobs:
     name: pr size (D10)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - name: net change under 500 lines (or justified)
         env:
@@ -109,7 +109,7 @@ jobs:
     name: D18 blocked-path / secrets paths
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - name: no files added in secret-bearing paths
         env:

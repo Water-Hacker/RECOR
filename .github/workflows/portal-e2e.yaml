@@ -73,7 +73,7 @@ jobs:
       # silently shrink the gate.
       fail-fast: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: install Node.js 22
         uses: actions/setup-node@v4
@@ -162,7 +162,7 @@ jobs:
       # mode (the verification engine would route the person to red).
       SEEDED_PERSON_ID: "018f0000-0000-4000-8000-0000000000a1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: install prerequisites
         run: |
