@@ -32,7 +32,7 @@ rustls-pemfile = "2"
 # x509-parser lets us pull the URI SAN out of a peer certificate so the
 # tower middleware can extract the verified SPIFFE ID. Standard,
 # pure-Rust, no openssl dep.
-x509-parser = { version = "0.16", default-features = false }
+x509-parser = { version = "0.18", default-features = false }
 
 [features]
 # Exposes the `fixtures` module + the `MockWorkloadApi` to consumers
