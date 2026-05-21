@@ -1,0 +1,24 @@
+# Documented gitleaks false-positives. Each entry is a per-commit
+# fingerprint of the form `<sha>:<path>:<rule>:<line>`. The regex
+# wins when a documentation example happens to look like a secret;
+# we keep the example for operator-facing docs and acknowledge the
+# false positive here.
+#
+# Doctrine D18 is preserved: every entry is a NON-SECRET (a
+# documentation reference, a public spec fragment, an algorithm
+# identifier). A real secret would be rotated and removed, never
+# allow-listed.
+#
+# Format: <commit-sha>:<path>:<rule-id>:<line>
+# Adding entries: paste the `Fingerprint:` line from
+# `gitleaks detect -v` output, one per line.
+
+# docs/security/post-quantum-agility.md line 123 — documents the
+# expected `Server Temp Key: X25519MLKEM768` output from
+# `openssl s_client`; the openssl-style key-value pair trips the
+# generic-api-key rule. The string is a public TLS-1.3
+# algorithm identifier, not a secret. Fix landed at HEAD (the text
+# is rephrased to not match the regex), but historical commits in
+# this PR's range still carry the original — the ignore lets the
+# PR's gitleaks gate pass.
+2d96dba00b3ae9aeb95fefcaa2958bc8c750ed92:docs/security/post-quantum-agility.md:generic-api-key:123
