@@ -148,7 +148,7 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 # transport, different shape; see services/declaration/CLAUDE.md for
 # the OpenAPI-exemption rationale).
 tonic = "0.13"
-tonic-build = "0.13"
+tonic-build = "0.14"
 prost = "0.13"
 prost-types = "0.13"
 
