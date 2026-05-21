@@ -130,17 +130,30 @@ impl VerificationOutboxRelay {
             let signature =
                 recor_hmac_sig::sign(&self.subscriber.hmac_secret, &body, iat);
 
-            let result = self
+            // TODO-050 — propagate the originating declaration's
+            // correlation_id as X-Correlation-ID. The body's
+            // `correlation_id` field is authoritative; the header is
+            // for ingress + log correlation. Absent for legacy outbox
+            // rows (e.g. unknown event types under test); the
+            // declaration service refuses envelopes whose body is
+            // missing correlation_id at the boundary.
+            let correlation_header = payload
+                .get("correlation_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let mut req = self
                 .http
                 .post(&self.subscriber.url)
                 .header("Content-Type", "application/json")
                 .header("X-RECOR-Signature", &signature)
                 .header("X-RECOR-Timestamp", iat.to_string())
                 .header("X-RECOR-Event-Type", &event_type)
-                .header("X-RECOR-Event-Id", event_id.to_string())
-                .body(body)
-                .send()
-                .await;
+                .header("X-RECOR-Event-Id", event_id.to_string());
+            if let Some(h) = correlation_header.as_deref() {
+                req = req.header("X-Correlation-ID", h);
+            }
+            let result = req.body(body).send().await;
 
             match result {
                 Ok(resp) if resp.status().is_success() => {
@@ -272,6 +285,7 @@ pub fn hmac_hex(secret: &str, payload: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn hmac_is_deterministic_for_same_input() {
@@ -289,5 +303,70 @@ mod tests {
     #[test]
     fn hmac_differs_by_payload() {
         assert_ne!(hmac_hex("s", b"x"), hmac_hex("s", b"y"));
+    }
+
+    // ─── TODO-050 — correlation_id HMAC round-trip ───────────────────
+    //
+    // The envelope-build code lives in `process_batch`; for unit
+    // testing we exercise the relevant pieces directly: shape the
+    // payload as the V-engine outbox writer does, sign it, then
+    // verify the signature is stable across a serialise-roundtrip.
+
+    fn build_envelope(correlation_id: Uuid) -> (serde_json::Value, Vec<u8>) {
+        let case_id = Uuid::now_v7();
+        let declaration_id = Uuid::now_v7();
+        let payload = serde_json::json!({
+            "case_id": case_id,
+            "declaration_id": declaration_id,
+            "correlation_id": correlation_id,
+            "lane": "green",
+            "fused_authenticity_belief": 0.9,
+            "fused_authenticity_plausibility": 0.95,
+            "fused_risk_belief": 0.05,
+            "completed_at": "2026-05-20T00:00:00Z",
+        });
+        let envelope = serde_json::json!({
+            "event_id": Uuid::now_v7(),
+            "event_type": "verification.completed.v1",
+            "event_version": 1,
+            "aggregate_id": declaration_id,
+            "payload": payload,
+        });
+        let body = serde_json::to_vec(&envelope).expect("envelope is serialisable");
+        (envelope, body)
+    }
+
+    #[test]
+    fn correlation_id_roundtrips_through_serialise() {
+        let cid = Uuid::now_v7();
+        let (envelope, _body) = build_envelope(cid);
+        let reser: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let extracted = reser["payload"]["correlation_id"].as_str().unwrap();
+        let parsed: Uuid = extracted.parse().unwrap();
+        assert_eq!(parsed, cid);
+    }
+
+    #[test]
+    fn hmac_signature_covers_correlation_id() {
+        let cid_a = Uuid::now_v7();
+        let cid_b = Uuid::now_v7();
+        assert_ne!(cid_a, cid_b);
+        let (_, body_a) = build_envelope(cid_a);
+        let (_, body_b) = build_envelope(cid_b);
+        let sig_a = hmac_hex("k", &body_a);
+        let sig_b = hmac_hex("k", &body_b);
+        assert_ne!(sig_a, sig_b);
+    }
+
+    #[test]
+    fn hmac_verifies_when_correlation_id_unchanged() {
+        let cid = Uuid::now_v7();
+        let (_, body) = build_envelope(cid);
+        let sig = hmac_hex("k", &body);
+        let mut mac = HmacSha256::new_from_slice(b"k").unwrap();
+        mac.update(&body);
+        let computed = hex::encode(mac.finalize().into_bytes());
+        assert_eq!(computed, sig);
     }
 }

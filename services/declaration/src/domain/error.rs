@@ -48,6 +48,18 @@ pub enum DomainError {
         new_case_id: uuid::Uuid,
     },
 
+    /// TODO-050 — the writeback envelope claimed a correlation_id that
+    /// does not match the originating Submitted event's correlation_id.
+    /// Refusal is fail-closed (D14): a forged or misrouted envelope
+    /// must never be applied to an unrelated declaration even if its
+    /// HMAC happens to verify under the shared secret.
+    #[error("verification outcome correlation_id mismatch: declaration {declaration_id} was submitted with {expected_correlation_id} but the writeback carried {actual_correlation_id}")]
+    VerificationCorrelationIdMismatch {
+        declaration_id: uuid::Uuid,
+        expected_correlation_id: uuid::Uuid,
+        actual_correlation_id: uuid::Uuid,
+    },
+
     #[error("fused {field} {value} out of range [0.0, 1.0]")]
     FusedBeliefOutOfRange { field: &'static str, value: f64 },
 

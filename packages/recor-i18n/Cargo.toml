@@ -1,0 +1,19 @@
+[package]
+name = "recor-i18n"
+description = "Localised API error messages for RÉCOR services. Maps ErrorKind codes to FR/EN strings and selects the appropriate locale from an Accept-Language header value. Default locale is EN. Closes TODO-078."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "recor_i18n"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

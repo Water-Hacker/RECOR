@@ -5,6 +5,7 @@ pub mod discrepancies;
 pub mod dlq;
 pub mod dto;
 pub mod fiu;
+pub mod gdpr;
 pub mod grpc;
 pub mod internal;
 pub mod oidc;

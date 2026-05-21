@@ -54,6 +54,12 @@ pub struct DeclarationAggregate {
     /// by the use-case layer to authorise subsequent commands (Supersede,
     /// Amend, Correct).
     pub declarant_principal: Option<String>,
+    /// TODO-050 — correlation id from the originating Submitted event.
+    /// The verification engine echoes this id back through the HMAC
+    /// webhook; the aggregate refuses (D14) on mismatch so a stolen
+    /// or forged writeback envelope cannot be applied to an unrelated
+    /// declaration.
+    pub submit_correlation_id: Option<uuid::Uuid>,
     /// The entity this declaration is about. Used to validate that
     /// superseding declarations target the same entity.
     pub entity_id: Option<super::value_object::EntityId>,
@@ -77,6 +83,7 @@ impl DeclarationAggregate {
             verification_case_id: None,
             superseded_by: None,
             declarant_principal: None,
+            submit_correlation_id: None,
             entity_id: None,
             amendment_state: None,
             correction_state: CorrectionSet::default(),
@@ -98,6 +105,7 @@ impl DeclarationAggregate {
             DeclarationEvent::Submitted(p) => {
                 self.state = DeclarationState::Submitted;
                 self.declarant_principal = Some(p.declarant_principal.clone());
+                self.submit_correlation_id = Some(p.correlation_id);
                 self.entity_id = Some(p.entity_id);
                 self.amendment_state = Some(AmendmentSet {
                     beneficial_owners: p.beneficial_owners.clone(),
@@ -187,6 +195,24 @@ impl DeclarationAggregate {
             cmd.fused_authenticity_plausibility,
         )?;
         validate_belief("fused_risk_belief", cmd.fused_risk_belief)?;
+
+        // TODO-050 — refuse a writeback whose correlation_id does not
+        // match the originating Submit. A nil correlation_id on the
+        // command is treated as "legacy envelope, no cross-check" so
+        // historical callers (pre-TODO-050) keep working through the
+        // cutover window; the API DTO layer promotes nil to a hard
+        // 400 for new traffic.
+        if cmd.correlation_id != uuid::Uuid::nil() {
+            if let Some(expected) = self.submit_correlation_id {
+                if cmd.correlation_id != expected {
+                    return Err(DomainError::VerificationCorrelationIdMismatch {
+                        declaration_id: self.id.0,
+                        expected_correlation_id: expected,
+                        actual_correlation_id: cmd.correlation_id,
+                    });
+                }
+            }
+        }
 
         if let Some(existing) = self.verification_case_id {
             return if existing == cmd.verification_case_id {
@@ -888,7 +914,45 @@ mod tests {
             fused_authenticity_plausibility: 0.97,
             fused_risk_belief: 0.05,
             completed_at: OffsetDateTime::now_utc(),
+            // TODO-050 — echo the submit-side correlation_id by default
+            // so the aggregate cross-check accepts the command. Tests
+            // that target the matching / mismatching paths override
+            // this explicitly.
+            correlation_id: agg.submit_correlation_id.unwrap_or_else(Uuid::nil),
         }
+    }
+
+    #[test]
+    fn record_verification_correlation_id_mismatch_rejects() {
+        let agg = submitted_aggregate();
+        let mut cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        cmd.correlation_id = Uuid::now_v7();
+        let err = agg.handle_record_verification(cmd).unwrap_err();
+        assert!(matches!(
+            err,
+            DomainError::VerificationCorrelationIdMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn record_verification_correlation_id_match_accepts() {
+        let agg = submitted_aggregate();
+        let cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        let _event = agg
+            .handle_record_verification(cmd)
+            .expect("matching correlation_id is accepted")
+            .expect("matching correlation_id emits an event");
+    }
+
+    #[test]
+    fn record_verification_legacy_nil_correlation_id_skips_check() {
+        let agg = submitted_aggregate();
+        let mut cmd = verify_command(&agg, crate::domain::value_object::VerificationLane::Green);
+        cmd.correlation_id = Uuid::nil();
+        let _event = agg
+            .handle_record_verification(cmd)
+            .expect("legacy nil correlation_id is accepted")
+            .expect("legacy nil correlation_id emits an event");
     }
 
     fn submitted_aggregate() -> DeclarationAggregate {

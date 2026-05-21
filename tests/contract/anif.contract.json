@@ -1,0 +1,96 @@
+{
+  "consumer": "ANIF",
+  "description": "ANIF FIU disclosure — authenticated search and case retrieval",
+  "legal_basis": "FATF R.24 c.24.9; CEMAC AML/CFT — [CITATION NEEDED: cemac-anif-mandate]",
+  "acr_required": "urn:recor:acr:ial2-aal2",
+  "interactions": [
+    {
+      "id": "anif-get-verification-case-by-id",
+      "description": "ANIF retrieves a verification case by case_id using a Tier-A credential",
+      "request": {
+        "method": "GET",
+        "path": "/v1/verifications/{case_id}",
+        "path_params": {
+          "case_id": "01960000-0000-7000-8000-000000000001"
+        },
+        "headers": {
+          "Authorization": "Bearer <anif-tier-a-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "case_id": "01960000-0000-7000-8000-000000000001",
+          "declaration_id": "01960000-0000-7000-8000-000000000002",
+          "entity_id": "01960000-0000-7000-8000-000000000003",
+          "lane": "yellow",
+          "authenticity_belief": "present",
+          "risk_belief": "present",
+          "declarant_principal": "present",
+          "case_payload": "present"
+        },
+        "body_rules": {
+          "lane": { "enum": ["green", "yellow", "red"] },
+          "declarant_principal": { "note": "PII; present for Tier A (ANIF) only — redacted for Tier B" },
+          "case_payload": { "note": "Full payload present for Tier A only" }
+        }
+      }
+    },
+    {
+      "id": "anif-fiu-disclosure-search-by-name",
+      "description": "ANIF searches for a person by full name, triggering a disclosure log entry",
+      "request": {
+        "method": "GET",
+        "path": "/v1/verifications/search",
+        "query_params": {
+          "subject_kind": "full_name",
+          "subject_value": "Aïssa Ngo Bidoung",
+          "anif_case_reference": "ANIF-2026-001234",
+          "justification": "Ongoing AML investigation ANIF-2026-001234 under CEMAC AML/CFT Art. 12"
+        },
+        "headers": {
+          "Authorization": "Bearer <anif-tier-a-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "results": "array",
+          "disclosure_id": "present",
+          "requested_at": "present"
+        },
+        "body_rules": {
+          "disclosure_id": { "note": "Every ANIF search response includes a disclosure_id that anchors the fiu_disclosure_log row" },
+          "results[].declarant_principal": { "note": "PII; present for Tier A only" }
+        }
+      }
+    },
+    {
+      "id": "anif-tier-b-credential-rejected",
+      "description": "A Tier B (ARMP) credential must not access a full verification case — expects 403 or 404",
+      "request": {
+        "method": "GET",
+        "path": "/v1/verifications/{case_id}",
+        "path_params": {
+          "case_id": "01960000-0000-7000-8000-000000000001"
+        },
+        "headers": {
+          "Authorization": "Bearer <armp-tier-b-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status_one_of": [403, 404],
+        "body_rules": {
+          "declarant_principal": { "must_be_absent": true },
+          "case_payload": { "must_be_absent": true }
+        }
+      }
+    }
+  ]
+}

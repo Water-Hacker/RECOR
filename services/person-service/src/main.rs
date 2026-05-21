@@ -15,9 +15,11 @@ use recor_person_service::application::{
     GetPersonUseCase, MergePersonsUseCase, RegisterPersonUseCase, SearchPersonsUseCase,
 };
 use recor_person_service::config::Config;
+use recor_person_service::infrastructure::outbox_admin::OutboxAdminStore;
 use recor_person_service::infrastructure::postgres::{
     IdempotencyStore, PostgresPersonRepository,
 };
+use recor_person_service::infrastructure::relay::{OutboxRelay, RelaySubscriber};
 use recor_person_service::infrastructure::retention::{
     warn_if_misconfigured, OutboxRetention,
 };
@@ -84,6 +86,8 @@ async fn main() -> Result<()> {
     let search = Arc::new(SearchPersonsUseCase::new(repository.clone()));
     let merge = Arc::new(MergePersonsUseCase::new(repository.clone()));
     let idempotency = Arc::new(IdempotencyStore::new(pool.clone()));
+    // TODO-040 — DLQ admin store; shared with the DLQ admin API state.
+    let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
 
     let base_url = std::env::var("RECOR_BASE_URL").unwrap_or_else(|_| {
         format!("http://{}", cfg.bind_addr.trim_start_matches("0.0.0.0:"))
@@ -178,6 +182,7 @@ async fn main() -> Result<()> {
         search_usecase: search,
         merge_usecase: merge,
         idempotency,
+        outbox_admin,
         base_url,
         is_dev: cfg.is_dev(),
         idempotency_ttl_seconds: cfg.idempotency_ttl_seconds,
@@ -225,6 +230,40 @@ async fn main() -> Result<()> {
         None
     };
 
+    // TODO-040 — outbox relay worker. Optional: enabled iff
+    // OUTBOX_RELAY_TARGET_URL is set. D14 fail-closed: the cross-field
+    // check at config-load time guarantees the HMAC secret is present
+    // when the URL is.
+    let relay_handle = if !cfg.outbox_relay_target_url.is_empty() {
+        let subscriber = RelaySubscriber {
+            name: cfg.outbox_relay_subscriber_name.clone(),
+            webhook_url: cfg.outbox_relay_target_url.clone(),
+            hmac_secret: cfg.outbox_relay_hmac_secret.expose_secret().to_string(),
+        };
+        let relay = OutboxRelay::new(pool.clone(), subscriber)
+            .with_poll_interval(std::time::Duration::from_secs(
+                cfg.outbox_relay_poll_interval_seconds,
+            ))
+            .with_batch_size(cfg.outbox_relay_batch_size)
+            .with_max_attempts(cfg.outbox_relay_max_dispatch_attempts)
+            .with_metrics(state_metrics_for_retention.clone());
+        let cancel_relay = cancel.clone();
+        info!(
+            webhook = %cfg.outbox_relay_target_url,
+            subscriber = %cfg.outbox_relay_subscriber_name,
+            poll_interval_s = cfg.outbox_relay_poll_interval_seconds,
+            batch_size = cfg.outbox_relay_batch_size,
+            max_attempts = cfg.outbox_relay_max_dispatch_attempts,
+            "person outbox relay enabled"
+        );
+        Some(tokio::spawn(async move {
+            relay.run(cancel_relay).await;
+        }))
+    } else {
+        info!("person outbox relay disabled (OUTBOX_RELAY_TARGET_URL not set)");
+        None
+    };
+
     // COMP-2 — outbox retention worker. Always spawned so a single
     // cancellation surface covers every background task; when
     // OUTBOX_RETENTION_DAYS=0 (test/dev default) it logs "disabled" and
@@ -262,6 +301,11 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!(e));
     }
     let _ = retention_handle.await;
+    if let Some(h) = relay_handle {
+        if let Err(e) = h.await {
+            tracing::warn!(error = ?e, worker = "outbox-relay", "worker join failed during shutdown");
+        }
+    }
     if let Some(h) = metrics_handle {
         let _ = h.await;
     }

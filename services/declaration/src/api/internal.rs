@@ -218,7 +218,62 @@ pub async fn handle_verification_outcome(
             )
         })?;
 
+    // TODO-050 — correlation_id must be present AND non-nil. Missing
+    // values get a 400 (`missing_correlation_id`) so legacy senders
+    // are refused at the boundary rather than treated as exempt. The
+    // aggregate's mismatch check covers the forgery / mis-routing
+    // case after this gate filters absent envelopes.
+    let payload_correlation_id = match outcome.correlation_id {
+        Some(id) if !id.is_nil() => id,
+        _ => {
+            warn!(
+                declaration_id = %outcome.declaration_id,
+                "verification outcome refused — correlation_id missing or nil (TODO-050)",
+            );
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "missing_correlation_id",
+                "verification outcome envelope must carry a non-nil correlation_id",
+            ));
+        }
+    };
+
+    // Defence-in-depth: when the sender supplies X-Correlation-ID, it
+    // must agree with the body's correlation_id. Disagreement is a
+    // malformed envelope (the body is authoritative; the header is
+    // for observability + ingress correlation).
+    if let Some(header_cid) = headers
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+    {
+        match Uuid::parse_str(header_cid) {
+            Ok(parsed) if parsed == payload_correlation_id => {}
+            Ok(parsed) => {
+                warn!(
+                    header = %parsed,
+                    body = %payload_correlation_id,
+                    "verification outcome refused — X-Correlation-ID disagrees with body"
+                );
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "correlation_id_header_mismatch",
+                    "X-Correlation-ID header does not match payload correlation_id",
+                ));
+            }
+            Err(_) => {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "malformed_correlation_id_header",
+                    "X-Correlation-ID must be a UUID",
+                ));
+            }
+        }
+    }
+
     let cmd = outcome.into_command();
+    // The aggregate cross-checks correlation_id against the
+    // originating Submit's value; mismatch surfaces as 400 via
+    // DomainError default mapping.
     let receipt = state
         .record_verification_usecase
         .execute(cmd)
@@ -235,6 +290,7 @@ pub async fn handle_verification_outcome(
         event_id = %envelope.event_id,
         declaration_id = %receipt.declaration_id,
         case_id = %receipt.verification_case_id,
+        correlation_id = %payload_correlation_id,
         lane = receipt.lane.as_str(),
         new = receipt.recorded_new_event,
         "verification outcome recorded"
@@ -385,5 +441,95 @@ mod tests {
         let sig = hmac_hex("current", b"original");
         assert!(!verify_hmac_with_rotation("current", "", b"tampered", &sig));
         assert!(!verify_hmac_with_rotation("current", "old", b"tampered", &sig));
+    }
+
+    // ─── TODO-050 — correlation_id propagation tests ──────────────────
+
+    use serde_json::json;
+
+    /// Helper: try to extract+validate correlation_id from a
+    /// `VerificationOutcomeRequest`-shaped JSON value.
+    fn extract_and_validate_correlation_id(
+        body: &serde_json::Value,
+        header: Option<&str>,
+    ) -> Result<Uuid, &'static str> {
+        let outcome: VerificationOutcomeRequest =
+            serde_json::from_value(body.clone()).map_err(|_| "malformed_payload")?;
+        let cid = match outcome.correlation_id {
+            Some(id) if !id.is_nil() => id,
+            _ => return Err("missing_correlation_id"),
+        };
+        if let Some(h) = header {
+            let parsed: Uuid = h.parse().map_err(|_| "malformed_correlation_id_header")?;
+            if parsed != cid {
+                return Err("correlation_id_header_mismatch");
+            }
+        }
+        Ok(cid)
+    }
+
+    fn body_with(cid: Option<Uuid>) -> serde_json::Value {
+        let mut v = json!({
+            "case_id": Uuid::now_v7().to_string(),
+            "declaration_id": Uuid::now_v7().to_string(),
+            "lane": "green",
+            "fused_authenticity_belief": 0.9,
+            "fused_authenticity_plausibility": 0.95,
+            "fused_risk_belief": 0.05,
+            "completed_at": "2026-05-20T00:00:00Z",
+        });
+        if let Some(c) = cid {
+            v["correlation_id"] = json!(c.to_string());
+        }
+        v
+    }
+
+    #[test]
+    fn correlation_id_missing_in_body_is_400() {
+        let body = body_with(None);
+        let err = extract_and_validate_correlation_id(&body, None).unwrap_err();
+        assert_eq!(err, "missing_correlation_id");
+    }
+
+    #[test]
+    fn correlation_id_nil_in_body_is_400() {
+        let body = body_with(Some(Uuid::nil()));
+        let err = extract_and_validate_correlation_id(&body, None).unwrap_err();
+        assert_eq!(err, "missing_correlation_id");
+    }
+
+    #[test]
+    fn correlation_id_matching_body_is_accepted() {
+        let cid = Uuid::now_v7();
+        let body = body_with(Some(cid));
+        let out = extract_and_validate_correlation_id(&body, None).unwrap();
+        assert_eq!(out, cid);
+    }
+
+    #[test]
+    fn header_disagreeing_with_body_is_400() {
+        let body_cid = Uuid::now_v7();
+        let header_cid = Uuid::now_v7();
+        assert_ne!(body_cid, header_cid);
+        let body = body_with(Some(body_cid));
+        let err = extract_and_validate_correlation_id(&body, Some(&header_cid.to_string()))
+            .unwrap_err();
+        assert_eq!(err, "correlation_id_header_mismatch");
+    }
+
+    #[test]
+    fn header_agreeing_with_body_is_accepted() {
+        let cid = Uuid::now_v7();
+        let body = body_with(Some(cid));
+        let out = extract_and_validate_correlation_id(&body, Some(&cid.to_string())).unwrap();
+        assert_eq!(out, cid);
+    }
+
+    #[test]
+    fn malformed_header_is_400() {
+        let cid = Uuid::now_v7();
+        let body = body_with(Some(cid));
+        let err = extract_and_validate_correlation_id(&body, Some("not-a-uuid")).unwrap_err();
+        assert_eq!(err, "malformed_correlation_id_header");
     }
 }

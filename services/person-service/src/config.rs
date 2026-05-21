@@ -130,6 +130,27 @@ pub struct Config {
     /// `outbox_retention_days == 0`.
     #[serde(default = "default_outbox_retention_interval")]
     pub outbox_retention_interval_seconds: u64,
+
+    // ─── TODO-040 — outbox relay ────────────────────────────────────────
+    /// Outbox-relay target webhook URL. Empty disables the relay.
+    #[serde(default)]
+    pub outbox_relay_target_url: String,
+    /// Outbox-relay HMAC secret. REQUIRED when `outbox_relay_target_url`
+    /// is non-empty. D18: SecretString so it never lands in logs.
+    #[serde(default = "default_secret")]
+    pub outbox_relay_hmac_secret: SecretString,
+    /// Outbox-relay subscriber name. Default `"verification-engine"`.
+    #[serde(default = "default_outbox_relay_subscriber_name")]
+    pub outbox_relay_subscriber_name: String,
+    /// Outbox-relay polling interval in seconds. Default 5.
+    #[serde(default = "default_outbox_relay_poll_interval")]
+    pub outbox_relay_poll_interval_seconds: u64,
+    /// Outbox-relay batch size. Default 50.
+    #[serde(default = "default_outbox_relay_batch_size")]
+    pub outbox_relay_batch_size: i64,
+    /// Outbox-relay max dispatch attempts before dead-letter. Default 12.
+    #[serde(default = "default_outbox_relay_max_dispatch_attempts")]
+    pub outbox_relay_max_dispatch_attempts: i32,
 }
 
 impl Config {
@@ -166,6 +187,14 @@ impl Config {
             other => {
                 return Err(ConfigError::InvalidAuthTransport(other.to_string()));
             }
+        }
+        // TODO-040: D14 + D18 — refuse a half-configured relay
+        // (URL set, secret unset would deliver unauthenticated webhooks).
+        use secrecy::ExposeSecret;
+        if !cfg.outbox_relay_target_url.is_empty()
+            && cfg.outbox_relay_hmac_secret.expose_secret().is_empty()
+        {
+            return Err(ConfigError::OutboxRelayHmacSecretRequired);
         }
         Ok(cfg)
     }
@@ -213,6 +242,11 @@ pub enum ConfigError {
     OidcAudienceRequired,
     #[error("AUTH_TRANSPORT must be one of: hmac, mtls, mtls-only (got `{0}`)")]
     InvalidAuthTransport(String),
+    #[error(
+        "OUTBOX_RELAY_HMAC_SECRET is required when OUTBOX_RELAY_TARGET_URL is set \
+         (TODO-040 — D14 fail-closed)"
+    )]
+    OutboxRelayHmacSecretRequired,
 }
 
 fn default_bind_addr() -> String {
@@ -265,4 +299,16 @@ fn default_spiffe_id_self_person() -> String {
 
 fn default_outbox_retention_interval() -> u64 {
     86_400 // 24 hours
+}
+fn default_outbox_relay_subscriber_name() -> String {
+    "verification-engine".to_string()
+}
+fn default_outbox_relay_poll_interval() -> u64 {
+    5
+}
+fn default_outbox_relay_batch_size() -> i64 {
+    50
+}
+fn default_outbox_relay_max_dispatch_attempts() -> i32 {
+    12
 }

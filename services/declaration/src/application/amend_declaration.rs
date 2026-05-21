@@ -311,6 +311,7 @@ mod tests {
                 fused_authenticity_plausibility: 0.98,
                 fused_risk_belief: 0.02,
                 completed_at: OffsetDateTime::now_utc(),
+                correlation_id: Uuid::nil(),
             })
             .await
             .unwrap();

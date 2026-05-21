@@ -5,7 +5,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::application::port::{RepositoryError, VerificationRepository};
-use crate::domain::{VerificationCase, VerificationCaseId};
+use crate::domain::{DecisionRationale, VerificationCase, VerificationCaseId};
 
 pub struct GetVerificationUseCase {
     repository: Arc<dyn VerificationRepository>,
@@ -30,6 +30,19 @@ impl GetVerificationUseCase {
     ) -> Result<VerificationCase, GetError> {
         self.repository
             .load_case(case_id)
+            .await?
+            .ok_or(GetError::NotFound(case_id))
+    }
+
+    /// TODO-049 — fetch the per-decision rationale persisted alongside
+    /// the case. Returns `NotFound` when either the case itself does
+    /// not exist OR the case predates the rationale migration.
+    pub async fn execute_rationale(
+        &self,
+        case_id: VerificationCaseId,
+    ) -> Result<DecisionRationale, GetError> {
+        self.repository
+            .load_rationale(case_id)
             .await?
             .ok_or(GetError::NotFound(case_id))
     }

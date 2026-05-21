@@ -31,7 +31,9 @@ use crate::api::dlq::DlqAdminState;
 use crate::api::oidc::OidcVerifier;
 use crate::application::{GetVerificationUseCase, SubmitVerificationUseCase};
 use crate::config::Config;
-use crate::domain::{DeclarationSnapshot, VerificationCase, VerificationCaseId};
+use crate::domain::{
+    DeclarationSnapshot, DecisionRationale, VerificationCase, VerificationCaseId,
+};
 use crate::error::ServiceError;
 use crate::infrastructure::{OutboxAdminStore, PostgresVerificationRepository};
 // OBS-1: Prometheus metrics.
@@ -81,6 +83,10 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
     let protected = Router::new()
         .route("/v1/verifications", post(submit_verification))
         .route("/v1/verifications/{case_id}", get(get_verification))
+        .route(
+            "/v1/verifications/{case_id}/rationale",
+            get(get_verification_rationale),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
@@ -467,6 +473,57 @@ pub(crate) async fn get_verification(
         return Err(ServiceError::NotFound(case_id.to_string()));
     }
     Ok(Json(case))
+}
+
+/// TODO-049 — `GET /v1/verifications/{case_id}/rationale`. Returns the
+/// `DecisionRationale` persisted alongside the case. Tenancy gate is
+/// IDENTICAL to `get_verification` (FIND-004): admin OR
+/// `principal == declarant_principal`. A non-owner / non-admin gets
+/// 404 to avoid case-id enumeration. The rationale is the
+/// explainability anchor declarants are entitled to consult; an admin
+/// can read any.
+#[utoipa::path(
+    get,
+    path = "/v1/verifications/{case_id}/rationale",
+    tag = "verifications",
+    operation_id = "getVerificationRationale",
+    params(("case_id" = String, Path, format = "uuid", description = "Verification case UUID")),
+    responses(
+        (status = 200, description = "Decision rationale: stage-by-stage reasoning, fusion chain, and the lane thresholds applied at adjudication time", body = serde_json::Value),
+        (status = 401, description = "Authentication required", body = ErrorEnvelope),
+        (status = 404, description = "Case or rationale not found OR caller is neither owner nor admin (TODO-049 mirrors FIND-004; no enumeration via 403)", body = ErrorEnvelope),
+        (status = 500, description = "Internal failure", body = ErrorEnvelope),
+    ),
+    security(
+        ("bearerAuth" = []),
+        ("devPrincipalHeader" = []),
+    ),
+)]
+#[tracing::instrument(skip(state))]
+pub(crate) async fn get_verification_rationale(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::api::auth::Principal>,
+    Path(case_id): Path<Uuid>,
+) -> Result<Json<DecisionRationale>, ServiceError> {
+    // Load the case first so the tenancy predicate runs against
+    // `declarant_principal`. Mirror of `get_verification`.
+    let case = state.get_usecase.execute(VerificationCaseId(case_id)).await?;
+    if !is_admin(&state.admin_principals, &principal)
+        && case.declaration.declarant_principal != principal.subject
+    {
+        tracing::warn!(
+            actor = %principal.subject,
+            owner = %case.declaration.declarant_principal,
+            case_id = %case_id,
+            "GET verification rationale refused — non-owner, non-admin"
+        );
+        return Err(ServiceError::NotFound(case_id.to_string()));
+    }
+    let rationale = state
+        .get_usecase
+        .execute_rationale(VerificationCaseId(case_id))
+        .await?;
+    Ok(Json(rationale))
 }
 
 /// FIND-002 (audit Sprint 0). `submit_verification` is operator-only.

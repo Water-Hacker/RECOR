@@ -28,6 +28,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder
 use utoipa::{Modify, OpenApi};
 use utoipa_scalar::{Scalar, Servable};
 
+use crate::api::dlq::{self, DlqItem, ListDlqResponse, ReplayDlqResponse};
 use crate::api::dto::{
     DissolveEntityRequest, DissolveResponse, EntityTypeDto, ErrorBody, ErrorEnvelope,
     GetEntityResponse, HealthzResponse, ReadyzResponse, RegisterEntityRequest,
@@ -58,6 +59,7 @@ use crate::domain::EntityId;
     tags(
         (name = "entities", description = "Legal-entity registration, projection, and lifecycle."),
         (name = "system", description = "Liveness and readiness probes."),
+        (name = "internal", description = "Operator-only DLQ administration. Admin-allowlist gated; refuses when ADMIN_PRINCIPALS is empty (D17 + D14)."),
     ),
     paths(
         rest::healthz,
@@ -67,6 +69,8 @@ use crate::domain::EntityId;
         rest::search_entities,
         rest::update_entity_handler,
         rest::dissolve_entity_handler,
+        dlq::list_dlq,
+        dlq::replay_dlq,
     ),
     components(
         schemas(
@@ -82,6 +86,10 @@ use crate::domain::EntityId;
             // System DTOs
             HealthzResponse,
             ReadyzResponse,
+            // DLQ admin DTOs (TODO-039)
+            ListDlqResponse,
+            DlqItem,
+            ReplayDlqResponse,
             // Cross-cutting envelopes
             ErrorEnvelope,
             ErrorBody,

@@ -6,7 +6,7 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::application::port::{RepositoryError, VerificationRepository};
-use crate::domain::{VerificationCase, VerificationCaseId};
+use crate::domain::{DecisionRationale, VerificationCase, VerificationCaseId};
 
 pub struct PostgresVerificationRepository {
     pool: PgPool,
@@ -21,15 +21,49 @@ impl PostgresVerificationRepository {
         &self.pool
     }
 
+    /// Run the bundled migrations. The production-safe set is always
+    /// applied. Dev-only seed migrations (under `./migrations_dev/`) are
+    /// applied only when `RECOR_DEV_MIGRATIONS=true` and the
+    /// `mock-bunec` cargo feature is enabled at compile time.
     pub async fn run_migrations(&self) -> Result<(), sqlx::migrate::MigrateError> {
-        sqlx::migrate!("./migrations").run(&self.pool).await
+        sqlx::migrate!("./migrations").run(&self.pool).await?;
+        self.run_dev_migrations_if_enabled().await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "mock-bunec")]
+    async fn run_dev_migrations_if_enabled(&self) -> Result<(), sqlx::migrate::MigrateError> {
+        let opt_in = std::env::var("RECOR_DEV_MIGRATIONS")
+            .ok()
+            .as_deref()
+            == Some("true");
+        if !opt_in {
+            tracing::info!(
+                "mock-bunec feature compiled in but RECOR_DEV_MIGRATIONS!=true; skipping dev seed migrations"
+            );
+            return Ok(());
+        }
+        tracing::warn!(
+            "RECOR_DEV_MIGRATIONS=true — applying dev-only seed migrations (mock_bunec_persons fixtures). \
+             Production deploys MUST NOT set this env var."
+        );
+        sqlx::migrate!("./migrations_dev").run(&self.pool).await
+    }
+
+    #[cfg(not(feature = "mock-bunec"))]
+    async fn run_dev_migrations_if_enabled(&self) -> Result<(), sqlx::migrate::MigrateError> {
+        Ok(())
     }
 }
 
 #[async_trait]
 impl VerificationRepository for PostgresVerificationRepository {
-    #[instrument(skip(self, case), fields(case_id = %case.case_id, lane = case.lane.as_str()))]
-    async fn save_case(&self, case: &VerificationCase) -> Result<(), RepositoryError> {
+    #[instrument(skip(self, case, rationale), fields(case_id = %case.case_id, lane = case.lane.as_str()))]
+    async fn save_case(
+        &self,
+        case: &VerificationCase,
+        rationale: Option<&DecisionRationale>,
+    ) -> Result<(), RepositoryError> {
         let mut tx = self.pool.begin().await?;
         let payload = serde_json::to_value(case)?;
         let authenticity_belief = case.fused_authenticity.belief_true();
@@ -65,15 +99,15 @@ impl VerificationRepository for PostgresVerificationRepository {
         .execute(&mut *tx)
         .await?;
 
-        // Outbox row — slim writeback contract consumed by the Declaration
-        // service's POST /v1/internal/verification-outcomes endpoint.
-        // The full case stays in `verification_cases.case_payload`; the
-        // outbox event carries only what the Declaration aggregate needs
-        // to transition `verification_state`. Keeping the payload tight
-        // makes the cross-service contract explicit and stable.
+        // TODO-050 — propagate the originating Submit's correlation_id
+        // through the writeback envelope. The declaration service's
+        // inbound handler refuses any envelope whose correlation_id
+        // disagrees with the originating Submitted event's id
+        // (D14 fail-closed against forged or mis-routed writebacks).
         let writeback_payload = serde_json::json!({
             "case_id": case.case_id.0,
             "declaration_id": case.declaration.declaration_id,
+            "correlation_id": case.declaration.correlation_id,
             "lane": case.lane.as_str(),
             "fused_authenticity_belief": authenticity_belief,
             "fused_authenticity_plausibility": authenticity_plausibility,
@@ -104,6 +138,35 @@ impl VerificationRepository for PostgresVerificationRepository {
         .execute(&mut *tx)
         .await?;
 
+        // TODO-049 — persist the per-case `DecisionRationale` in the
+        // same transaction. The COMP-2 immutability triggers
+        // (migration 0009) refuse UPDATE/DELETE/TRUNCATE post-write;
+        // ON CONFLICT DO NOTHING keeps idempotent replays of the same
+        // case_id from breaking the immutability contract.
+        //
+        // Runtime-checked `sqlx::query()` here so this change does
+        // not require regenerating the `.sqlx/` cache. The follow-up
+        // `R-VER-SQLX-CACHE` ticket flips this to `sqlx::query!` once
+        // the cache regeneration step is wired into CI.
+        if let Some(r) = rationale {
+            let rationale_json = serde_json::to_value(r)?;
+            sqlx::query(
+                r#"
+                INSERT INTO decision_rationales (
+                    case_id, declaration_id, rationale_payload, composed_at
+                )
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (case_id) DO NOTHING
+                "#,
+            )
+            .bind(case.case_id.0)
+            .bind(case.declaration.declaration_id)
+            .bind(rationale_json)
+            .bind(r.composed_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
         Ok(())
     }
@@ -125,6 +188,25 @@ impl VerificationRepository for PostgresVerificationRepository {
         }
     }
 
+    #[instrument(skip(self), fields(case_id = %id))]
+    async fn load_rationale(
+        &self,
+        id: VerificationCaseId,
+    ) -> Result<Option<DecisionRationale>, RepositoryError> {
+        // TODO-049 / R-VER-SQLX-CACHE: runtime-checked for the same
+        // reason as the insert above.
+        let row_opt: Option<(serde_json::Value,)> = sqlx::query_as(
+            r#"SELECT rationale_payload FROM decision_rationales WHERE case_id = $1"#,
+        )
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row_opt {
+            None => Ok(None),
+            Some((payload,)) => Ok(Some(serde_json::from_value(payload)?)),
+        }
+    }
+
     #[instrument(skip(self), fields(declaration_id = %declaration_id))]
     async fn case_for_declaration(
         &self,
@@ -137,5 +219,54 @@ impl VerificationRepository for PostgresVerificationRepository {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row_opt.map(|r| VerificationCaseId(r.case_id)))
+    }
+
+    #[instrument(skip(self, beneficial_owners), fields(declaration_id = %declaration_id))]
+    async fn upsert_declaration_projection(
+        &self,
+        declaration_id: Uuid,
+        entity_id: Uuid,
+        declarant_principal: &str,
+        submitted_at: time::OffsetDateTime,
+        effective_from: time::Date,
+        beneficial_owners: serde_json::Value,
+        entity_jurisdiction: Option<&str>,
+    ) -> Result<(), RepositoryError> {
+        // TODO-061 closure: writeback subscriber side. Stage 6 pattern
+        // queries (src/application/stages/stage6_patterns.rs) read
+        // `declaration_projection`; until this method ran the table
+        // was empty, so every signature returned vacuous results and
+        // the Stage-6 BBA degenerated to the prior.
+        //
+        // Idempotency: ON CONFLICT DO UPDATE so re-running the use
+        // case against the same declaration_id refreshes the row
+        // rather than failing.
+        sqlx::query(
+            r#"
+            INSERT INTO declaration_projection (
+                declaration_id, entity_id, declarant_principal,
+                submitted_at, effective_from, beneficial_owners,
+                entity_jurisdiction, has_bunec_activity
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+            ON CONFLICT (declaration_id) DO UPDATE SET
+                entity_id           = EXCLUDED.entity_id,
+                declarant_principal = EXCLUDED.declarant_principal,
+                submitted_at        = EXCLUDED.submitted_at,
+                effective_from      = EXCLUDED.effective_from,
+                beneficial_owners   = EXCLUDED.beneficial_owners,
+                entity_jurisdiction = EXCLUDED.entity_jurisdiction
+            "#,
+        )
+        .bind(declaration_id)
+        .bind(entity_id)
+        .bind(declarant_principal)
+        .bind(submitted_at)
+        .bind(effective_from)
+        .bind(beneficial_owners)
+        .bind(entity_jurisdiction)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 }

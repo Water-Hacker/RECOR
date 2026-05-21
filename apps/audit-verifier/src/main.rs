@@ -8,7 +8,7 @@ use audit_verifier::{
     config::VerifierConfig,
     fabric_client::HttpFabricClient,
     handlers::{router, AppState},
-    projection::PostgresProjectionRepo,
+    projection::{DeclarationApiProjection, PostgresProjectionRepo, ProjectionRepo},
 };
 use recor_auth_oidc::{OidcVerifier, OidcVerifierBuilder};
 use secrecy::ExposeSecret;
@@ -50,7 +50,32 @@ async fn main() -> anyhow::Result<()> {
         )
         .context("init fabric client")?,
     );
-    let projection = Arc::new(PostgresProjectionRepo::new(pool));
+    // TODO-041: prefer the Declaration service HTTP API over the
+    // direct DB read when `DECLARATION_API_URL` is configured. Empty
+    // value (the dev posture) falls back to the Postgres projection
+    // repo so local development without the Declaration service still
+    // works. Production deployments MUST set DECLARATION_API_URL —
+    // the direct Postgres read is a cross-service contract leak
+    // (D17 zero-trust violation) and the fallback is dev-only.
+    let declaration_api_url = std::env::var("DECLARATION_API_URL").unwrap_or_default();
+    let declaration_api_bearer = std::env::var("DECLARATION_API_TOKEN")
+        .or_else(|_| std::env::var("DECLARATION_API_BEARER_TOKEN"))
+        .unwrap_or_default();
+    let projection: Arc<dyn ProjectionRepo> = if !declaration_api_url.is_empty() {
+        info!(
+            declaration_api = %declaration_api_url,
+            "audit-verifier using DeclarationApiProjection (HTTP)"
+        );
+        Arc::new(DeclarationApiProjection::new(
+            declaration_api_url,
+            declaration_api_bearer,
+        ))
+    } else {
+        tracing::warn!(
+            "DECLARATION_API_URL not set; falling back to direct Postgres projection read (dev-only posture)"
+        );
+        Arc::new(PostgresProjectionRepo::new(pool))
+    };
 
     // FIND-001 (audit Sprint 0): construct the OIDC verifier so the
     // verify endpoint can authenticate every caller. Outside dev, an

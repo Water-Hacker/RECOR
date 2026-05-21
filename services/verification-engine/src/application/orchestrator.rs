@@ -5,6 +5,12 @@
 //!   Stages 2-7 (Evidence sources) — produce BPAs, can return InsufficientEvidence
 //!   Stage 8 (Fusion)              — combines authenticity + risk BPAs via Dempster
 //!   Stage 9 (Lane Routing)        — applies thresholds, decides green/yellow/red
+//!
+//! TODO-049 — after fusion + lane routing, the orchestrator composes a
+//! `DecisionRationale` carrying the per-stage reasoning, the fusion
+//! chain, and the threshold snapshot used at adjudication time. The
+//! rationale is persisted alongside the case (same transaction) so
+//! every adjudicated case has an immutable, defensible explanation.
 
 use std::sync::Arc;
 
@@ -12,13 +18,22 @@ use time::OffsetDateTime;
 use tracing::{info, instrument, warn};
 
 use crate::domain::{
-    BasicProbabilityAssignment, DeclarationSnapshot, LaneDecision, LaneThresholds, Stage, StageId,
-    StageOutcome, StageOutcomeKind, VerificationCase, VerificationCaseId,
+    BasicProbabilityAssignment, DeclarationSnapshot, DecisionRationale, LaneDecision,
+    LaneThresholds, Stage, StageId, StageOutcome, StageOutcomeKind, VerificationCase,
+    VerificationCaseId,
 };
 
 pub struct PipelineOrchestrator {
     stages: Vec<Arc<dyn Stage>>,
     thresholds: LaneThresholds,
+}
+
+/// Result of one pipeline run: the case plus the rationale composed
+/// from its stages, fusion chain, and lane thresholds. The two are
+/// always emitted as a pair so the caller persists them atomically.
+pub struct PipelineOutcome {
+    pub case: VerificationCase,
+    pub rationale: DecisionRationale,
 }
 
 impl PipelineOrchestrator {
@@ -29,8 +44,16 @@ impl PipelineOrchestrator {
         Self { stages: sorted, thresholds }
     }
 
+    /// Expose the thresholds used for adjudication. The rationale
+    /// composer captures these as part of every case so a calibration
+    /// change does not retroactively shift the audit interpretation
+    /// of past cases.
+    pub fn thresholds(&self) -> LaneThresholds {
+        self.thresholds
+    }
+
     #[instrument(skip_all, fields(declaration_id = %declaration.declaration_id))]
-    pub async fn run(&self, declaration: DeclarationSnapshot) -> VerificationCase {
+    pub async fn run(&self, declaration: DeclarationSnapshot) -> PipelineOutcome {
         let case_id = VerificationCaseId::new();
         let started = OffsetDateTime::now_utc();
         let start_instant = std::time::Instant::now();
@@ -89,7 +112,21 @@ impl PipelineOrchestrator {
             "pipeline complete"
         );
 
-        VerificationCase {
+        // TODO-049 — compose the rationale BEFORE the case takes
+        // ownership of `declaration` so the borrow checker permits
+        // both. The composer is pure; no I/O on this path.
+        let declaration_id = declaration.declaration_id;
+        let rationale = DecisionRationale::compose(
+            case_id,
+            declaration_id,
+            &outcomes,
+            fused_authenticity,
+            fused_risk,
+            lane,
+            self.thresholds,
+        );
+
+        let case = VerificationCase {
             case_id,
             declaration,
             stage_outcomes: outcomes,
@@ -99,7 +136,9 @@ impl PipelineOrchestrator {
             created_at: started,
             completed_at: completed,
             total_duration_ms,
-        }
+        };
+
+        PipelineOutcome { case, rationale }
     }
 }
 

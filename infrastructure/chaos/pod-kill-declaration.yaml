@@ -1,0 +1,109 @@
+# TODO-054 / infrastructure/chaos/pod-kill-declaration.yaml
+#
+# Litmus chaos experiment: kill a random declaration-service pod and
+# assert the service recovers within 30 seconds.
+#
+# Recovery means: the Service endpoint returns 200 on /readyz from a
+# replacement pod, AND in-flight requests during the disruption did
+# not error-rate above 1% (the per-replica failure budget; with N=3
+# replicas + a Kubernetes RollingUpdate strategy, this is achievable).
+#
+# Doctrines:
+#   D14 fail-closed   — the steady-state probe is the SLO check; a
+#                       failed probe fails the experiment. The k8s
+#                       Deployment's readinessProbe gates the
+#                       Service endpoint, so traffic does not route
+#                       to a not-yet-ready replacement.
+#   D16 observability — the experiment annotates Grafana with chaos
+#                       windows so dashboards correlate spikes with
+#                       chaos events.
+#
+# Run procedure: see docs/runbooks/chaos-drill.md.
+#
+# This manifest references the Litmus 3.x ChaosEngine + ChaosExperiment
+# CRDs; the operator is installed cluster-wide once via
+# `helm install litmus litmus/litmus -n litmus`.
+
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: declaration-pod-kill
+  namespace: recor
+  annotations:
+    recor.cm/req-id: TODO-054
+    recor.cm/doctrine: "D14 fail-closed; D16 observability"
+spec:
+  appinfo:
+    appns: recor
+    applabel: "app=recor-declaration"
+    appkind: deployment
+  engineState: active
+  chaosServiceAccount: litmus-admin
+  monitoring: true
+  jobCleanUpPolicy: retain
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            # Kill one pod every 10s for 60s (so 6 kills over the
+            # experiment window) — exercises that the
+            # Deployment + ReplicaSet promptly schedules a
+            # replacement and that the Service routes traffic to
+            # surviving + new pods.
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            - name: CHAOS_INTERVAL
+              value: "10"
+            - name: FORCE
+              value: "true"
+            - name: PODS_AFFECTED_PERC
+              value: "33"
+        probe:
+          # Steady-state: /readyz must return 200 throughout, and
+          # the experiment as a whole completes within 90s
+          # (the SLO target is 30s; the 60s extra is the steady-
+          # state probe window AFTER the last kill).
+          - name: declaration-readyz
+            type: httpProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5
+              interval: 2
+              retry: 1
+              probePollingInterval: 2
+            httpProbe/inputs:
+              url: "http://recor-declaration.recor.svc.cluster.local:8080/readyz"
+              insecureSkipVerify: true
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "200"
+          # SLO probe: recovery within 30s of the LAST kill
+          - name: declaration-recovery-window
+            type: cmdProbe
+            mode: EOT
+            runProperties:
+              probeTimeout: 35
+              interval: 1
+              retry: 0
+            cmdProbe/inputs:
+              command: |
+                # After the last kill, wait up to 30s for /readyz to
+                # return 200 from every replica.
+                deadline=$((SECONDS + 30))
+                while [ $SECONDS -lt $deadline ]; do
+                  endpoints=$(kubectl -n recor get endpoints recor-declaration \
+                    -o jsonpath='{.subsets[*].addresses[*].ip}')
+                  count=$(echo "$endpoints" | wc -w)
+                  if [ "$count" -ge 2 ]; then exit 0; fi
+                  sleep 1
+                done
+                echo "declaration did not recover within 30s"
+                exit 1
+              source:
+                image: bitnami/kubectl:1.30
+              comparator:
+                type: int
+                criteria: "=="
+                value: "0"

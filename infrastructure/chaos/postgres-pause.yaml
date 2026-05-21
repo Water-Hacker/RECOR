@@ -1,0 +1,112 @@
+# TODO-054 / infrastructure/chaos/postgres-pause.yaml
+#
+# Litmus chaos experiment: SIGSTOP the Postgres process backing the
+# declaration service for 30s and assert:
+#
+#   1. Declaration /readyz returns 503 within 10s of the pause
+#      (the readyz probe queries the DB pool and times out).
+#   2. POST /v1/declarations returns 503 (Service Unavailable)
+#      during the pause — NOT 500 (Internal Server Error). The
+#      distinction matters: 503 with a Retry-After header is a
+#      retriable error, 500 is not.
+#   3. After SIGCONT, both endpoints recover within 30s.
+#
+# This is the canonical "the database is gone" drill. The acceptance
+# criterion is the 503-vs-500 distinction, because the difference is
+# the consumer's retry posture and our SLO documentation contract.
+#
+# Doctrines:
+#   D13 idempotency  — in-flight requests during the pause may be
+#                      retried by the client; idempotency must hold.
+#   D14 fail-closed  — 503 with Retry-After is the contract; an
+#                      uncaught 500 is a violation.
+#   D16 observability — pause windows are annotated on Grafana so
+#                       the dashboard shows the cause of the spike.
+#
+# Run procedure: see docs/runbooks/chaos-drill.md § postgres-pause.
+
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: postgres-pause-declaration
+  namespace: recor
+  annotations:
+    recor.cm/req-id: TODO-054
+    recor.cm/doctrine: "D13 idempotency; D14 fail-closed; D16 observability"
+spec:
+  appinfo:
+    appns: recor
+    applabel: "app=postgres-declaration"
+    appkind: statefulset
+  engineState: active
+  chaosServiceAccount: litmus-admin
+  monitoring: true
+  jobCleanUpPolicy: retain
+  experiments:
+    - name: pod-io-stress
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "30"
+            # SIGSTOP the postgres process to simulate a hard pause
+            # (e.g. backup-related fsync stall). The container stays
+            # up; only the postgres process is paused.
+            - name: PROCESS_NAMES
+              value: "postgres"
+            - name: SIGNAL
+              value: "STOP"
+            - name: KILL_COUNT
+              value: "1"
+        probe:
+          # During the pause: declaration /readyz returns 503.
+          - name: declaration-readyz-degraded
+            type: httpProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5
+              interval: 5
+              retry: 0
+              probePollingInterval: 5
+            httpProbe/inputs:
+              url: "http://recor-declaration.recor.svc.cluster.local:8080/readyz"
+              insecureSkipVerify: true
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "503"
+          # During the pause: POST /v1/declarations returns 503
+          # (NOT 500). A 500 fails this probe and the experiment.
+          - name: declaration-submit-fail-closed
+            type: httpProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5
+              interval: 10
+              retry: 0
+              probePollingInterval: 10
+            httpProbe/inputs:
+              url: "http://recor-declaration.recor.svc.cluster.local:8080/v1/declarations"
+              insecureSkipVerify: true
+              method:
+                post:
+                  contentType: application/json
+                  body: '{"canonical_form":{},"attestation_hex":""}'
+                  criteria: "=="
+                  responseCode: "503"
+          # Recovery: post-SIGCONT, both probes go green within 30s.
+          - name: declaration-recovery
+            type: httpProbe
+            mode: EOT
+            runProperties:
+              probeTimeout: 30
+              interval: 2
+              retry: 0
+              probePollingInterval: 2
+            httpProbe/inputs:
+              url: "http://recor-declaration.recor.svc.cluster.local:8080/readyz"
+              insecureSkipVerify: true
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "200"

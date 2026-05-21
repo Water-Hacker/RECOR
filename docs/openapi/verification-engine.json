@@ -473,6 +473,75 @@
           }
         ]
       }
+    },
+    "/v1/verifications/{case_id}/rationale": {
+      "get": {
+        "tags": [
+          "verifications"
+        ],
+        "summary": "TODO-049 — `GET /v1/verifications/{case_id}/rationale`. Returns the\n`DecisionRationale` persisted alongside the case. Tenancy gate is\nIDENTICAL to `get_verification` (FIND-004): admin OR\n`principal == declarant_principal`. A non-owner / non-admin gets\n404 to avoid case-id enumeration. The rationale is the\nexplainability anchor declarants are entitled to consult; an admin\ncan read any.",
+        "operationId": "getVerificationRationale",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "description": "Verification case UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decision rationale: stage-by-stage reasoning, fusion chain, and the lane thresholds applied at adjudication time",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case or rationale not found OR caller is neither owner nor admin (TODO-049 mirrors FIND-004; no enumeration via 403)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
     }
   },
   "components": {

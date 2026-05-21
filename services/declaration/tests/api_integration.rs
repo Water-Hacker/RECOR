@@ -511,6 +511,359 @@ async fn by_principal_endpoint_returns_empty_for_first_time_caller() {
     );
 }
 
+// ─── TODO-032 / TODO-034 — GDPR data-subject rights + Art. 30 register
+//
+// Tests below exercise the GDPR surface end-to-end against a real
+// Postgres (testcontainers). They mirror the by-principal tests above
+// for the export endpoint, then exercise the erasure-restriction
+// handler and the Art. 30 admin register seeded by migration 0021.
+
+async fn spawn_service_with_admin(admin: &str) -> TestService {
+    // A clone of spawn_service that populates the admin allowlist so
+    // the GDPR admin surfaces (`/v1/internal/gdpr/...` and the
+    // `?principal=...` override on `/v1/me/export`) can be exercised.
+    let postgres_container = Postgres::default()
+        .with_tag("17-alpine")
+        .start()
+        .await
+        .expect("start postgres container");
+    let port = postgres_container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("postgres port");
+    let database_url =
+        format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("connect to postgres");
+
+    let repository = Arc::new(PostgresDeclarationRepository::new(pool.clone()));
+    repository.run_migrations().await.expect("migrations");
+
+    let submit = Arc::new(SubmitDeclarationUseCase::new(repository.clone()));
+    let get = Arc::new(GetDeclarationUseCase::new(repository.clone()));
+    let record_verification =
+        Arc::new(RecordVerificationOutcomeUseCase::new(repository.clone()));
+    let supersede = Arc::new(SupersedeDeclarationUseCase::new(repository.clone()));
+    let amend = Arc::new(AmendDeclarationUseCase::new(repository.clone()));
+    let correct = Arc::new(CorrectDeclarationUseCase::new(repository.clone()));
+    let list_by_principal =
+        Arc::new(ListByPrincipalUseCase::new(repository.clone()));
+    let outbox_admin = Arc::new(OutboxAdminStore::new(pool.clone()));
+    let idempotency = Arc::new(IdempotencyStore::new(pool));
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    let addr = listener.local_addr().expect("local_addr");
+    drop(listener);
+    let bind_addr = format!("127.0.0.1:{}", addr.port());
+
+    let cfg = test_config(&bind_addr, &database_url);
+    let mut admin_set = std::collections::HashSet::new();
+    admin_set.insert(admin.to_string());
+
+    let app_state = AppState {
+        submit_usecase: submit,
+        get_usecase: get,
+        record_verification_usecase: record_verification,
+        supersede_usecase: supersede,
+        amend_usecase: amend,
+        correct_usecase: correct,
+        list_by_principal_usecase: list_by_principal,
+        idempotency,
+        outbox_admin,
+        base_url: format!("http://{bind_addr}"),
+        is_dev: true,
+        idempotency_ttl_seconds: 3600,
+        oidc: None,
+        metrics: recor_declaration::metrics::Metrics::new().expect("metrics registry"),
+        admin_principals: std::sync::Arc::new(admin_set),
+    };
+    let router = recor_declaration::api::router(app_state, &cfg, true);
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .expect("rebind for axum");
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("axum serve");
+    });
+
+    let client = reqwest::Client::new();
+    for _ in 0..40 {
+        if let Ok(resp) = client
+            .get(&format!("http://{bind_addr}/healthz"))
+            .send()
+            .await
+        {
+            if resp.status() == StatusCode::OK {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    TestService {
+        base_url: format!("http://{bind_addr}"),
+        _postgres: postgres_container,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn gdpr_export_returns_envelope_with_declarations_and_empty_requests() {
+    // TODO-032: GET /v1/me/export returns a $type-tagged envelope; the
+    // declarations array is populated from the data-subject's own
+    // submissions, and the two GDPR-rights arrays are empty until the
+    // subject lodges a request.
+    let svc = spawn_service().await;
+    let client = reqwest::Client::new();
+    let key = SigningKey::from_bytes(&[200u8; 32]);
+    let principal = "spiffe://recor.cm/gdpr-export-subject";
+
+    let body = build_request_body(
+        principal,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        &key,
+    );
+    let resp = client
+        .post(format!("{}/v1/declarations", svc.base_url))
+        .header("x-recor-dev-principal", principal)
+        .json(&body)
+        .send()
+        .await
+        .expect("post declaration");
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = client
+        .get(format!("{}/v1/me/export", svc.base_url))
+        .header("x-recor-dev-principal", principal)
+        .send()
+        .await
+        .expect("export");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("export body");
+    assert_eq!(payload["$type"], json!("RecorGdprExport"));
+    assert_eq!(payload["format_version"], json!("1.0"));
+    assert_eq!(payload["data_subject_principal"], json!(principal));
+    assert_eq!(
+        payload["declarations"].as_array().map(|a| a.len()),
+        Some(1),
+        "export should carry the data subject's one declaration"
+    );
+    assert!(
+        payload["rectification_requests"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "no rectifications lodged yet"
+    );
+    assert!(
+        payload["erasure_restriction_requests"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "no erasure-restriction requests lodged yet"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn gdpr_erasure_restriction_refuses_with_400_and_records_restriction() {
+    // TODO-032: POST /v1/me/erasure-restriction MUST return 400 with
+    // `erasure_not_permitted` (FATF R.24 retention beats Art. 17) AND
+    // record the restriction (Art. 18) so subsequent disclosures carry
+    // the notice.
+    let svc = spawn_service().await;
+    let client = reqwest::Client::new();
+    let key = SigningKey::from_bytes(&[201u8; 32]);
+    let principal = "spiffe://recor.cm/gdpr-erasure-subject";
+
+    let declaration_id = Uuid::now_v7();
+    let body = build_request_body(
+        principal,
+        declaration_id,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        &key,
+    );
+    let resp = client
+        .post(format!("{}/v1/declarations", svc.base_url))
+        .header("x-recor-dev-principal", principal)
+        .json(&body)
+        .send()
+        .await
+        .expect("post declaration");
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = client
+        .post(format!("{}/v1/me/erasure-restriction", svc.base_url))
+        .header("x-recor-dev-principal", principal)
+        .json(&json!({
+            "declaration_id": declaration_id,
+            "reason": "the platform should erase this — I no longer want to be on the register",
+        }))
+        .send()
+        .await
+        .expect("erasure-restriction post");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let payload: Value = resp.json().await.expect("erasure body");
+    assert_eq!(
+        payload["erasure_refusal_kind"],
+        json!("erasure_not_permitted"),
+        "erasure refusal kind MUST be the documented constant"
+    );
+    assert_eq!(
+        payload["restriction_state"],
+        json!("restriction_active"),
+        "restriction MUST be active after the call"
+    );
+    assert!(payload["request_id"].as_str().is_some());
+
+    let resp = client
+        .get(format!("{}/v1/me/export", svc.base_url))
+        .header("x-recor-dev-principal", principal)
+        .send()
+        .await
+        .expect("export");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("export body");
+    let restrictions = payload["erasure_restriction_requests"]
+        .as_array()
+        .expect("restrictions array on export");
+    assert_eq!(restrictions.len(), 1);
+    assert_eq!(restrictions[0]["state"], json!("restriction_active"));
+    assert_eq!(restrictions[0]["refusal_kind"], json!("erasure_not_permitted"));
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn gdpr_processing_register_is_seeded_by_migration_with_eight_rows() {
+    // TODO-034: migration 0021 seeds the Art. 30 register with at
+    // least 8 rows covering the platform's current activities. The
+    // admin listing endpoint returns them.
+    let admin = "spiffe://recor.cm/gdpr-admin";
+    let svc = spawn_service_with_admin(admin).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{}/v1/internal/gdpr/processing-records", svc.base_url))
+        .header("x-recor-dev-principal", admin)
+        .send()
+        .await
+        .expect("list processing records");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let payload: Value = resp.json().await.expect("list body");
+    let records = payload["records"]
+        .as_array()
+        .expect("records array");
+    assert!(
+        records.len() >= 8,
+        "seed migration 0021 must populate at least 8 rows; got {}",
+        records.len()
+    );
+
+    let fiu_row = records
+        .iter()
+        .find(|r| {
+            r["purpose"]
+                .as_str()
+                .map(|s| s.contains("Financial Intelligence Unit"))
+                .unwrap_or(false)
+        })
+        .expect("FIU disclosure row present");
+    assert!(
+        fiu_row["legal_basis"]
+            .as_str()
+            .map(|s| s.contains("R.24") && s.contains("R.40"))
+            .unwrap_or(false),
+        "FIU row must cite both R.24 c.24.9 and R.40 in legal_basis"
+    );
+    for r in records {
+        let txt = r["retention_period_text"].as_str().unwrap_or("");
+        assert!(
+            !txt.is_empty(),
+            "every register row must have a populated retention_period_text; got {r:?}"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn gdpr_processing_record_create_then_retire_round_trips() {
+    // TODO-034: admin can create a register row and retire it; the
+    // event log records both transitions. Non-admins are refused.
+    let admin = "spiffe://recor.cm/gdpr-admin-2";
+    let svc = spawn_service_with_admin(admin).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/internal/gdpr/processing-records", svc.base_url))
+        .header("x-recor-dev-principal", "spiffe://recor.cm/just-a-declarant")
+        .json(&json!({
+            "controller": "Acme",
+            "purpose": "test",
+            "legal_basis": "test",
+            "data_categories": [],
+            "subject_categories": [],
+            "recipients": [],
+            "retention_period_text": "30d",
+        }))
+        .send()
+        .await
+        .expect("non-admin create");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = client
+        .post(format!("{}/v1/internal/gdpr/processing-records", svc.base_url))
+        .header("x-recor-dev-principal", admin)
+        .json(&json!({
+            "controller": "RÉCOR back-office",
+            "purpose": "ad-hoc analytics processing",
+            "legal_basis": "GDPR Art. 6(1)(e) — public interest",
+            "data_categories": ["beneficial_owner_aggregate_stats"],
+            "subject_categories": ["aggregated_natural_persons"],
+            "recipients": ["RÉCOR back-office"],
+            "retention_period_text": "90 days",
+        }))
+        .send()
+        .await
+        .expect("admin create");
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: Value = resp.json().await.unwrap();
+    let record_id = created["record_id"].as_str().unwrap().to_string();
+    assert!(created["retired_at"].is_null());
+
+    let resp = client
+        .post(format!(
+            "{}/v1/internal/gdpr/processing-records/{record_id}/retire",
+            svc.base_url
+        ))
+        .header("x-recor-dev-principal", admin)
+        .send()
+        .await
+        .expect("retire");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let retired: Value = resp.json().await.unwrap();
+    assert!(
+        retired["retired_at"].as_str().is_some(),
+        "retired_at must be populated after retire"
+    );
+
+    let resp = client
+        .post(format!(
+            "{}/v1/internal/gdpr/processing-records/{record_id}/retire",
+            svc.base_url
+        ))
+        .header("x-recor-dev-principal", admin)
+        .send()
+        .await
+        .expect("double retire");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 // Silence unused-import warnings during incremental compile.
 #[allow(dead_code)]
 fn _force(_t: OffsetDateTime) {}

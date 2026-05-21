@@ -29,9 +29,14 @@
 //! - **D18 no secrets in logs** — feed URLs are config; no API keys
 //!   appear in tracing output.
 
-pub mod sanity_check;
+pub mod canonical;
+pub mod eu;
+pub mod icij;
 pub mod ingest_log;
 pub mod ofac;
+pub mod sanity_check;
+pub mod un;
 
-pub use sanity_check::{SanityCheckOutcome, sanity_check};
-pub use ingest_log::{IngestLogEntry, write_ingest_log};
+pub use canonical::canonicalise_name;
+pub use ingest_log::{write_ingest_log, IngestLogEntry};
+pub use sanity_check::{sanity_check, SanityCheckOutcome};

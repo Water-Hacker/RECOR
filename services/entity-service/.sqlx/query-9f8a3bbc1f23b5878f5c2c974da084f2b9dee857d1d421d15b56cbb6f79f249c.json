@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT arrangement_id,\n                   arrangement_kind,\n                   governing_law_jurisdiction,\n                   constitution_date,\n                   dissolution_date,\n                   retention_until,\n                   settlor_refs,\n                   trustee_refs,\n                   protector_refs,\n                   named_beneficiary_refs,\n                   class_beneficiary_specs,\n                   control_exercise_refs,\n                   aggregate_version,\n                   created_at,\n                   updated_at\n            FROM arrangements\n            WHERE arrangement_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "arrangement_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "arrangement_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "governing_law_jurisdiction",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "constitution_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 4,
+        "name": "dissolution_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 5,
+        "name": "retention_until",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 6,
+        "name": "settlor_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "trustee_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "protector_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "named_beneficiary_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "class_beneficiary_specs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "control_exercise_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 12,
+        "name": "aggregate_version",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9f8a3bbc1f23b5878f5c2c974da084f2b9dee857d1d421d15b56cbb6f79f249c"
+}

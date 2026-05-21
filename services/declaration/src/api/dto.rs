@@ -379,6 +379,14 @@ pub struct VerificationOutcomeRequest {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub completed_at: OffsetDateTime,
+    /// TODO-050 — correlation id of the originating Submit. Echoed by
+    /// the verification engine from the declaration snapshot it
+    /// received at submit time. Optional on the wire for back-compat
+    /// with pre-TODO-050 envelopes; the internal handler upgrades a
+    /// missing value to a 400 on new traffic (D14 fail-closed).
+    #[serde(default)]
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub correlation_id: Option<Uuid>,
 }
 
 impl VerificationOutcomeRequest {
@@ -391,6 +399,7 @@ impl VerificationOutcomeRequest {
             fused_authenticity_plausibility: self.fused_authenticity_plausibility,
             fused_risk_belief: self.fused_risk_belief,
             completed_at: self.completed_at,
+            correlation_id: self.correlation_id.unwrap_or_else(Uuid::nil),
         }
     }
 }

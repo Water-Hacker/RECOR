@@ -1,0 +1,108 @@
+{
+  "consumer": "CONAC",
+  "description": "CONAC anti-corruption audit — declaration audit verification",
+  "legal_basis": "FATF R.24 c.24.9; Cameroonian anti-corruption mandate — [CITATION NEEDED: cameroon-conac-mandate]",
+  "acr_required": "urn:recor:acr:ial2-aal2",
+  "interactions": [
+    {
+      "id": "conac-audit-verify-declaration",
+      "description": "CONAC verifies a declaration's audit receipt against the Fabric anchor",
+      "request": {
+        "method": "GET",
+        "path": "/v1/audit/verify/{declaration_id}",
+        "path_params": {
+          "declaration_id": "01960000-0000-7000-8000-000000000002"
+        },
+        "headers": {
+          "Authorization": "Bearer <conac-tier-a-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "declaration_id": "01960000-0000-7000-8000-000000000002",
+          "receipt_hash_hex": "present",
+          "on_chain_hash_hex": "present",
+          "match": true,
+          "fabric_block_number": "present",
+          "fabric_transaction_id": "present",
+          "verified_at": "present"
+        },
+        "body_rules": {
+          "match": {
+            "type": "boolean",
+            "note": "true = the receipt hash in the projection matches the on-chain anchor; false = integrity violation"
+          },
+          "receipt_hash_hex": {
+            "pattern": "^[0-9a-f]{64}$",
+            "note": "BLAKE3-256 hex of the canonical receipt bytes"
+          }
+        }
+      }
+    },
+    {
+      "id": "conac-audit-verify-tampered",
+      "description": "Audit verifier returns match=false when the on-chain hash does not match the projection",
+      "note": "This interaction documents the expected response for an integrity event — CONAC monitors for match=false as a signal of potential tampering.",
+      "request": {
+        "method": "GET",
+        "path": "/v1/audit/verify/{declaration_id}",
+        "path_params": {
+          "declaration_id": "01960000-0000-7000-8000-BADFACEBADF0"
+        },
+        "headers": {
+          "Authorization": "Bearer <conac-tier-a-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "match": false,
+          "mismatch_detail": "present"
+        },
+        "body_rules": {
+          "match": { "const": false },
+          "mismatch_detail": {
+            "note": "Human-readable description of what differed; redacted of PII per OPS-2"
+          }
+        }
+      }
+    },
+    {
+      "id": "conac-get-declaration-public-fields",
+      "description": "CONAC reads a declaration's public lifecycle fields (state, lane, timestamps)",
+      "request": {
+        "method": "GET",
+        "path": "/v1/declarations/{declaration_id}",
+        "path_params": {
+          "declaration_id": "01960000-0000-7000-8000-000000000002"
+        },
+        "headers": {
+          "Authorization": "Bearer <conac-tier-a-oidc-token>",
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "declaration_id": "01960000-0000-7000-8000-000000000002",
+          "entity_id": "present",
+          "state": "accepted",
+          "verification_lane": "green",
+          "submitted_at": "present",
+          "verified_at": "present"
+        },
+        "body_rules": {
+          "declarant_principal": {
+            "note": "Present for Tier A (CONAC) consumers; redacted for Tier B"
+          },
+          "beneficial_owners": {
+            "note": "Present for Tier A; Sovim-redacted (names/nationalities removed) for Tier B"
+          }
+        }
+      }
+    }
+  ]
+}

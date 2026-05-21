@@ -2,14 +2,24 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::domain::{VerificationCase, VerificationCaseId};
+use crate::domain::{DecisionRationale, VerificationCase, VerificationCaseId};
 
 #[async_trait]
 pub trait VerificationRepository: Send + Sync {
-    /// Persist a verification case atomically with an outbox row.
-    async fn save_case(&self, case: &VerificationCase) -> Result<(), RepositoryError>;
+    /// Persist a verification case atomically with an outbox row and,
+    /// when supplied, the per-case `DecisionRationale` (TODO-049).
+    /// `rationale` is `Option` so callers under construction (legacy
+    /// integration tests + the kafka consumer cutover path) can keep
+    /// the call site compiling while the rationale composer is wired
+    /// through; production callers always supply `Some(_)`.
+    async fn save_case(
+        &self,
+        case: &VerificationCase,
+        rationale: Option<&DecisionRationale>,
+    ) -> Result<(), RepositoryError>;
 
     /// Load a previously-persisted case by id.
     async fn load_case(
@@ -17,12 +27,38 @@ pub trait VerificationRepository: Send + Sync {
         id: VerificationCaseId,
     ) -> Result<Option<VerificationCase>, RepositoryError>;
 
+    /// TODO-049 — load the rationale persisted with the case, if any.
+    /// Production cases always have a rationale; the option accommodates
+    /// historic rows persisted before this migration shipped.
+    async fn load_rationale(
+        &self,
+        id: VerificationCaseId,
+    ) -> Result<Option<DecisionRationale>, RepositoryError>;
+
     /// Idempotent guard: has this declaration_id already been verified?
     /// Returns the existing case id, if any.
     async fn case_for_declaration(
         &self,
         declaration_id: Uuid,
     ) -> Result<Option<VerificationCaseId>, RepositoryError>;
+
+    /// TODO-061 closure: upsert the declaration_projection row that
+    /// Stage 6 pattern queries read. Idempotent; called by
+    /// `SubmitVerificationUseCase` BEFORE the orchestrator runs so
+    /// Stage 6 sees the current declaration plus any predecessors.
+    /// The payload is the full snapshot serialised to JSON so the
+    /// projection carries beneficial_owners as JSONB for the
+    /// signature queries.
+    async fn upsert_declaration_projection(
+        &self,
+        declaration_id: Uuid,
+        entity_id: Uuid,
+        declarant_principal: &str,
+        submitted_at: time::OffsetDateTime,
+        effective_from: time::Date,
+        beneficial_owners: serde_json::Value,
+        entity_jurisdiction: Option<&str>,
+    ) -> Result<(), RepositoryError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,4 +217,60 @@ impl From<sqlx::Error> for AdapterError {
     fn from(e: sqlx::Error) -> Self {
         Self::Backend(e.to_string())
     }
+}
+
+// ─── TODO-013-graph — declaration projection reader ────────────────────
+
+/// A trimmed `declaration_projection` row sufficient for Stage 7's
+/// drift / cross-entity rules. Mirrors the columns Stage 6 already
+/// reads (`declaration_projection` lives in this service's schema —
+/// migration 0006 — and is populated by the writeback subscriber).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationProjectionRow {
+    pub declaration_id: Uuid,
+    pub entity_id: Uuid,
+    pub declarant_principal: String,
+    pub submitted_at: OffsetDateTime,
+    /// The beneficial owners as `person_id`s; Stage 7 doesn't need the
+    /// full `OwnerSnapshot` shape for its set-difference logic, so the
+    /// reader projects to UUIDs at the boundary.
+    pub beneficial_owner_person_ids: Vec<Uuid>,
+}
+
+/// Read-side port for the declaration projection that the writeback
+/// subscriber populates. Stage 7's prior-declaration drift + cross-
+/// entity ownership convergence rules consult this port; the adapter
+/// (`infrastructure::PostgresDeclarationProjectionReader`) is the
+/// production wiring.
+///
+/// All methods take a `now`-style cutoff implicitly via the caller — the
+/// port does NOT filter by time; the caller composes time semantics.
+///
+/// D14 fail-closed: implementations MUST surface backend errors via
+/// `AdapterError::Backend`. Stage 7 treats an error as "no signal"
+/// (vacuous BPA + `InsufficientEvidence`) rather than fabricating a
+/// negative finding.
+#[async_trait]
+pub trait DeclarationProjectionReader: Send + Sync {
+    /// Return the most recent prior declarations made by the given
+    /// `declarant_principal`, excluding the supplied `current_declaration_id`.
+    /// Implementations cap the result set at `limit` rows ordered by
+    /// `submitted_at DESC`.
+    async fn prior_for_principal(
+        &self,
+        declarant_principal: &str,
+        current_declaration_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<DeclarationProjectionRow>, AdapterError>;
+
+    /// Return every projection row where `person_id` appears in the
+    /// `beneficial_owners` JSONB array, excluding the supplied
+    /// `current_entity_id` (so the caller sees only "other" entities
+    /// the person co-owns). Capped at `limit` rows.
+    async fn entities_containing_owner(
+        &self,
+        person_id: Uuid,
+        current_entity_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<DeclarationProjectionRow>, AdapterError>;
 }

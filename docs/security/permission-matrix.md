@@ -56,6 +56,15 @@ Notation:
 | `POST /v1/sanctions/{id}/escalate` (TODO-004) | n (401) | n (403) | n (403) | Y; allowlist + justification required | — | — | **IAL3** |
 | `POST /v1/sanctions/{id}/withdraw` (TODO-004) | n (401) | n (403) | n (403) | Y; allowlist + justification required | — | — | **IAL3** |
 | `GET /v1/sanctions/public` (TODO-004) | Y (cached 24h) | Y | Y | Y | — | — | — |
+| `GET /v1/me/export` (TODO-032) | n (401) | Y; returns the caller's own data envelope (`$type=RecorGdprExport`) | Y | Y; may pass `?principal=...` to export another subject's data | — | — | IAL1 |
+| `POST /v1/me/rectify` (TODO-032) | n (401) | Y if `declarant_principal == caller` on the targeted declaration else n (403/404); Idempotency-Key honoured | Y | Y | — | — | **IAL2** |
+| `POST /v1/me/erasure-restriction` (TODO-032) | n (401) | Y if `declarant_principal == caller` on the targeted declaration else n (403/404); response is **400 with `erasure_not_permitted`** (R.24 retention beats Art. 17); restriction-of-processing recorded per Art. 18 | Y | Y | — | — | **IAL2** |
+| `POST /v1/internal/rectification-requests/{id}/approve` (TODO-032) | n (401) | n (403) | n (403) | Y; allowlist required; ratifies the request but does NOT auto-submit a correction (D15 — the declarant must follow up with a Correct command bearing their attestation) | — | — | **IAL3** |
+| `POST /v1/internal/rectification-requests/{id}/reject` (TODO-032) | n (401) | n (403) | n (403) | Y; allowlist required; notes mandatory | — | — | **IAL3** |
+| `GET /v1/internal/gdpr/processing-records` (TODO-034) | n (401) | n (403) | n (403) | Y; allowlist required | — | — | IAL2 |
+| `POST /v1/internal/gdpr/processing-records` (TODO-034) | n (401) | n (403) | n (403) | Y; allowlist required; creates a new Art. 30 row + event | — | — | **IAL3** |
+| `GET /v1/internal/gdpr/processing-records/{id}` (TODO-034) | n (401) | n (403) | n (403) | Y; allowlist required | — | — | IAL2 |
+| `POST /v1/internal/gdpr/processing-records/{id}/retire` (TODO-034) | n (401) | n (403) | n (403) | Y; allowlist required; refuses on already-retired rows | — | — | **IAL3** |
 
 #### TODO-008 — FIU (ANIF + R.40 / Egmont MLAT) disclosure
 

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE arrangements\n        SET settlor_refs             = $2,\n            trustee_refs             = $3,\n            protector_refs           = $4,\n            named_beneficiary_refs   = $5,\n            class_beneficiary_specs  = $6,\n            control_exercise_refs    = $7,\n            aggregate_version        = $8,\n            updated_at               = NOW()\n        WHERE arrangement_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5ce2a31aa0c55c3a26db586939561ea24a84914cca8ceea12e938e5f606ba71b"
+}

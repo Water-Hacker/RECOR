@@ -193,3 +193,171 @@ async fn pipeline_is_idempotent_on_declaration_id() {
     .expect("case count query");
     assert_eq!(case_count, 1, "idempotency must not duplicate rows");
 }
+
+// ─── TODO-049 — DecisionRationale persistence round-trip ──────────────
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn rationale_lands_alongside_case_and_round_trips() {
+    use recor_verification_engine::application::VerificationRepository;
+    use recor_verification_engine::domain::VerificationCaseId;
+
+    let (_pg, pool) = bring_up_postgres().await;
+    let repository = Arc::new(PostgresVerificationRepository::new(pool.clone()));
+    repository.run_migrations().await.expect("migrations");
+
+    let bunec = Arc::new(PostgresMockBunec::new(pool.clone()));
+    let stages: Vec<Arc<dyn Stage>> = vec![
+        Arc::new(SchemaValidationStage::new()),
+        Arc::new(IdentityAuthenticationStage::new(bunec.clone())),
+        Arc::new(SanctionsStub::new()),
+        Arc::new(PepStub::new()),
+        Arc::new(AdverseMediaStub::new()),
+        Arc::new(PatternDetectionStub::new()),
+        Arc::new(CrossSourceStub::new()),
+    ];
+    let orchestrator =
+        Arc::new(PipelineOrchestrator::new(stages, LaneThresholds::default()));
+    let submit = SubmitVerificationUseCase::new(orchestrator, repository.clone());
+
+    let snapshot = build_snapshot();
+    let case = submit.execute(snapshot).await.expect("submit");
+
+    // Rationale row must exist for this case.
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM decision_rationales WHERE case_id = $1",
+    )
+    .bind(case.case_id.0)
+    .fetch_one(&pool)
+    .await
+    .expect("rationale count");
+    assert_eq!(count, 1, "exactly one rationale row per case (TODO-049)");
+
+    // Repository load path must return the rationale.
+    let loaded = repository
+        .load_rationale(VerificationCaseId(case.case_id.0))
+        .await
+        .expect("load rationale")
+        .expect("rationale exists");
+    assert_eq!(loaded.case_id, case.case_id);
+    assert_eq!(loaded.declaration_id, case.declaration.declaration_id);
+    assert_eq!(loaded.lane, case.lane);
+}
+
+// ─── TODO-061 / TODO-050 — writeback subscriber end-to-end ────────────
+
+#[tokio::test]
+#[ignore = "requires docker for testcontainers"]
+async fn writeback_subscriber_drains_outbox_to_subscriber() {
+    use recor_verification_engine::infrastructure::{
+        VerificationOutboxRelay, WritebackSubscriber,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    let (_pg, pool) = bring_up_postgres().await;
+    let repository = Arc::new(PostgresVerificationRepository::new(pool.clone()));
+    repository.run_migrations().await.expect("migrations");
+
+    // Stand up a tiny axum server that captures the inbound writeback.
+    let captured: Arc<std::sync::Mutex<Option<serde_json::Value>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let captured_clone = captured.clone();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    drop(listener);
+    let url = format!("http://{}/v1/internal/verification-outcomes", addr);
+
+    use axum::{routing::post, Router};
+    use axum::body::Bytes;
+    let app = Router::new().route(
+        "/v1/internal/verification-outcomes",
+        post({
+            let cap = captured_clone.clone();
+            move |body: Bytes| {
+                let cap = cap.clone();
+                async move {
+                    let v: serde_json::Value =
+                        serde_json::from_slice(&body).unwrap_or_default();
+                    *cap.lock().unwrap() = Some(v);
+                    axum::http::StatusCode::OK
+                }
+            }
+        }),
+    );
+    let bind = tokio::net::TcpListener::bind(addr).await.expect("rebind");
+    tokio::spawn(async move {
+        axum::serve(bind, app).await.expect("serve");
+    });
+
+    // Build a case via the full pipeline so the outbox row lands.
+    let bunec = Arc::new(PostgresMockBunec::new(pool.clone()));
+    let stages: Vec<Arc<dyn Stage>> = vec![
+        Arc::new(SchemaValidationStage::new()),
+        Arc::new(IdentityAuthenticationStage::new(bunec.clone())),
+        Arc::new(SanctionsStub::new()),
+        Arc::new(PepStub::new()),
+        Arc::new(AdverseMediaStub::new()),
+        Arc::new(PatternDetectionStub::new()),
+        Arc::new(CrossSourceStub::new()),
+    ];
+    let orchestrator =
+        Arc::new(PipelineOrchestrator::new(stages, LaneThresholds::default()));
+    let submit = SubmitVerificationUseCase::new(orchestrator, repository.clone());
+    let snapshot = build_snapshot();
+    let known_correlation = snapshot.correlation_id;
+    let case = submit.execute(snapshot).await.expect("submit");
+
+    // Run the relay against the in-test subscriber URL.
+    let subscriber = WritebackSubscriber {
+        name: "declaration-test-stub".to_string(),
+        url,
+        hmac_secret: "test-secret".to_string(),
+    };
+    let relay = VerificationOutboxRelay::new(pool.clone(), subscriber)
+        .with_poll_interval(std::time::Duration::from_millis(50))
+        .with_max_attempts(3);
+    let cancel = CancellationToken::new();
+    let cancel_run = cancel.clone();
+    let relay_handle = tokio::spawn(async move {
+        relay.run(cancel_run).await;
+    });
+
+    // Poll until the subscriber receives the writeback.
+    let mut got: Option<serde_json::Value> = None;
+    for _ in 0..40 {
+        if let Some(v) = captured.lock().unwrap().clone() {
+            got = Some(v);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    cancel.cancel();
+    let _ = relay_handle.await;
+    let envelope = got.expect("subscriber captured the writeback");
+
+    assert_eq!(
+        envelope["event_type"].as_str().unwrap(),
+        "verification.completed.v1"
+    );
+    let payload_case_id = envelope["payload"]["case_id"].as_str().unwrap();
+    assert_eq!(payload_case_id, case.case_id.0.to_string());
+    let payload_correlation = envelope["payload"]["correlation_id"].as_str().unwrap();
+    assert_eq!(
+        payload_correlation,
+        known_correlation.to_string(),
+        "TODO-050 — correlation_id of the originating Submit echoes through the writeback envelope"
+    );
+
+    // Outbox row is now marked dispatched.
+    let dispatched_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM verification_outbox WHERE aggregate_id = $1 AND dispatched_at IS NOT NULL",
+    )
+    .bind(case.declaration.declaration_id)
+    .fetch_one(&pool)
+    .await
+    .expect("dispatched count");
+    assert_eq!(
+        dispatched_count, 1,
+        "the writeback subscriber marks the outbox row dispatched (TODO-061)"
+    );
+}

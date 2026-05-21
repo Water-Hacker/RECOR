@@ -23,6 +23,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::api::auth::{auth_middleware, AuthConfig, Principal};
+use crate::api::dlq::DlqAdminState;
 use crate::api::dto::{
     ErrorEnvelope, GetPersonResponse, HealthzResponse, MergePersonsResponse,
     ReadyzResponse, RegisterPersonRequest, RegisterPersonResponse, SearchPersonsResponse,
@@ -35,6 +36,7 @@ use crate::application::{
 use crate::config::Config;
 use crate::domain::{MergePersons, PersonId};
 use crate::error::ServiceError;
+use crate::infrastructure::outbox_admin::OutboxAdminStore;
 use crate::infrastructure::postgres::IdempotencyStore;
 use crate::metrics::{metrics_handler, metrics_middleware, Metrics};
 
@@ -45,6 +47,9 @@ pub struct AppState {
     pub search_usecase: Arc<SearchPersonsUseCase>,
     pub merge_usecase: Arc<MergePersonsUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
+    /// TODO-040 — DLQ admin store. Surfaces dead-lettered outbox rows
+    /// the relay produces; reused by `/v1/internal/outbox-dlq*`.
+    pub outbox_admin: Arc<OutboxAdminStore>,
     pub base_url: String,
     pub is_dev: bool,
     pub idempotency_ttl_seconds: i64,
@@ -76,10 +81,33 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
             post(merge_persons),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            auth_state,
+            auth_state.clone(),
             auth_middleware,
         ))
         .with_state(state.clone());
+
+    // TODO-040 — DLQ admin endpoints. Same user-auth middleware as the
+    // protected routes; the handlers gate themselves on
+    // `admin_principals`. Empty list ⇒ both endpoints return 503.
+    let dlq_admin_state = DlqAdminState {
+        store: state.outbox_admin.clone(),
+        admin_principals: state.admin_principals.clone(),
+        metrics: state.metrics.clone(),
+    };
+    let admin = Router::new()
+        .route(
+            "/v1/internal/outbox-dlq",
+            get(crate::api::dlq::list_dlq),
+        )
+        .route(
+            "/v1/internal/outbox-dlq/{id}/replay",
+            post(crate::api::dlq::replay_dlq),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
+        .with_state(dlq_admin_state);
 
     let public = Router::new()
         .route("/healthz", get(healthz))
@@ -88,7 +116,7 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
 
     let openapi = crate::api::openapi::openapi_routes();
 
-    let app_routes = protected.merge(public).merge(openapi);
+    let app_routes = protected.merge(admin).merge(public).merge(openapi);
 
     let metrics_state = state.metrics.clone();
     let app_routes = app_routes.layer(axum::middleware::from_fn_with_state(

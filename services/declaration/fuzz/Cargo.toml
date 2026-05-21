@@ -1,0 +1,40 @@
+[package]
+name = "recor-declaration-fuzz"
+version = "0.0.1"
+edition = "2024"
+publish = false
+# This crate is excluded from the workspace so `cargo build --workspace`
+# does not attempt to compile libFuzzer-instrumented code on non-nightly
+# toolchains. Fuzzing is opt-in via the dedicated CI job or by running
+# `cargo +nightly fuzz run canonical_payload_deserialise` from within
+# this directory.
+
+[package.metadata]
+cargo-fuzz = true
+
+[[bin]]
+name = "canonical_payload_deserialise"
+path = "fuzz_targets/canonical_payload_deserialise.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+# The fuzz target depends only on the public API of the declaration crate.
+# The `libfuzzer-sys` crate wires in libFuzzer via Rust's sanitiser
+# build; `cargo fuzz` handles the compiler flags.
+libfuzzer-sys = "0.4"
+
+[dependencies.recor-declaration]
+path = ".."
+
+[profile.release]
+# Standard cargo-fuzz settings: debug info for crash symbolisation,
+# thin LTO for coverage instrumentation efficiency.
+debug = true
+lto = false
+opt-level = 3
+
+# Exclude this member from the workspace to avoid polluting workspace
+# resolution with the libFuzzer build flags.
+[workspace]

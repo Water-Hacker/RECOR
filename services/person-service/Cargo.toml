@@ -88,6 +88,14 @@ async-trait.workspace = true
 futures = "0.3"
 dotenvy.workspace = true
 
+# TODO-040: outbox relay HTTP delivery. The HMAC sign helper lives in
+# `recor-hmac-sig` (already pulled in for cross-service shape). Keeping
+# hmac/sha2 declared makes a future inbound-internal webhook trivial to
+# add without another Cargo.toml change.
+hmac.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+
 # OpenAPI 3.1 spec generation (DOC-1).
 utoipa.workspace = true
 utoipa-scalar.workspace = true
