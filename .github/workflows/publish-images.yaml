@@ -200,7 +200,7 @@ jobs:
       # (Linux Foundation lineage) and CycloneDX (OWASP lineage). The
       # action wraps syft; output is deterministic for a given digest.
       - name: generate SPDX SBOM
-        uses: anchore/sbom-action@v0.17.7
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: spdx-json
@@ -209,7 +209,7 @@ jobs:
           upload-release-assets: false
 
       - name: generate CycloneDX SBOM
-        uses: anchore/sbom-action@v0.17.7
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: cyclonedx-json
