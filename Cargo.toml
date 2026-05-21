@@ -147,7 +147,7 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 # derive from it. REST DTOs stay hand-written under utoipa (different
 # transport, different shape; see services/declaration/CLAUDE.md for
 # the OpenAPI-exemption rationale).
-tonic = "0.13"
+tonic = "0.14"
 tonic-build = "0.13"
 prost = "0.13"
 prost-types = "0.13"
