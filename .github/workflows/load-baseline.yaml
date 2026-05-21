@@ -1,0 +1,132 @@
+# TODO-053 / load-baseline.yaml — manual-dispatch capacity baseline.
+#
+# Brings up the dev compose stack
+# (services/declaration/docker-compose.integration.yaml), seeds
+# fixture data, and runs both k6 scripts under tools/load/. The HTML
+# report is uploaded as a workflow artifact so the result is the
+# auditable capacity-baseline ledger for the sprint.
+#
+# This workflow is NOT in the required-checks set referenced by
+# branch protection. The OBS-2 deferral pattern applies — promote
+# to required after 10 consecutive green runs against `main`.
+#
+# Trigger: workflow_dispatch only. Running this against every PR
+# would exhaust runner minutes for no marginal signal; the gate is
+# a documentation + capacity-tracking exercise, not a per-PR check.
+#
+# Doctrines:
+#   D14 fail-closed   — k6 thresholds in each script abort the run
+#                       on the first breach.
+#   D16 observability — the report is the artefact; it is uploaded
+#                       on every run, success or failure.
+#   D19 reproducible  — every dependency (k6, docker image SHA, k6
+#                       script) is pinned; same input ⇒ same output
+#                       on the same hardware.
+
+name: load-baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "k6 scenario duration (e.g. 5m, 30s)"
+        required: false
+        default: "5m"
+
+permissions:
+  contents: read
+
+jobs:
+  load-baseline:
+    name: "load / baseline-rig"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install k6
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.51.0/k6-v0.51.0-linux-amd64.tar.gz \
+            | tar -xz --strip-components=1 -C /tmp k6-v0.51.0-linux-amd64/k6
+          sudo install /tmp/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: bring up dev compose stack
+        run: |
+          set -euo pipefail
+          docker compose \
+            -f services/declaration/docker-compose.integration.yaml \
+            up -d --wait
+
+      - name: wait for declaration readyz
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8081/readyz >/dev/null 2>&1; then
+              echo "declaration ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: seed fixture declarations
+        id: seed
+        env:
+          RECOR_DECLARATION_URL: http://localhost:8081
+          RECOR_PRINCIPAL_TOKEN: ${{ secrets.LOAD_BASELINE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Pre-load 1000 declarations the GET scenario reads from.
+          # Output their ids into SEED_DECLARATION_IDS for the GET
+          # scenario step below.
+          ids=()
+          for i in $(seq 1 1000); do
+            body=$(printf '{"canonical_form":{"declared_entity_id":"%s","beneficial_owners":[],"declared_at":"%s"},"attestation_hex":"%s"}' \
+              "$(uuidgen)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf 'a%.0s' $(seq 1 128))")
+            r=$(curl -fsS -X POST \
+                 -H "Content-Type: application/json" \
+                 -H "Authorization: Bearer ${RECOR_PRINCIPAL_TOKEN:-dev}" \
+                 -H "Idempotency-Key: $(uuidgen)" \
+                 -d "$body" "$RECOR_DECLARATION_URL/v1/declarations" \
+                 || echo '{"declaration_id":""}')
+            id=$(echo "$r" | jq -r '.declaration_id // empty')
+            [ -n "$id" ] && ids+=("$id")
+          done
+          printf 'seed=%s\n' "$(IFS=,; echo "${ids[*]}")" >> "$GITHUB_OUTPUT"
+
+      - name: k6 — declaration-submit (100 RPS, ${{ inputs.duration }})
+        env:
+          RECOR_DECLARATION_URL: http://localhost:8081
+          RECOR_PRINCIPAL_TOKEN: ${{ secrets.LOAD_BASELINE_TOKEN }}
+        run: |
+          k6 run --duration "${{ inputs.duration }}" \
+            tools/load/declaration-submit.js
+          mv load-report.html declaration-submit-report.html || true
+
+      - name: k6 — declaration-get (200 RPS, ${{ inputs.duration }})
+        env:
+          RECOR_DECLARATION_URL: http://localhost:8081
+          RECOR_PRINCIPAL_TOKEN: ${{ secrets.LOAD_BASELINE_TOKEN }}
+          SEED_DECLARATION_IDS: ${{ steps.seed.outputs.seed }}
+        run: |
+          k6 run --duration "${{ inputs.duration }}" \
+            tools/load/declaration-get.js
+          mv load-report.html declaration-get-report.html || true
+
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-baseline-${{ github.run_id }}
+          path: |
+            declaration-submit-report.html
+            declaration-get-report.html
+          retention-days: 90
+
+      - name: tear down compose stack
+        if: always()
+        run: |
+          docker compose \
+            -f services/declaration/docker-compose.integration.yaml \
+            down -v --remove-orphans || true

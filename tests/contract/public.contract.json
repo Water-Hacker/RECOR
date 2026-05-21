@@ -1,0 +1,134 @@
+{
+  "consumer": "public",
+  "description": "Public / unauthenticated access — sanctions public list and public declaration search",
+  "legal_basis": "FATF R.24 c.24.13 (sanctions transparency); Cameroon BO transparency law — [CITATION NEEDED: cameroon-bo-decree-art-Y]; post-Sovim balancing per CJEU C-37/20",
+  "acr_required": null,
+  "interactions": [
+    {
+      "id": "public-get-sanctions-list",
+      "description": "Unauthenticated caller retrieves the public sanctions list; natural-person PII must not appear",
+      "request": {
+        "method": "GET",
+        "path": "/v1/sanctions/public",
+        "headers": {
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "proceedings": "array",
+          "proceedings[].proceeding_id": "present",
+          "proceedings[].public_listing_name": "present",
+          "proceedings[].public_listing_reason": "present",
+          "proceedings[].public_listed_at": "present"
+        },
+        "body_rules": {
+          "proceedings[].public_listing_name": {
+            "note": "Entity legal name only — never a natural-person name. The API boundary enforces this."
+          },
+          "proceedings[].declarant_principal": {
+            "must_be_absent": true,
+            "note": "Sovim post-C-37/20: declarant_principal must never appear on the public list endpoint"
+          },
+          "proceedings[].beneficial_owners": {
+            "must_be_absent": true,
+            "note": "Beneficial-owner PII (names, nationalities) must never appear on the public list endpoint"
+          },
+          "cache_control": {
+            "note": "Response carries Cache-Control: max-age=86400 (24-hour cache per ADR-0012 Sovim-balancing note)"
+          }
+        }
+      }
+    },
+    {
+      "id": "public-get-entity-public-record",
+      "description": "Public caller reads an entity's public record — entity name, state, lane; no PII",
+      "request": {
+        "method": "GET",
+        "path": "/v1/entities/{entity_id}/public",
+        "path_params": {
+          "entity_id": "01960000-0000-7000-8000-000000000003"
+        },
+        "headers": {
+          "Accept": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "entity_id": "01960000-0000-7000-8000-000000000003",
+          "canonical_name": "present",
+          "entity_type": "present",
+          "jurisdiction": "present",
+          "verification_lane": "present",
+          "last_declared_at": "present"
+        },
+        "body_rules": {
+          "canonical_name": {
+            "note": "Entity legal name; statutory public record"
+          },
+          "beneficial_owners": {
+            "must_be_absent": true,
+            "note": "All natural-person fields are omitted from the public entity endpoint per post-Sovim balancing"
+          },
+          "declarant_principal": {
+            "must_be_absent": true
+          }
+        }
+      }
+    },
+    {
+      "id": "public-post-feedback",
+      "description": "Public caller submits a discrepancy report; expects 201 with a feedback_id",
+      "request": {
+        "method": "POST",
+        "path": "/v1/public-feedback",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Captcha-Token": "<valid-captcha-token>"
+        },
+        "body": {
+          "entity_id": "01960000-0000-7000-8000-000000000003",
+          "description": "The declared beneficial owner percentage does not match public company filings."
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "feedback_id": "present",
+          "state": "submitted",
+          "submitted_at": "present"
+        },
+        "body_rules": {
+          "feedback_id": {
+            "note": "UUID identifying the submitted feedback row; returned so the submitter can track triage status"
+          }
+        }
+      }
+    },
+    {
+      "id": "public-post-feedback-without-captcha",
+      "description": "Feedback submission without a CAPTCHA token must be rejected",
+      "request": {
+        "method": "POST",
+        "path": "/v1/public-feedback",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "entity_id": "01960000-0000-7000-8000-000000000003",
+          "description": "Missing captcha."
+        }
+      },
+      "response": {
+        "status_one_of": [400, 422],
+        "body_rules": {
+          "error_kind": {
+            "note": "Must contain a stable error_kind code; message may be localised per Accept-Language"
+          }
+        }
+      }
+    }
+  ]
+}

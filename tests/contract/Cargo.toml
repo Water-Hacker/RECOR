@@ -1,0 +1,27 @@
+[package]
+name = "recor-contract-tests"
+description = "Consumer contract tests for RÉCOR's external API surfaces. Loads contract fixture JSON files (anif, conac, public) and replays the interactions against a WireMock server, verifying status codes, required field presence/absence, and PII-redaction invariants. Closes TODO-082."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[test]]
+name = "contract"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing.workspace = true
+anyhow.workspace = true
+wiremock.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json.workspace = true

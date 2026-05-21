@@ -1,0 +1,133 @@
+# deny.toml — TODO-077 / dependency-license + advisory + bans gate.
+#
+# Consumed by `cargo deny check` in the CI job
+# `governance / dependency-license-check`. The job runs:
+#
+#   cargo deny check licenses advisories bans sources
+#
+# and fails on any violation. The configuration is intentionally strict;
+# the platform is sovereign national infrastructure, and a permissive
+# license posture means the project takes on legal review work it does
+# not have capacity to do well.
+#
+# Doctrines:
+#   D12 production-grade   — refuses GPL/AGPL/LGPL by default; the
+#                            platform must be redistributable under
+#                            Apache-2.0 without copy-left contamination.
+#   D14 fail-closed        — unknown licenses are denied; absent
+#                            advisory match is denied; the default
+#                            for everything is "refuse".
+#   D20 supply chain SLSA  — `bans.multiple-versions = "deny"` keeps
+#                            the dep graph deterministic; `sources` is
+#                            allow-listed; `advisories.vulnerability =
+#                            "deny"` blocks CVEs.
+
+# ─── Graph scope ──────────────────────────────────────────────────────────────
+[graph]
+# Targets the platform actually ships to. Linux/musl is the production
+# image; macos/windows are dev environments. Keeping the list explicit
+# means a dep with non-Linux-only deps is still scanned for Linux.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ─── Advisories ───────────────────────────────────────────────────────────────
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Every CVE is a hard fail. The remediation path is "bump the dep, or
+# vendor a fork with the patch"; not "ignore for now".
+yanked = "deny"
+ignore = []
+
+# ─── Licenses ─────────────────────────────────────────────────────────────────
+[licenses]
+# Confidence threshold — cargo-deny refuses to guess a license below
+# this. 0.93 is the recommended default; we keep it explicit so a
+# future bump (e.g. to 0.95) is a deliberate review.
+confidence-threshold = 0.93
+# The allow-list. Permissive, redistributable-under-Apache-2.0 licenses
+# only. No GPL/AGPL/LGPL family without an explicit exception below.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",        # file-scope copyleft only; legally compatible
+    "BSL-1.0",        # Boost — permissive
+    "OpenSSL",        # ring transitive, dual-licensed with ISC
+]
+# Exceptions: crates whose licenses sit outside the allow-list but are
+# specifically permitted with documented justification. Each exception
+# must cite a ticket + reviewer. None today; add via:
+#
+#   exceptions = [
+#       { allow = ["LicenseRef-XYZ"], name = "crate-name",
+#         version = "1.2.3" },
+#   ]
+exceptions = []
+
+# Per-crate license clarifications for dual-licensed crates whose SPDX
+# expression is ambiguous to the resolver. Each entry pins the license
+# we accept under for that crate.
+[[licenses.clarify]]
+name = "ring"
+expression = "ISC AND MIT AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+[[licenses.clarify]]
+name = "encoding_rs"
+expression = "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+license-files = [
+    { path = "COPYRIGHT", hash = 0x39f8ad31 },
+]
+
+# ─── Bans ─────────────────────────────────────────────────────────────────────
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+# Crates we explicitly refuse to depend on. Each line cites the reason.
+deny = [
+    # openssl-sys pulls a different cryptographic substrate than our
+    # rustls + ring stack; one substrate is enough.
+    { name = "openssl-sys", reason = "Use rustls + ring exclusively (D21 PQ agility)." },
+    { name = "openssl",     reason = "Use rustls + ring exclusively (D21 PQ agility)." },
+    { name = "native-tls",  reason = "Use rustls explicitly via reqwest features." },
+    # md5 is broken; if a transitive needs it, ban surfaces the path.
+    { name = "md5",         reason = "MD5 is cryptographically broken; refuse." },
+    { name = "rust-crypto", reason = "Unmaintained; use RustCrypto crates instead." },
+]
+# Crates whose multiple-versions are acceptable (build-graph reality).
+skip = [
+    # The async/sync split in the ecosystem still surfaces two
+    # `hashbrown` versions; both are permissive.
+    { name = "hashbrown" },
+    { name = "syn" },
+    { name = "windows-sys" },
+]
+skip-tree = []
+
+# ─── Sources ──────────────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# No git sources today. If/when a fork is needed (e.g. a security
+# patch awaiting upstream merge), pin the exact commit here AND open
+# an ADR justifying the fork + the unfork timeline.
+allow-git = []

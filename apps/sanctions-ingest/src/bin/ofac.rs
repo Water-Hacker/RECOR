@@ -38,7 +38,7 @@ use tracing::{error, info, warn};
 
 use recor_sanctions_ingest::{
     ingest_log::{write_ingest_log, IngestLogEntry},
-    ofac::parse_sdn_count_only,
+    ofac::{parse_sdn, upsert_sdn_entries},
     sanity_check::{sanity_check, SanityCheckOutcome},
 };
 
@@ -153,8 +153,9 @@ async fn real_main() -> Result<ExitCode> {
         "OFAC SDN bytes ready"
     );
 
-    // 2. Count entries (placeholder for full parse).
-    let proposed = parse_sdn_count_only(&bytes).context("OFAC count parse")?;
+    // 2. Parse the SDN feed.
+    let entries = parse_sdn(&bytes).context("OFAC SDN parse")?;
+    let proposed: u64 = entries.len() as u64;
     info!(proposed_row_count = proposed, "OFAC SDN parsed");
 
     // 3. Compare against prior count in the table.
@@ -204,15 +205,16 @@ async fn real_main() -> Result<ExitCode> {
         return Ok(ExitCode::from(6));
     }
 
-    // 4. Upsert into sanctions_persons. The full XML schema wiring is
-    //    the TODO-014-OFAC follow-up; today we log the intended
-    //    operation so the operator runbook can be exercised end-to-end.
+    // 4. Per-entry upsert into sanctions_persons in a single tx.
+    let applied = upsert_sdn_entries(&pool, &entries)
+        .await
+        .context("OFAC SDN upsert")?;
     info!(
         upsert_target = "sanctions_persons",
         source = "ofac_sdn",
-        proposed_rows = proposed,
+        applied_rows = applied,
         digest = %&digest_hex[..16],
-        "TODO-014-OFAC: per-entry upsert deferred to XML-wiring follow-up; ingest_log row written"
+        "TODO-014-OFAC: OFAC SDN ingest cycle complete"
     );
 
     Ok(ExitCode::SUCCESS)

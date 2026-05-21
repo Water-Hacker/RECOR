@@ -684,6 +684,172 @@
         ]
       }
     },
+    "/v1/internal/gdpr/processing-records": {
+      "get": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "listProcessingRecords",
+        "responses": {
+          "200": {
+            "description": "Register listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListProcessingRecordsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "createProcessingRecord",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProcessingRecordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Record created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingRecordView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request"
+          },
+          "403": {
+            "description": "Not an admin"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/gdpr/processing-records/{record_id}": {
+      "get": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "getProcessingRecord",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "description": "Processing record UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Processing record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingRecordView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Record not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/gdpr/processing-records/{record_id}/retire": {
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "retireProcessingRecord",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "description": "Processing record UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingRecordView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Already retired"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Record not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
     "/v1/internal/outbox-dlq": {
       "get": {
         "tags": [
@@ -868,6 +1034,122 @@
         ]
       }
     },
+    "/v1/internal/rectification-requests/{request_id}/approve": {
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "approveRectification",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "description": "Rectification request UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRectificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveRectificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Request not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/rectification-requests/{request_id}/reject": {
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "rejectRectification",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "description": "Rectification request UUID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRectificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveRectificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Not an admin"
+          },
+          "404": {
+            "description": "Request not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
     "/v1/internal/verification-outcomes": {
       "post": {
         "tags": [
@@ -980,6 +1262,154 @@
         "security": [
           {
             "hmacSignature": []
+          }
+        ]
+      }
+    },
+    "/v1/me/erasure-restriction": {
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "gdprErasureRestriction",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureRestrictionRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Erasure refused (the canonical response); restriction recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErasureRestrictionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Caller is not the owner of the declaration"
+          },
+          "404": {
+            "description": "Declaration not found"
+          },
+          "409": {
+            "description": "Idempotency-Key collision with a different body"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/me/export": {
+      "get": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "gdprExport",
+        "parameters": [
+          {
+            "name": "principal",
+            "in": "query",
+            "description": "Admin-only override: export the data of a specific principal.\nAdmins (members of the `ADMIN_PRINCIPALS` allowlist) may export\non behalf of another data subject when responding to a DSAR.\nNon-admins providing this parameter receive `403 forbidden`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "GDPR export envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GdprExportResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Admin override requested by non-admin"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/me/rectify": {
+      "post": {
+        "tags": [
+          "gdpr"
+        ],
+        "operationId": "gdprRectify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RectifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Rectification request recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RectifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Caller is not the owner of the declaration"
+          },
+          "404": {
+            "description": "Declaration not found"
+          },
+          "409": {
+            "description": "Idempotency-Key collision with a different body"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "devPrincipalHeader": []
           }
         ]
       }
@@ -1278,6 +1708,62 @@
           }
         }
       },
+      "CreateProcessingRecordRequest": {
+        "type": "object",
+        "required": [
+          "controller",
+          "purpose",
+          "legal_basis",
+          "data_categories",
+          "subject_categories",
+          "recipients",
+          "retention_period_text"
+        ],
+        "properties": {
+          "controller": {
+            "type": "string"
+          },
+          "data_categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "legal_basis": {
+            "type": "string"
+          },
+          "processor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "retention_period_text": {
+            "type": "string"
+          },
+          "subject_categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transfer_safeguards": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CryptographicAttestation": {
         "type": "object",
         "description": "A signed attestation submitted with a declaration.\n\nThe signature is over the canonical JSON form of the declaration\npayload (entity_id, declarant_principal, declarant_role,\ndeclaration_kind, effective_from, beneficial_owners,\nadequacy_claims, nonce_hex), serialised with sorted keys, no\nwhitespace, UTF-8 — i.e. JCS (RFC 8785). The nonce protects\nagainst replay.",
@@ -1447,6 +1933,101 @@
         "description": "Stable identifier for a legal entity. UUIDv7.",
         "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
       },
+      "ErasureRestrictionRequestBody": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "reason"
+        ],
+        "properties": {
+          "declaration_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Declaration the data subject wants erased or restricted."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason — usually citing the Art. 17 / 18 ground\n(inaccuracy, processing unlawful, no longer necessary,\nobjection pending)."
+          }
+        }
+      },
+      "ErasureRestrictionRequestView": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "declaration_id",
+          "data_subject_principal",
+          "reason",
+          "state",
+          "refusal_kind",
+          "submitted_at"
+        ],
+        "properties": {
+          "data_subject_principal": {
+            "type": "string"
+          },
+          "declaration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "refusal_kind": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "withdrawn_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ErasureRestrictionResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "erasure_refusal_kind",
+          "erasure_refusal_notice",
+          "restriction_state",
+          "submitted_at"
+        ],
+        "properties": {
+          "erasure_refusal_kind": {
+            "type": "string",
+            "description": "Refusal kind on the erasure component. Always\n`erasure_not_permitted` for BO data — FATF R.24 retention\nbeats Art. 17."
+          },
+          "erasure_refusal_notice": {
+            "type": "string",
+            "description": "Plain-language explanation of the refusal."
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "restriction_state": {
+            "type": "string",
+            "description": "State of the restriction record (always `restriction_active`\nwhen the platform creates the row)."
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "description": "Inner body of an `ErrorEnvelope`. `kind` is a stable machine-friendly\nclassifier — clients SHOULD switch on it. `message` is a human\ndescription for logs; clients SHOULD NOT parse it.",
@@ -1473,6 +2054,58 @@
         "properties": {
           "error": {
             "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "GdprExportResponse": {
+        "type": "object",
+        "required": [
+          "$type",
+          "data_subject_principal",
+          "exported_at",
+          "format_version",
+          "declarations",
+          "rectification_requests",
+          "erasure_restriction_requests"
+        ],
+        "properties": {
+          "$type": {
+            "type": "string",
+            "description": "JSON-LD type tag. Always `RecorGdprExport` so consumers can\nroute the envelope without sniffing other fields."
+          },
+          "data_subject_principal": {
+            "type": "string",
+            "description": "Subject of the export — the principal the rows belong to."
+          },
+          "declarations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GetDeclarationResponse"
+            },
+            "description": "Every declaration RÉCOR holds where the data subject is the\ndeclarant."
+          },
+          "erasure_restriction_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErasureRestrictionRequestView"
+            },
+            "description": "Every erasure-restriction request the data subject has lodged."
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp the export was produced."
+          },
+          "format_version": {
+            "type": "string",
+            "description": "Format version. Bump when the envelope schema changes in a\nway that breaks consumers."
+          },
+          "rectification_requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RectificationRequestView"
+            },
+            "description": "Every rectification request the data subject has submitted."
           }
         }
       },
@@ -1685,6 +2318,25 @@
           }
         }
       },
+      "ListProcessingRecordsResponse": {
+        "type": "object",
+        "required": [
+          "records",
+          "total"
+        ],
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessingRecordView"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "OwnershipBasisPoints": {
         "type": "integer",
         "format": "int32",
@@ -1697,6 +2349,75 @@
         "format": "uuid",
         "description": "Stable identifier for a natural person. UUIDv7.",
         "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+      },
+      "ProcessingRecordView": {
+        "type": "object",
+        "required": [
+          "record_id",
+          "controller",
+          "purpose",
+          "legal_basis",
+          "data_categories",
+          "subject_categories",
+          "recipients",
+          "retention_period_text",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "controller": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data_categories": {
+            "type": "object"
+          },
+          "legal_basis": {
+            "type": "string"
+          },
+          "processor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "recipients": {
+            "type": "object"
+          },
+          "record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "retention_period_text": {
+            "type": "string"
+          },
+          "retired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "subject_categories": {
+            "type": "object"
+          },
+          "transfer_safeguards": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "ReadyzResponse": {
         "type": "object",
@@ -1717,6 +2438,123 @@
           }
         }
       },
+      "RectificationRequestView": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "declaration_id",
+          "data_subject_principal",
+          "field_path",
+          "requested_value",
+          "reason",
+          "state",
+          "submitted_at"
+        ],
+        "properties": {
+          "applied_correction_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "data_subject_principal": {
+            "type": "string"
+          },
+          "declaration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "field_path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requested_value": {
+            "type": "object"
+          },
+          "resolution_notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "resolver_principal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RectifyRequest": {
+        "type": "object",
+        "required": [
+          "declaration_id",
+          "field_path",
+          "requested_value",
+          "reason"
+        ],
+        "properties": {
+          "declaration_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Declaration the data subject wants rectified. Must exist; the\ndeclarant-ownership check is enforced at the handler so a data\nsubject cannot lodge rectification requests against\ndeclarations they did not submit."
+          },
+          "field_path": {
+            "type": "string",
+            "description": "JSON Pointer (RFC 6901) into the canonical declaration body.\nExample: `/beneficial_owners/0/ownership_basis_points`."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason supporting the request."
+          },
+          "requested_value": {
+            "$ref": "#/components/schemas/Value",
+            "description": "The value the data subject claims is the correct one. Stored\nas JSONB verbatim."
+          }
+        }
+      },
+      "RectifyResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "state",
+          "submitted_at"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ReplayDlqResponse": {
         "type": "object",
         "required": [
@@ -1731,6 +2569,39 @@
           "replayed": {
             "type": "boolean",
             "description": "Always `true` on success; on failure the response is an error\nenvelope, not this struct."
+          }
+        }
+      },
+      "ResolveRectificationRequest": {
+        "type": "object",
+        "required": [
+          "notes"
+        ],
+        "properties": {
+          "notes": {
+            "type": "string",
+            "description": "Free-text rationale captured on the events row."
+          }
+        }
+      },
+      "ResolveRectificationResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "state",
+          "resolved_at"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resolved_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },
@@ -1875,6 +2746,7 @@
           }
         }
       },
+      "Value": {},
       "VerificationLane": {
         "type": "string",
         "description": "Lane decision returned by the Verification Engine for a declaration.\nMatches the verification engine's LaneDecision enum byte-for-byte over\nthe wire (snake_case serialisation).",
@@ -1904,6 +2776,14 @@
           "completed_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "TODO-050 — correlation id of the originating Submit. Echoed by\nthe verification engine from the declaration snapshot it\nreceived at submit time. Optional on the wire for back-compat\nwith pre-TODO-050 envelopes; the internal handler upgrades a\nmissing value to a 400 on new traffic (D14 fail-closed)."
           },
           "declaration_id": {
             "$ref": "#/components/schemas/DeclarationId"

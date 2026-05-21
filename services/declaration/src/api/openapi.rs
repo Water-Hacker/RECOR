@@ -58,6 +58,12 @@ use utoipa::{Modify, OpenApi};
 use utoipa_scalar::{Scalar, Servable};
 
 use crate::api::dlq::{self, DlqItem, ListDlqResponse, ReplayDlqResponse};
+use crate::api::gdpr::{
+    self, CreateProcessingRecordRequest, ErasureRestrictionRequestBody,
+    ErasureRestrictionRequestView, ErasureRestrictionResponse, GdprExportResponse,
+    ListProcessingRecordsResponse, ProcessingRecordView, RectificationRequestView,
+    RectifyRequest, RectifyResponse, ResolveRectificationRequest, ResolveRectificationResponse,
+};
 use crate::api::dto::{
     AmendDeclarationRequest, AmendDeclarationResponse, CorrectDeclarationRequest,
     CorrectDeclarationResponse, DeclarationsByPrincipalResponse, ErrorBody, ErrorEnvelope,
@@ -117,6 +123,17 @@ use crate::domain::{
         dlq::list_dlq,
         dlq::replay_dlq,
         internal::handle_verification_outcome,
+        // TODO-032 — data-subject rights
+        gdpr::gdpr_export,
+        gdpr::submit_rectification,
+        gdpr::submit_erasure_restriction,
+        gdpr::approve_rectification,
+        gdpr::reject_rectification,
+        // TODO-034 — Art. 30 register
+        gdpr::create_processing_record,
+        gdpr::list_processing_records,
+        gdpr::get_processing_record,
+        gdpr::retire_processing_record,
     ),
     components(
         schemas(
@@ -142,6 +159,19 @@ use crate::domain::{
             ListDlqResponse,
             DlqItem,
             ReplayDlqResponse,
+            // TODO-032 / TODO-034 — GDPR data-subject + Art. 30 register DTOs
+            GdprExportResponse,
+            RectifyRequest,
+            RectifyResponse,
+            ErasureRestrictionRequestBody,
+            ErasureRestrictionResponse,
+            ResolveRectificationRequest,
+            ResolveRectificationResponse,
+            RectificationRequestView,
+            ErasureRestrictionRequestView,
+            CreateProcessingRecordRequest,
+            ProcessingRecordView,
+            ListProcessingRecordsResponse,
             // Domain value objects
             DeclarationId,
             EntityId,

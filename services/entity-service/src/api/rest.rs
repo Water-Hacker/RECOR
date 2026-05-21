@@ -24,6 +24,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::api::auth::{auth_middleware, AuthConfig, Principal};
+use crate::api::dlq::DlqAdminState;
 use crate::api::dto::{
     DissolveEntityRequest, DissolveResponse, ErrorEnvelope, GetEntityResponse, HealthzResponse,
     ReadyzResponse, RegisterEntityRequest, RegisterEntityResponse, SearchEntitiesResponse,
@@ -37,7 +38,7 @@ use crate::application::{
 use crate::config::Config;
 use crate::domain::EntityId;
 use crate::error::ServiceError;
-use crate::infrastructure::IdempotencyStore;
+use crate::infrastructure::{IdempotencyStore, OutboxAdminStore};
 use crate::metrics::{metrics_handler, metrics_middleware, Metrics};
 
 #[derive(Clone)]
@@ -48,13 +49,17 @@ pub struct AppState {
     pub update_usecase: Arc<UpdateEntityUseCase>,
     pub dissolve_usecase: Arc<DissolveEntityUseCase>,
     pub idempotency: Arc<IdempotencyStore>,
+    /// TODO-039 — DLQ admin store. Surfaces the dead-lettered outbox
+    /// rows the relay produces; reused by `/v1/internal/outbox-dlq*`.
+    pub outbox_admin: Arc<OutboxAdminStore>,
     pub base_url: String,
     pub is_dev: bool,
     pub idempotency_ttl_seconds: i64,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub metrics: Arc<Metrics>,
-    /// Admin principals authorised for the dissolve endpoint. D17 — the
-    /// allowlist is canonical; empty list ⇒ /dissolve returns 503.
+    /// Admin principals authorised for the dissolve endpoint AND the
+    /// DLQ admin surface. D17 — empty list ⇒ both endpoint families
+    /// return 503.
     pub admin_principals: Arc<HashSet<String>>,
 }
 
@@ -85,10 +90,33 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
             post(dissolve_entity_handler),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            auth_state,
+            auth_state.clone(),
             auth_middleware,
         ))
         .with_state(state.clone());
+
+    // TODO-039 — DLQ admin endpoints. Same user-auth middleware as the
+    // protected routes; the handlers gate themselves on
+    // `admin_principals`. Empty list ⇒ both endpoints return 503.
+    let dlq_admin_state = DlqAdminState {
+        store: state.outbox_admin.clone(),
+        admin_principals: state.admin_principals.clone(),
+        metrics: state.metrics.clone(),
+    };
+    let admin = Router::new()
+        .route(
+            "/v1/internal/outbox-dlq",
+            get(crate::api::dlq::list_dlq),
+        )
+        .route(
+            "/v1/internal/outbox-dlq/{id}/replay",
+            post(crate::api::dlq::replay_dlq),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
+        .with_state(dlq_admin_state);
 
     let public = Router::new()
         .route("/healthz", get(healthz))
@@ -97,7 +125,7 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
 
     let openapi = crate::api::openapi::openapi_routes();
 
-    let app_routes = protected.merge(public).merge(openapi);
+    let app_routes = protected.merge(admin).merge(public).merge(openapi);
 
     let metrics_state = state.metrics.clone();
     let app_routes = app_routes.layer(axum::middleware::from_fn_with_state(

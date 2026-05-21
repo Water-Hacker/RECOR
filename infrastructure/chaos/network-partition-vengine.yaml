@@ -1,0 +1,91 @@
+# TODO-054 / infrastructure/chaos/network-partition-vengine.yaml
+#
+# Litmus chaos experiment: partition the verification-engine pods
+# from declaration + Postgres for 60s and assert the engine
+# fail-closes — i.e. returns 503 on /readyz AND publishes NO
+# verification cases (does not silently degrade to "all-green" lane
+# decisions on missing upstream data).
+#
+# This is the most consequential chaos drill we run: the verification
+# engine is the load-bearing capability per V4 P14. A partition
+# misbehaviour that returned "green-lane" on missing data would be a
+# D14 (fail-closed) violation invisible to downstream consumers.
+#
+# Doctrines:
+#   D14 fail-closed — partitioned engine MUST refuse, not guess.
+#   D17 zero trust  — the partition is a real network event; mTLS
+#                     handshake should fail closed.
+#
+# Run procedure: see docs/runbooks/chaos-drill.md § network-partition.
+
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: vengine-network-partition
+  namespace: recor
+  annotations:
+    recor.cm/req-id: TODO-054
+    recor.cm/doctrine: "D14 fail-closed; D17 zero-trust"
+spec:
+  appinfo:
+    appns: recor
+    applabel: "app=recor-verification-engine"
+    appkind: deployment
+  engineState: active
+  chaosServiceAccount: litmus-admin
+  monitoring: true
+  jobCleanUpPolicy: retain
+  experiments:
+    - name: pod-network-partition
+      spec:
+        components:
+          env:
+            - name: TOTAL_CHAOS_DURATION
+              value: "60"
+            # Partition from the declaration service + Postgres only;
+            # the Otel collector + Vault are left reachable so the
+            # service can continue to log + refresh secrets.
+            - name: DESTINATION_LABELS
+              value: "app=recor-declaration,app=postgres-verification"
+            - name: POLICY_TYPES
+              value: "Ingress,Egress"
+        probe:
+          # Steady-state during partition: /readyz returns 503 (the
+          # fail-closed posture). A 200 here would be a doctrine
+          # violation because the engine cannot reach Postgres but
+          # claims ready.
+          - name: vengine-readyz-failclosed
+            type: httpProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5
+              interval: 5
+              retry: 0
+              probePollingInterval: 5
+            httpProbe/inputs:
+              url: "http://recor-verification-engine.recor.svc.cluster.local:8080/readyz"
+              insecureSkipVerify: true
+              method:
+                get:
+                  criteria: "=="
+                  # 503 is the contracted fail-closed code.
+                  responseCode: "503"
+          # Post-partition: the engine SHOULD recover within 30s
+          # (the readyz check polls dependencies every 10s by
+          # default; one cycle of observation + one cycle of probe
+          # caching settles it).
+          - name: vengine-recovery
+            type: httpProbe
+            mode: EOT
+            runProperties:
+              probeTimeout: 30
+              interval: 2
+              retry: 0
+              probePollingInterval: 2
+            httpProbe/inputs:
+              url: "http://recor-verification-engine.recor.svc.cluster.local:8080/readyz"
+              insecureSkipVerify: true
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "200"

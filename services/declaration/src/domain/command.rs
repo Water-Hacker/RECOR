@@ -67,6 +67,11 @@ pub struct SubmitDeclaration {
 /// Issued by the internal /v1/internal/verification-outcomes endpoint
 /// after the Declaration service's writeback receiver authenticates the
 /// HMAC envelope.
+///
+/// TODO-050 — carries the originating declaration's correlation_id so
+/// the aggregate can refuse a writeback that targets a declaration its
+/// envelope was not meant for. The verification engine echoes this id
+/// back from the declaration snapshot it received at submit time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordVerificationOutcome {
     pub declaration_id: DeclarationId,
@@ -76,6 +81,11 @@ pub struct RecordVerificationOutcome {
     pub fused_authenticity_plausibility: f64,
     pub fused_risk_belief: f64,
     pub completed_at: OffsetDateTime,
+    /// Correlation id of the originating Submit. Required for new
+    /// envelopes; legacy envelopes set this to the nil UUID and the
+    /// aggregate skips the cross-check for back-compat.
+    #[serde(default)]
+    pub correlation_id: uuid::Uuid,
 }
 
 /// Supersede an existing declaration with a new one. The new

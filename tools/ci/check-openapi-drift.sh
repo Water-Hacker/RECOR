@@ -39,6 +39,9 @@ export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"
 SERVICES=(
     "declaration:recor-declaration:dump-openapi:docs/openapi/declaration.json"
     "verification-engine:recor-verification-engine:dump-openapi-verification-engine:docs/openapi/verification-engine.json"
+    # TODO-039: entity-service joins the drift gate now that its DLQ
+    # admin surface is part of the public contract.
+    "entity-service:recor-entity-service:dump-openapi:docs/openapi/entity-service.json"
 )
 
 GENERATED=$(mktemp -t recor-openapi.XXXXXX.json)

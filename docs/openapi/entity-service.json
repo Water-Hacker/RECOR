@@ -1,0 +1,1308 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RÉCOR Entity Service",
+    "description": "REST surface of the RÉCOR Entity service (IDENTITY-1). Authoritative cache + projection of legal-entity registry data for Cameroon and other jurisdictions. Entities are Public-classified at the projection layer; no PII columns. Once R-VER-1 ships, this service becomes the authoritative cache of BUNEC entries for Cameroon entities.",
+    "contact": {
+      "name": "RÉCOR domain team",
+      "email": "noreply@recor.cm"
+    },
+    "license": {
+      "name": "Apache-2.0"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8083",
+      "description": "Local dev"
+    },
+    {
+      "url": "https://api.recor.cm",
+      "description": "Production (TBD)"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Service process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyzResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/entities": {
+      "post": {
+        "tags": [
+          "entities"
+        ],
+        "operationId": "registerEntity",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Optional idempotency key. Replays with the same body return the original response.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterEntityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterEntityResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Entity registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterEntityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate identity tuple or idempotency conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/entities/search": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "operationId": "searchEntities",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Substring match on canonical_name (ILIKE)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "jurisdiction",
+            "in": "query",
+            "description": "ISO-3166-1 alpha-2 jurisdiction filter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "entity_type prefix filter (sa, sarl, partnership, trust, other)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50; max 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matched entities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchEntitiesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/entities/{entity_id}": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "operationId": "getEntity",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "description": "Entity UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current projection of the entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetEntityResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Entity not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/entities/{entity_id}/dissolve": {
+      "post": {
+        "tags": [
+          "entities"
+        ],
+        "operationId": "dissolveEntity",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DissolveEntityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Entity dissolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DissolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Entity not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already dissolved or invalid dissolution date",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin allowlist is empty; endpoint disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/entities/{entity_id}/update": {
+      "post": {
+        "tags": [
+          "entities"
+        ],
+        "operationId": "updateEntity",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateEntityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Entity updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Entity not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Entity is dissolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/outbox-dlq": {
+      "get": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "listDlq",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of rows to return; defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 50
+            },
+            "example": 50
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Zero-indexed offset for paging.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 0
+            },
+            "example": 0
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of DLQ rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin endpoints disabled (allowlist empty)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/outbox-dlq/{id}/replay": {
+      "post": {
+        "tags": [
+          "internal"
+        ],
+        "operationId": "replayDlq",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "DLQ row id to replay",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Row was moved back to the outbox for retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDlqResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal not on the admin allowlist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No DLQ row with the given id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Admin endpoints disabled (allowlist empty)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devPrincipalHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DissolveEntityRequest": {
+        "type": "object",
+        "required": [
+          "dissolved_at"
+        ],
+        "properties": {
+          "dissolved_at": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "DissolveResponse": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "dissolved_at",
+          "recorded_at"
+        ],
+        "properties": {
+          "dissolved_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DlqItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "event_type",
+          "event_version",
+          "aggregate_type",
+          "aggregate_id",
+          "partition_key",
+          "payload",
+          "created_at",
+          "dead_lettered_at",
+          "dispatch_attempts"
+        ],
+        "properties": {
+          "aggregate_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "aggregate_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dead_lettered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dispatch_attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "event_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "partition_key": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Original event payload as JSON. Schema depends on `event_type`."
+          }
+        }
+      },
+      "EntityId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Stable identifier for a legal entity. UUIDv7 — time-sortable, so the\nnatural ordering matches registration order.",
+        "example": "0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d"
+      },
+      "EntityType": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Société Anonyme.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sa"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Société à Responsabilité Limitée.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sarl"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "General partnership / SNC (Société en Nom Collectif) / similar.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "partnership"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Trust / fiducie.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "trust"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Free-form label for legal forms not in the closed set.",
+            "required": [
+              "label",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "other"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "description": "Free-form label for legal forms not in the closed set."
+              }
+            }
+          }
+        ],
+        "description": "Type / legal form of the entity. Closed set for the OHADA-region\nstandard forms (SA, SARL, Partnership, Trust), with an `Other(String)`\nescape hatch for forms that are not in the closed set — necessary\nbecause the registry holds non-Cameroonian entities whose legal\nforms are not standard OHADA forms.\n\nWire format: snake_case enum tag. `Other` carries its free-form\nlabel as an associated string."
+      },
+      "EntityTypeDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sa"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sarl"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "partnership"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "trust"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "label",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "other"
+                ]
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "GetEntityResponse": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "canonical_name",
+          "entity_type",
+          "jurisdiction",
+          "registration_number_in_jurisdiction",
+          "founded_at",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "canonical_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dissolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityTypeDto"
+          },
+          "founded_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "jurisdiction": {
+            "$ref": "#/components/schemas/Jurisdiction"
+          },
+          "registration_number_in_jurisdiction": {
+            "$ref": "#/components/schemas/RegistrationNumber"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HealthzResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Jurisdiction": {
+        "type": "string",
+        "description": "ISO-3166-1 alpha-2 country code. Stored upper-case CHAR(2). Validated\non construction; the projection's CHECK constraint mirrors the\nvalidation so a bypass at the API layer is still refused at the DB.",
+        "example": "CM"
+      },
+      "ListDlqResponse": {
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DlqItem"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Limit echoed back from the query string."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Offset echoed back from the query string."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total number of DLQ rows currently held (unfiltered)."
+          }
+        }
+      },
+      "ReadyzResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterEntityRequest": {
+        "type": "object",
+        "required": [
+          "canonical_name",
+          "entity_type",
+          "jurisdiction",
+          "registration_number_in_jurisdiction",
+          "founded_at"
+        ],
+        "properties": {
+          "canonical_name": {
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityTypeDto",
+            "description": "Entity type. One of: `sa`, `sarl`, `partnership`, `trust`, `other`.\nWhen `kind` is `other`, `label` is required."
+          },
+          "founded_at": {
+            "type": "string",
+            "format": "date"
+          },
+          "jurisdiction": {
+            "type": "string",
+            "description": "ISO-3166-1 alpha-2 jurisdiction code (e.g. \"CM\").",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "registration_number_in_jurisdiction": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterEntityResponse": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "registered_at",
+          "self_url"
+        ],
+        "properties": {
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "registered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "self_url": {
+            "type": "string",
+            "description": "Self-link to the projection."
+          }
+        }
+      },
+      "RegistrationNumber": {
+        "type": "string",
+        "description": "Registration number in the jurisdiction's business register. For\nCameroonian entities this eventually matches BUNEC's surface\n(deferred to R-VER-1). 1..=128 characters; trimmed.",
+        "example": "RC/DLA/2024/B/12345"
+      },
+      "ReplayDlqResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "replayed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "Always `true` on success; on failure the response is an error\nenvelope, not this struct."
+          }
+        }
+      },
+      "SearchEntitiesResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GetEntityResponse"
+            }
+          }
+        }
+      },
+      "UpdateEntityRequest": {
+        "type": "object",
+        "required": [
+          "canonical_name",
+          "entity_type"
+        ],
+        "properties": {
+          "canonical_name": {
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityTypeDto"
+          }
+        }
+      },
+      "UpdateResponse": {
+        "type": "object",
+        "required": [
+          "entity_id",
+          "updated_at"
+        ],
+        "properties": {
+          "entity_id": {
+            "$ref": "#/components/schemas/EntityId"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC-issued JWT. The service verifies the signature against the configured issuer's JWKS, plus `iss`/`aud`/`exp`/`nbf` claims. HMAC algorithms are refused."
+      },
+      "devPrincipalHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Recor-Dev-Principal",
+        "description": "Dev-only principal shortcut. Refused outside ENVIRONMENT=dev. Production must always use `bearerAuth`."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "entities",
+      "description": "Legal-entity registration, projection, and lifecycle."
+    },
+    {
+      "name": "system",
+      "description": "Liveness and readiness probes."
+    },
+    {
+      "name": "internal",
+      "description": "Operator-only DLQ administration. Admin-allowlist gated; refuses when ADMIN_PRINCIPALS is empty (D17 + D14)."
+    }
+  ]
+}

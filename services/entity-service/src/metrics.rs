@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use axum::{extract::MatchedPath, http::Request, middleware::Next, response::Response};
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
 };
 
 #[derive(Clone)]
@@ -38,6 +38,14 @@ pub struct Metrics {
     /// BY 1 per failed cycle.
     pub outbox_retention_pruned_total: IntCounterVec,
 
+    /// TODO-039 — outbox-relay metrics. Mirrors the declaration shape.
+    /// Names are namespaced `recor_entity_*` to disambiguate from
+    /// declaration's `recor_*` metrics on a shared Prometheus.
+    pub outbox_undispatched: IntGauge,
+    pub outbox_dlq_size: IntGauge,
+    pub outbox_dlq_replays_total: IntCounterVec,
+    pub relay_delivery_latency_seconds: HistogramVec,
+
     pub health_check_duration_seconds: HistogramVec,
 }
 
@@ -48,6 +56,10 @@ const JWKS_FETCH_BUCKETS: &[f64] =
     &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0];
 const HEALTH_CHECK_BUCKETS: &[f64] =
     &[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0];
+/// TODO-039: same shape as declaration so a single Grafana panel can
+/// summarise relay performance across services.
+const RELAY_LATENCY_BUCKETS: &[f64] =
+    &[0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0, 900.0];
 
 impl Metrics {
     pub fn new() -> Result<Arc<Self>, prometheus::Error> {
@@ -127,6 +139,38 @@ impl Metrics {
         )?;
         registry.register(Box::new(outbox_retention_pruned_total.clone()))?;
 
+        // TODO-039 — outbox-relay observability (recor_entity_* names).
+        let outbox_undispatched = IntGauge::with_opts(Opts::new(
+            "recor_entity_outbox_undispatched",
+            "Current number of entity-service outbox rows awaiting dispatch (dispatched_at IS NULL). Sampled by the relay loop each poll.",
+        ))?;
+        registry.register(Box::new(outbox_undispatched.clone()))?;
+
+        let outbox_dlq_size = IntGauge::with_opts(Opts::new(
+            "recor_entity_outbox_dlq_size",
+            "Current number of rows in the entity-service outbox dead-letter queue. Sampled by the relay loop + DLQ admin store.",
+        ))?;
+        registry.register(Box::new(outbox_dlq_size.clone()))?;
+
+        let outbox_dlq_replays_total = IntCounterVec::new(
+            Opts::new(
+                "recor_entity_outbox_dlq_replays_total",
+                "DLQ replay attempts via /v1/internal/outbox-dlq/{id}/replay. result=success ⇒ row moved back to outbox; result=failure ⇒ replay refused (not_found / backend error).",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(outbox_dlq_replays_total.clone()))?;
+
+        let relay_delivery_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "recor_entity_relay_delivery_latency_seconds",
+                "Entity-service outbox-relay per-attempt delivery latency in seconds, observed only on 2xx success. Labelled by subscriber name (bounded enum — D18).",
+            )
+            .buckets(RELAY_LATENCY_BUCKETS.to_vec()),
+            &["subscriber"],
+        )?;
+        registry.register(Box::new(relay_delivery_latency_seconds.clone()))?;
+
         let health_check_duration_seconds = HistogramVec::new(
             HistogramOpts::new(
                 "recor_health_check_duration_seconds",
@@ -147,6 +191,10 @@ impl Metrics {
             oidc_jwks_fetch_latency_seconds,
             oidc_verify_total,
             outbox_retention_pruned_total,
+            outbox_undispatched,
+            outbox_dlq_size,
+            outbox_dlq_replays_total,
+            relay_delivery_latency_seconds,
             health_check_duration_seconds,
         }))
     }
@@ -246,6 +294,16 @@ mod tests {
         m.outbox_retention_pruned_total
             .with_label_values(&["success"])
             .inc();
+        // TODO-039 — touch the relay metrics so they appear in the
+        // exposition; the assertion below pins their names.
+        m.outbox_undispatched.set(3);
+        m.outbox_dlq_size.set(2);
+        m.outbox_dlq_replays_total
+            .with_label_values(&["success"])
+            .inc();
+        m.relay_delivery_latency_seconds
+            .with_label_values(&["verification-engine"])
+            .observe(0.42);
         m.health_check_duration_seconds
             .with_label_values(&["readyz"])
             .observe(0.002);
@@ -257,6 +315,10 @@ mod tests {
             "recor_entities_registered_total",
             "recor_entities_updated_total",
             "recor_entities_dissolved_total",
+            "recor_entity_outbox_undispatched",
+            "recor_entity_outbox_dlq_size",
+            "recor_entity_outbox_dlq_replays_total",
+            "recor_entity_relay_delivery_latency_seconds",
             "recor_oidc_verify_total",
             "recor_outbox_retention_pruned_total",
             "recor_health_check_duration_seconds",

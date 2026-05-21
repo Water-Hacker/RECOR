@@ -1,0 +1,52 @@
+# Doctrine-check allow-list — TODO-058 / governance gate.
+#
+# Each non-comment line is a POSIX-extended regex matched against the
+# violation string:
+#
+#   <rule>:<file>:<line>:<excerpt>
+#
+# Example: to exempt a single, documented unwrap() in a startup helper
+# whose failure mode is "process aborts at boot, on-call paged":
+#
+#   R1_unwrap:services/declaration/src/main\.rs:.*ENV not set.*unwrap.*
+#
+# Rules:
+#   1. Every entry MUST cite a ticket or ADR justifying the exception
+#      in a `# ` comment directly above the regex.
+#   2. Every entry MUST be time-boxed; the comment includes a target
+#      sprint or ticket that retires the exception.
+#   3. The list is reviewed during the quarterly hardening sprint.
+#      Stale entries are removed; their underlying code is fixed.
+#
+# Doctrines: D07 no workarounds — the allow-list is the *narrow*
+# documented escape hatch, NOT the wide one. If you find yourself
+# adding a fifth entry for the same rule, the rule has identified a
+# pattern that warrants a real fix, not another exemption.
+
+# .env.example is a documentation artefact, not a secret. Permitted.
+R6_env_file:.*\.env\.example$:.*
+R6_env_file:.*\.env\.sample$:.*
+
+# .env.tmpl scaffolding for the dev compose stack (no real secrets).
+R6_env_file:infrastructure/observability-dev/\.env\.tmpl:.*
+
+# Pre-doctrine-check carryover (TODO-058 introduction sprint).
+# Tracked for retirement at TODO-058-stage-2 (Sprint 6); each line below
+# documents a real unwrap()/println! that pre-dates the gate. Retiring
+# them is on the verification-team's queue.
+#
+# TODO-058-stage-2: convert `.unwrap()` ⇒ `.ok_or_else(|| …)?` in the
+#   Stage 7 cross-source real-rule helpers.
+R1_unwrap:services/verification-engine/src/application/stages/stage_7_cross_source_real\.rs:.*outcome\.evidence\.as_object\(\)\.unwrap\(\).*
+
+# TODO-058-stage-2: replace println! in the OFAC ingest CLI with the
+# observability::log macro (the binary is a one-shot job, but the
+# doctrine still applies). Owner: data-ingest team.
+R5_println:apps/sanctions-ingest/src/bin/ofac\.rs:.*
+
+# TODO-058-stage-2: replace `.unwrap()` in the OFAC fixture-parse
+# helpers (they sit in `#[cfg(test)]` blocks but the inline-test
+# heuristic in tools/ci/doctrine-check.sh does not detect them
+# because of the file's mixed prod+test layout). Re-organising the
+# helpers into a `mod tests` block is the right fix.
+R1_unwrap:apps/sanctions-ingest/src/ofac\.rs:.*parse_sdn_count_only.*unwrap.*

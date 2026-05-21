@@ -1,0 +1,95 @@
+# Dependabot configuration — TODO-076 supply-chain hygiene.
+#
+# Doctrines:
+#   D19 reproducible — pinning every action to a SHA + automating the
+#                      bump is the only way to keep a reproducible CI
+#                      surface as the upstream actions evolve.
+#   D20 supply chain — same-week response to upstream CVEs in actions
+#                      and Rust deps; Dependabot raises the PR, the
+#                      `governance / doctrine-check` + `governance /
+#                      dependency-license-check` gates protect the
+#                      merge.
+
+version: 2
+
+updates:
+  # ─── GitHub Actions (TODO-076) ──────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+      - "supply-chain"
+    commit-message:
+      prefix: "ci(deps)"
+      include: "scope"
+    reviewers:
+      - "recor/infrastructure-team"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ─── Rust workspace ─────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+      - "supply-chain"
+    commit-message:
+      prefix: "deps(rust)"
+      include: "scope"
+    reviewers:
+      - "recor/domain-team"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+      opentelemetry:
+        patterns:
+          - "opentelemetry*"
+          - "tracing-opentelemetry"
+      tonic-prost:
+        patterns:
+          - "tonic*"
+          - "prost*"
+      sqlx:
+        patterns:
+          - "sqlx*"
+
+  # ─── pnpm (declarant portal) ────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/applications/declarant-portal"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "portal"
+      - "supply-chain"
+    commit-message:
+      prefix: "deps(portal)"
+      include: "scope"
+    reviewers:
+      - "recor/frontend-team"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"

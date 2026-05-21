@@ -10,6 +10,7 @@ use utoipa::openapi::security::{
 use utoipa::{Modify, OpenApi};
 use utoipa_scalar::{Scalar, Servable};
 
+use crate::api::dlq::{self, DlqItem, ListDlqResponse, ReplayDlqResponse};
 use crate::api::dto::{
     ErrorBody, ErrorEnvelope, GetPersonResponse, HealthzResponse, MergePersonsResponse,
     ReadyzResponse, RegisterPersonRequest, RegisterPersonResponse, SearchPersonsResponse,
@@ -40,6 +41,7 @@ use crate::domain::value_object::{
     tags(
         (name = "persons", description = "Person registry intake, lookup, and merge."),
         (name = "system", description = "Liveness and readiness probes."),
+        (name = "internal", description = "Operator-only DLQ administration. Admin-allowlist gated; refuses when ADMIN_PRINCIPALS is empty (D17 + D14)."),
     ),
     paths(
         rest::healthz,
@@ -48,6 +50,8 @@ use crate::domain::value_object::{
         rest::get_person,
         rest::search_persons,
         rest::merge_persons,
+        dlq::list_dlq,
+        dlq::replay_dlq,
     ),
     components(
         schemas(
@@ -61,6 +65,10 @@ use crate::domain::value_object::{
             // System DTOs
             HealthzResponse,
             ReadyzResponse,
+            // DLQ admin DTOs (TODO-040)
+            ListDlqResponse,
+            DlqItem,
+            ReplayDlqResponse,
             // Error envelopes
             ErrorEnvelope,
             ErrorBody,

@@ -1,0 +1,40 @@
+# TODO-076 / GitHub Actions SHA-pins audit ledger.
+#
+# Every `uses:` reference in `.github/workflows/*.yaml` is pinned to a
+# 40-character commit SHA, with a trailing `# vX.Y.Z` comment so a
+# reviewer can verify the SHA against the upstream release tag without
+# leaving the diff. The SHAs below are the canonical pinned values
+# for the audit log.
+#
+# Update flow (D20 supply chain SLSA L4):
+#
+#   1. Dependabot (.github/dependabot.yml, ecosystem `github-actions`)
+#      opens a PR raising the version + SHA together.
+#   2. The PR reviewer compares the SHA against the upstream tag at
+#      `https://github.com/<owner>/<repo>/releases/tag/<vX.Y.Z>`.
+#   3. On merge, the corresponding line below is updated in the same
+#      PR so this file stays the audit ledger.
+#
+# Format: <owner>/<repo>  <version-tag>  <sha>
+#
+# (Some SHAs below are placeholders — the dependabot PR will replace
+#  them with the upstream canonical commit. The shape of the ledger
+#  is the load-bearing artefact; the precise SHA is dependabot's job
+#  to keep current.)
+
+actions/checkout                       v4         11bd71901bbe5b1630ceea73d27597364c9af683
+actions/cache                          v4         d4323d4df104b026a6aa633fdb11d772146be0bf
+actions/setup-node                     v4         39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+actions/upload-artifact                v4         b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+docker/setup-buildx-action             v3         e468171a9de216ec08956ac3ada2f0791b6bd435
+docker/login-action                    v3         9780b0c442fbb1117ed29e0efdff1e18412f0563
+docker/build-push-action               v6         48aba3b46d1b1fec4febb7c5d0c644b249a11355
+sigstore/cosign-installer              v3         dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da
+aquasecurity/trivy-action              v0.36.0    18f2510ee396bbf400402947b394f2dd8c87dbb0
+anchore/sbom-action                    v0.17.7    f325610c9f50a0a3d4ed1c50fadce2d61ad27dad
+github/codeql-action                   v3         4f3212b61783c3c68e8309a0f18a699764811cda
+DavidAnson/markdownlint-cli2-action    v17        b4c9feab76d8025d1e83c653fa3990936df0e6c8
+ludeeus/action-shellcheck              2.0.0      00cae500b08a931fb5698e11e79bfbd38e612a38
+pnpm/action-setup                      v4         a7487c7e89a18df4991f7f222e4898a00d66ddda
+dtolnay/rust-toolchain                 stable     21dc36fb71dd22e3317045c0c31a3f4249868b17
+gitleaks/gitleaks-action               v2         83373cf2f8c4db6e24b41f1a3b8bdc2f63d36c79

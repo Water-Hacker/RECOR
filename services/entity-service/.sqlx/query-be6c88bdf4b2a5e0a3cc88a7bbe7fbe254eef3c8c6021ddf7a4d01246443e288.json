@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE arrangements\n        SET dissolution_date    = $2,\n            retention_until     = $3,\n            aggregate_version   = $4,\n            updated_at          = NOW()\n        WHERE arrangement_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date",
+        "Date",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "be6c88bdf4b2a5e0a3cc88a7bbe7fbe254eef3c8c6021ddf7a4d01246443e288"
+}

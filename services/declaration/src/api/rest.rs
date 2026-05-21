@@ -274,6 +274,23 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
         ));
     let sanctions_public_router = crate::api::sanctions::public_router(sanctions_state);
 
+    // TODO-032 / TODO-034: GDPR data-subject rights endpoints + the
+    // Art. 30 records-of-processing register. Same auth middleware as
+    // the protected surface; handlers self-gate on PrincipalClass +
+    // admin allowlist where appropriate.
+    use crate::api::gdpr::GdprState;
+    let gdpr_router = crate::api::gdpr::router(GdprState {
+        pool: state.idempotency.pool().clone(),
+        admin_principals: state.admin_principals.clone(),
+        idempotency: state.idempotency.clone(),
+        idempotency_ttl_seconds: state.idempotency_ttl_seconds,
+        list_by_principal_usecase: state.list_by_principal_usecase.clone(),
+    })
+    .route_layer(axum::middleware::from_fn_with_state(
+        auth_state.clone(),
+        auth_middleware,
+    ));
+
     let app_routes = protected
         .merge(admin)
         .merge(internal)
@@ -283,7 +300,8 @@ pub fn router(state: AppState, cfg: &Config, expose_metrics_on_main: bool) -> Ro
         .merge(fiu_router)
         .merge(public_feedback_router)
         .merge(sanctions_admin_router)
-        .merge(sanctions_public_router);
+        .merge(sanctions_public_router)
+        .merge(gdpr_router);
 
     // Apply the request-timing middleware ONLY to the app routes — not
     // to /metrics. The middleware reads `State<Arc<Metrics>>`, so we use

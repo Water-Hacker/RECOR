@@ -133,6 +133,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/internal/gdpr/processing-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listProcessingRecords"];
+        put?: never;
+        post: operations["createProcessingRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/internal/gdpr/processing-records/{record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getProcessingRecord"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/internal/gdpr/processing-records/{record_id}/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retireProcessingRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/internal/outbox-dlq": {
         parameters: {
             query?: never;
@@ -165,6 +213,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/internal/rectification-requests/{request_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["approveRectification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/internal/rectification-requests/{request_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["rejectRectification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/internal/verification-outcomes": {
         parameters: {
             query?: never;
@@ -175,6 +255,54 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["handleVerificationOutcome"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/erasure-restriction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["gdprErasureRestriction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["gdprExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/rectify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["gdprRectify"];
         delete?: never;
         options?: never;
         head?: never;
@@ -428,6 +556,17 @@ export interface components {
              */
             metadata_notes?: string | null;
         };
+        CreateProcessingRecordRequest: {
+            controller: string;
+            data_categories: string[];
+            legal_basis: string;
+            processor?: string | null;
+            purpose: string;
+            recipients: string[];
+            retention_period_text: string;
+            subject_categories: string[];
+            transfer_safeguards?: string | null;
+        };
         /**
          * @description A signed attestation submitted with a declaration.
          *
@@ -539,6 +678,52 @@ export interface components {
          * @example 0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d
          */
         EntityId: string;
+        ErasureRestrictionRequestBody: {
+            /**
+             * Format: uuid
+             * @description Declaration the data subject wants erased or restricted.
+             */
+            declaration_id: string;
+            /**
+             * @description Free-text reason — usually citing the Art. 17 / 18 ground
+             *     (inaccuracy, processing unlawful, no longer necessary,
+             *     objection pending).
+             */
+            reason: string;
+        };
+        ErasureRestrictionRequestView: {
+            data_subject_principal: string;
+            /** Format: uuid */
+            declaration_id: string;
+            reason: string;
+            refusal_kind: string;
+            /** Format: uuid */
+            request_id: string;
+            state: string;
+            /** Format: date-time */
+            submitted_at: string;
+            /** Format: date-time */
+            withdrawn_at?: string | null;
+        };
+        ErasureRestrictionResponse: {
+            /**
+             * @description Refusal kind on the erasure component. Always
+             *     `erasure_not_permitted` for BO data — FATF R.24 retention
+             *     beats Art. 17.
+             */
+            erasure_refusal_kind: string;
+            /** @description Plain-language explanation of the refusal. */
+            erasure_refusal_notice: string;
+            /** Format: uuid */
+            request_id: string;
+            /**
+             * @description State of the restriction record (always `restriction_active`
+             *     when the platform creates the row).
+             */
+            restriction_state: string;
+            /** Format: date-time */
+            submitted_at: string;
+        };
         /**
          * @description Inner body of an `ErrorEnvelope`. `kind` is a stable machine-friendly
          *     classifier — clients SHOULD switch on it. `message` is a human
@@ -562,6 +747,34 @@ export interface components {
          */
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
+        };
+        GdprExportResponse: {
+            /**
+             * @description JSON-LD type tag. Always `RecorGdprExport` so consumers can
+             *     route the envelope without sniffing other fields.
+             */
+            $type: string;
+            /** @description Subject of the export — the principal the rows belong to. */
+            data_subject_principal: string;
+            /**
+             * @description Every declaration RÉCOR holds where the data subject is the
+             *     declarant.
+             */
+            declarations: components["schemas"]["GetDeclarationResponse"][];
+            /** @description Every erasure-restriction request the data subject has lodged. */
+            erasure_restriction_requests: components["schemas"]["ErasureRestrictionRequestView"][];
+            /**
+             * Format: date-time
+             * @description Timestamp the export was produced.
+             */
+            exported_at: string;
+            /**
+             * @description Format version. Bump when the envelope schema changes in a
+             *     way that breaks consumers.
+             */
+            format_version: string;
+            /** @description Every rectification request the data subject has submitted. */
+            rectification_requests: components["schemas"]["RectificationRequestView"][];
         };
         GetDeclarationResponse: {
             /**
@@ -669,6 +882,10 @@ export interface components {
              */
             total: number;
         };
+        ListProcessingRecordsResponse: {
+            records: components["schemas"]["ProcessingRecordView"][];
+            total: number;
+        };
         /**
          * Format: int32
          * @description Ownership percentage in basis points (1/100 of a percent). Range 0..=10_000 — i.e. 10_000 == 100.00%. Stored as an integer to preserve exact arithmetic and avoid the 99.99/100.00 boundary surprise.
@@ -681,6 +898,25 @@ export interface components {
          * @example 0192f1d4-1e0a-7c4b-9b1e-3d4f5a6b7c8d
          */
         PersonId: string;
+        ProcessingRecordView: {
+            controller: string;
+            /** Format: date-time */
+            created_at: string;
+            data_categories: Record<string, never>;
+            legal_basis: string;
+            processor?: string | null;
+            purpose: string;
+            recipients: Record<string, never>;
+            /** Format: uuid */
+            record_id: string;
+            retention_period_text: string;
+            /** Format: date-time */
+            retired_at?: string | null;
+            subject_categories: Record<string, never>;
+            transfer_safeguards?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
         /**
          * @description Readyz payload. `status` is one of `ready` / `not_ready`. When the
          *     service is not ready, `reason` describes why (e.g.
@@ -691,6 +927,54 @@ export interface components {
             /** @example ready */
             status: string;
         };
+        RectificationRequestView: {
+            /** Format: uuid */
+            applied_correction_event_id?: string | null;
+            data_subject_principal: string;
+            /** Format: uuid */
+            declaration_id: string;
+            field_path: string;
+            reason: string;
+            /** Format: uuid */
+            request_id: string;
+            requested_value: Record<string, never>;
+            resolution_notes?: string | null;
+            /** Format: date-time */
+            resolved_at?: string | null;
+            resolver_principal?: string | null;
+            state: string;
+            /** Format: date-time */
+            submitted_at: string;
+        };
+        RectifyRequest: {
+            /**
+             * Format: uuid
+             * @description Declaration the data subject wants rectified. Must exist; the
+             *     declarant-ownership check is enforced at the handler so a data
+             *     subject cannot lodge rectification requests against
+             *     declarations they did not submit.
+             */
+            declaration_id: string;
+            /**
+             * @description JSON Pointer (RFC 6901) into the canonical declaration body.
+             *     Example: `/beneficial_owners/0/ownership_basis_points`.
+             */
+            field_path: string;
+            /** @description Free-text reason supporting the request. */
+            reason: string;
+            /**
+             * @description The value the data subject claims is the correct one. Stored
+             *     as JSONB verbatim.
+             */
+            requested_value: components["schemas"]["Value"];
+        };
+        RectifyResponse: {
+            /** Format: uuid */
+            request_id: string;
+            state: string;
+            /** Format: date-time */
+            submitted_at: string;
+        };
         ReplayDlqResponse: {
             /** Format: uuid */
             id: string;
@@ -699,6 +983,17 @@ export interface components {
              *     envelope, not this struct.
              */
             replayed: boolean;
+        };
+        ResolveRectificationRequest: {
+            /** @description Free-text rationale captured on the events row. */
+            notes: string;
+        };
+        ResolveRectificationResponse: {
+            /** Format: uuid */
+            request_id: string;
+            /** Format: date-time */
+            resolved_at: string;
+            state: string;
         };
         /**
          * @description Algorithm identifier for the signature.
@@ -768,6 +1063,7 @@ export interface components {
             /** @description Identifier of the declaration that was just superseded. */
             superseded_declaration_id: components["schemas"]["DeclarationId"];
         };
+        Value: unknown;
         /**
          * @description Lane decision returned by the Verification Engine for a declaration.
          *     Matches the verification engine's LaneDecision enum byte-for-byte over
@@ -788,6 +1084,15 @@ export interface components {
             case_id: string;
             /** Format: date-time */
             completed_at: string;
+            /**
+             * Format: uuid
+             * @description TODO-050 — correlation id of the originating Submit. Echoed by
+             *     the verification engine from the declaration snapshot it
+             *     received at submit time. Optional on the wire for back-compat
+             *     with pre-TODO-050 envelopes; the internal handler upgrades a
+             *     missing value to a 400 on new traffic (D14 fail-closed).
+             */
+            correlation_id?: string | null;
             declaration_id: components["schemas"]["DeclarationId"];
             /**
              * Format: double
@@ -1333,6 +1638,152 @@ export interface operations {
             };
         };
     };
+    listProcessingRecords: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Register listing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListProcessingRecordsResponse"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createProcessingRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProcessingRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description Record created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingRecordView"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getProcessingRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Processing record UUID */
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Processing record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingRecordView"];
+                };
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Record not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retireProcessingRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Processing record UUID */
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retired */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcessingRecordView"];
+                };
+            };
+            /** @description Already retired */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Record not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listDlq: {
         parameters: {
             query?: {
@@ -1468,6 +1919,102 @@ export interface operations {
             };
         };
     };
+    approveRectification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Rectification request UUID */
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveRectificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Approved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveRectificationResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rejectRectification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Rectification request UUID */
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveRectificationRequest"];
+            };
+        };
+        responses: {
+            /** @description Rejected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveRectificationResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     handleVerificationOutcome: {
         parameters: {
             query?: never;
@@ -1562,6 +2109,159 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
+            };
+        };
+    };
+    gdprErasureRestriction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ErasureRestrictionRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Erasure refused (the canonical response); restriction recorded */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErasureRestrictionResponse"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Caller is not the owner of the declaration */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Declaration not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Idempotency-Key collision with a different body */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gdprExport: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Admin-only override: export the data of a specific principal.
+                 *     Admins (members of the `ADMIN_PRINCIPALS` allowlist) may export
+                 *     on behalf of another data subject when responding to a DSAR.
+                 *     Non-admins providing this parameter receive `403 forbidden`.
+                 */
+                principal?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description GDPR export envelope */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GdprExportResponse"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin override requested by non-admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gdprRectify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RectifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Rectification request recorded */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RectifyResponse"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Caller is not the owner of the declaration */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Declaration not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Idempotency-Key collision with a different body */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

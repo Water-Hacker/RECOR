@@ -57,5 +57,8 @@ pub use config::VerifierConfig;
 pub use fabric_client::{FabricClient, FabricClientError, InMemoryFabricClient, OnChainEntry};
 pub use handlers::{router, AppState};
 pub use hashing::derive_receipt_hash;
-pub use projection::{InMemoryProjectionRepo, ProjectionRepo, ProjectionRow};
+pub use projection::{
+    DeclarationApiProjection, InMemoryProjectionRepo, PostgresProjectionRepo, ProjectionRepo,
+    ProjectionRow,
+};
 pub use report::{EntryReport, EntryStatus, VerificationReport, VerificationResult};

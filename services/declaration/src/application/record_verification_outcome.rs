@@ -235,6 +235,12 @@ mod tests {
             fused_authenticity_plausibility: 0.97,
             fused_risk_belief: 0.05,
             completed_at: OffsetDateTime::now_utc(),
+            // TODO-050 — these legacy use-case-level tests pre-date the
+            // correlation_id cross-check; nil is treated as a legacy
+            // envelope and the cross-check is skipped, keeping them
+            // green. The matching / mismatching paths are covered in
+            // `domain::aggregate::tests` and `api::internal::tests`.
+            correlation_id: Uuid::nil(),
         }
     }
 

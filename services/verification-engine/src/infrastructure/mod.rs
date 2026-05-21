@@ -1,4 +1,5 @@
 pub mod bunec_real;
+pub mod declaration_projection;
 pub mod icij_postgres;
 pub mod kafka_consumer;
 pub mod mock_bunec;
@@ -11,6 +12,7 @@ pub mod retention;
 pub mod sanctions_postgres;
 
 pub use bunec_real::{BunecFailPolicy, BunecRealConfig, RealBunecAdapter};
+pub use declaration_projection::PostgresDeclarationProjectionReader;
 pub use icij_postgres::PostgresIcijRepository;
 pub use kafka_consumer::{ConsumeOutcome, KafkaConsumer, ParseResult};
 pub use mock_bunec::PostgresMockBunec;
