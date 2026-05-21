@@ -149,7 +149,7 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 # the OpenAPI-exemption rationale).
 tonic = "0.13"
 tonic-build = "0.13"
-prost = "0.13"
+prost = "0.14"
 prost-types = "0.13"
 
 # Test deps (used by member crates' [dev-dependencies])
