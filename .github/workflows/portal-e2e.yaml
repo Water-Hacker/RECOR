@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: install Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -252,7 +252,7 @@ jobs:
           done
 
       - name: install Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
